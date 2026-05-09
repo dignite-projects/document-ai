@@ -71,6 +71,7 @@ public class DocumentPipelineRun : Entity<Guid>, IMultiTenant, IHasExtraProperti
     {
         Status = PipelineRunStatus.Running;
         StartedAt = now;
+        CompletedAt = null;
     }
 
     internal void MarkPending(DateTime now)
@@ -88,14 +89,19 @@ public class DocumentPipelineRun : Entity<Guid>, IMultiTenant, IHasExtraProperti
     internal void MarkFailed(DateTime now, string statusMessage)
     {
         Status = PipelineRunStatus.Failed;
-        StatusMessage = statusMessage;
+        StatusMessage = Truncate(statusMessage);
         CompletedAt = now;
     }
 
     internal void MarkSkipped(DateTime now, string statusMessage)
     {
         Status = PipelineRunStatus.Skipped;
-        StatusMessage = statusMessage;
+        StatusMessage = Truncate(statusMessage);
         CompletedAt = now;
     }
+
+    private static string? Truncate(string? value) =>
+        value is null || value.Length <= DocumentPipelineRunConsts.MaxStatusMessageLength
+            ? value
+            : value[..DocumentPipelineRunConsts.MaxStatusMessageLength];
 }

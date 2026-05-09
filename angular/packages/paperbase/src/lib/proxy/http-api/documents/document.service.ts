@@ -73,8 +73,11 @@ export class DocumentService {
       { apiName: this.apiName }
     );
 
-  getBlobUrl = (id: string): string =>
-    `${this.env.getApiUrl(this.apiName)}${this.basePath}/${id}/blob`;
+  getBlob = (id: string): Observable<Blob> =>
+    this.rest.request<void, Blob>(
+      { method: 'GET', url: `${this.basePath}/${id}/blob`, responseType: 'blob' as any },
+      { apiName: this.apiName }
+    );
 
   getExportUrl = (input: GetDocumentListInput): string => {
     const params = new URLSearchParams();

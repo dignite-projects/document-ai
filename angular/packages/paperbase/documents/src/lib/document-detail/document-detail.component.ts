@@ -1,6 +1,7 @@
 import {
   Component,
   OnInit,
+  OnDestroy,
   inject,
   signal,
   computed,
@@ -35,7 +36,7 @@ const KNOWN_PIPELINE_CODES = ['text-extraction', 'classification', 'embedding'] 
   styleUrls: ['./document-detail.component.scss'],
   imports: [CommonModule, RouterModule, LocalizationPipe, ChatPanelComponent, DocumentRelationsComponent],
 })
-export class DocumentDetailComponent implements OnInit {
+export class DocumentDetailComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly documentService = inject(DocumentService);
@@ -47,6 +48,7 @@ export class DocumentDetailComponent implements OnInit {
   imageError = signal(false);
   activeTab = signal<'info' | 'relations'>('info');
   retryingPipeline = signal<string | null>(null);
+  blobUrl = signal<string | null>(null);
 
   readonly DocumentLifecycleStatus = DocumentLifecycleStatus;
   readonly DocumentReviewStatus = DocumentReviewStatus;
@@ -117,6 +119,7 @@ export class DocumentDetailComponent implements OnInit {
       next: doc => {
         this.document.set(doc);
         this.isLoading.set(false);
+        this.loadBlob();
       },
       error: () => {
         this.isLoading.set(false);
@@ -124,12 +127,23 @@ export class DocumentDetailComponent implements OnInit {
     });
   }
 
+  private loadBlob(): void {
+    const oldUrl = this.blobUrl();
+    if (oldUrl) URL.revokeObjectURL(oldUrl);
+    this.blobUrl.set(null);
+
+    this.documentService.getBlob(this.documentId).subscribe({
+      next: blob => this.blobUrl.set(URL.createObjectURL(blob)),
+    });
+  }
+
   setTab(tab: 'info' | 'relations'): void {
     this.activeTab.set(tab);
   }
 
-  getImageUrl(): string {
-    return this.documentService.getBlobUrl(this.documentId);
+  ngOnDestroy(): void {
+    const url = this.blobUrl();
+    if (url) URL.revokeObjectURL(url);
   }
 
   onImageError(): void {

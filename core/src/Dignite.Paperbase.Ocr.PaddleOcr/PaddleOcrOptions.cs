@@ -21,4 +21,10 @@ public class PaddleOcrOptions
 
     /// <summary>默认识别语言列表（BCP 47），可被 OcrOptions.LanguageHints 覆盖。</summary>
     public IList<string> Languages { get; set; } = new List<string> { "ja", "en" };
+
+    /// <summary>
+    /// OCR 请求超时（秒）。PP-StructureV3 在 CPU 上处理多页图片 PDF 可能需要数分钟，
+    /// 默认 600 秒（10 分钟）。可在 appsettings.json 的 PaddleOcr 节覆盖。
+    /// </summary>
+    public int TimeoutSeconds { get; set; } = 600;
 }

@@ -36,14 +36,24 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
         var fileBytes = ms.ToArray();
 
         using var content = new MultipartFormDataContent();
-        content.Add(new ByteArrayContent(fileBytes), "file", "document");
+        var fileContent = new ByteArrayContent(fileBytes);
+        if (!string.IsNullOrEmpty(options.ContentType))
+            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(options.ContentType);
+        content.Add(fileContent, "file", "document");
         content.Add(new StringContent(string.Join(",", languages)), "languages");
         content.Add(new StringContent(_options.ModelName), "model_name");
         content.Add(new StringContent(options.IncludeBlockPositions ? "true" : "false"), "include_bboxes");
 
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient(PaperbasePaddleOcrModule.HttpClientName);
         var response = await client.PostAsync($"{_options.Endpoint.TrimEnd('/')}/ocr", content);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            throw new HttpRequestException(
+                $"PaddleOCR server returned {(int)response.StatusCode} {response.ReasonPhrase}: {errorBody}",
+                inner: null,
+                statusCode: response.StatusCode);
+        }
 
         var json = await response.Content.ReadAsStringAsync();
         var result = JsonSerializer.Deserialize<PaddleOcrResponse>(json)

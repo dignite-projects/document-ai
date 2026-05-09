@@ -1,10 +1,15 @@
+import logging
 import os
 import tempfile
+import traceback
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="PaddleOCR Server")
 
@@ -44,13 +49,17 @@ def _get_reader(lang_code: str, model_name: str):
         return _readers[key]
 
     device = _device()
+    # CPU 推理时禁用 oneDNN：PaddlePaddle 3.x PIR 执行器与 oneDNN 后端在
+    # ConvertPirAttribute2RuntimeAttribute 上有已知不兼容（pir::ArrayAttribute<DoubleAttribute>），
+    # 全局 FLAGS_use_mkldnn 不会被 PaddleX inference Config 采纳，需在构造器显式关闭。
+    cpu_kwargs = {"enable_mkldnn": False} if device == "cpu" else {}
     if _is_structure(model_name):
         from paddleocr import PPStructureV3
-        _readers[key] = PPStructureV3(lang=lang_code, device=device)
+        _readers[key] = PPStructureV3(lang=lang_code, device=device, **cpu_kwargs)
     elif _is_vl(model_name):
         # PaddleOCR-VL pipeline (GPU recommended). Markdown native.
         from paddleocr import PaddleOCRVL
-        _readers[key] = PaddleOCRVL(device=device)
+        _readers[key] = PaddleOCRVL(device=device, **cpu_kwargs)
     else:
         # Legacy line-level OCR (PP-OCRv4 etc.). No native Markdown.
         from paddleocr import PaddleOCR
@@ -59,6 +68,7 @@ def _get_reader(lang_code: str, model_name: str):
             lang=lang_code,
             use_textline_orientation=True,
             device=device,
+            **cpu_kwargs,
         )
     return _readers[key]
 
@@ -166,7 +176,6 @@ async def ocr(
     lang_list = [l.strip() for l in languages.split(",") if l.strip()]
     lang_code = _to_paddle_lang(lang_list[0]) if lang_list else "japan"
     include_bbox = include_bboxes.lower() == "true"
-    reader = _get_reader(lang_code, model_name)
 
     file_bytes = await file.read()
     suffix = _suffix_for(file.filename or "", file.content_type)
@@ -178,6 +187,7 @@ async def ocr(
         tmp_path = tmp.name
 
     try:
+        reader = _get_reader(lang_code, model_name)
         if _is_structure(model_name):
             blocks, plain_text, markdown_payload, page_count = _process_structure(tmp_path, reader)
         elif _is_vl(model_name):
@@ -186,6 +196,12 @@ async def ocr(
             blocks, plain_text, markdown_payload, page_count = _process_pp_ocr(
                 tmp_path, reader, include_bbox
             )
+    except Exception as exc:
+        logger.exception("OCR processing failed for model=%s lang=%s", model_name, lang_code)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(exc), "detail": traceback.format_exc()},
+        )
     finally:
         try:
             os.unlink(tmp_path)

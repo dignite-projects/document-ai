@@ -19,7 +19,12 @@ services:
       - "8866:8866"
     environment:
       PADDLEOCR_USE_GPU: "false"
+    volumes:
+      - paddleocr_models:/root/.paddlex
+      - hf_cache:/root/.cache/huggingface
     restart: unless-stopped
 
 volumes:
   qdrant_data:
+  paddleocr_models:
+  hf_cache:

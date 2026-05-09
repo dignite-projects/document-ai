@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Abstractions.TextExtraction;
@@ -58,9 +59,9 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
             },
             cancellationToken);
 
-        if (string.IsNullOrWhiteSpace(md.Markdown) && IsPdfExtension(context.FileExtension))
+        if (!HasMeaningfulText(md.Markdown) && IsPdfExtension(context.FileExtension))
         {
-            Logger.LogDebug("Markdown provider produced no content for PDF; falling back to OCR.");
+            Logger.LogDebug("Markdown provider produced no meaningful text for PDF; falling back to OCR.");
             seekable.Position = 0;
             return await ExtractByOcrAsync(seekable, context);
         }
@@ -116,6 +117,12 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
         if (string.IsNullOrWhiteSpace(fileExtension)) return false;
         var ext = fileExtension.ToLowerInvariant();
         return ext is ".jpg" or ".jpeg" or ".png" or ".tiff" or ".tif" or ".bmp" or ".webp" or ".gif";
+    }
+
+    protected virtual bool HasMeaningfulText(string? markdown)
+    {
+        if (string.IsNullOrWhiteSpace(markdown)) return false;
+        return markdown.Any(c => char.IsLetter(c) || char.IsDigit(c));
     }
 
     protected virtual bool IsPdfExtension(string? fileExtension)
