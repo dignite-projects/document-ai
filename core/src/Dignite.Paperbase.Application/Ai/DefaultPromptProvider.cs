@@ -46,4 +46,12 @@ public class DefaultPromptProvider : IPromptProvider, ITransientDependency
         "Return JSON matching the provided schema only, with no explanation. " +
         $"Working language for reasoning: {language}."
     );
+
+    public virtual PromptTemplate GetConversationTitlePrompt(string language) => new(
+        "You generate concise chat conversation titles. " +
+        "Given the first user question and the assistant answer, return one short title only. " +
+        "Do not wrap it in quotes. Do not add punctuation unless it is part of a name. " +
+        "Prefer the user's language. Keep it under 60 characters. " +
+        $"Working language: {language}."
+    );
 }

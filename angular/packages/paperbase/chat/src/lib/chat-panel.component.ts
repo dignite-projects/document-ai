@@ -80,7 +80,6 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
   sourceDocument = signal<DocumentDto | null>(null);
   selectedCitation = signal<SelectedCitation | null>(null);
 
-  title = signal('');
   message = signal('');
 
   isLoadingConversations = signal(false);
@@ -126,7 +125,7 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
   private sourceRequestId = 0;
 
   ngOnInit(): void {
-    this.loadConversations(() => this.maybeOpenScopedConversation());
+    this.loadConversations();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -137,7 +136,7 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
       this.activeConversation.set(null);
       this.messages.set([]);
       this.selectedCitation.set(null);
-      this.loadConversations(() => this.maybeOpenScopedConversation());
+      this.loadConversations();
     }
   }
 
@@ -199,15 +198,14 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
     });
   }
 
-  createConversation(): void {
-    this.createAndOpen({
-      title: this.emptyToNull(this.title()),
-      // Panel mode auto-scopes to the document the host page is showing.
-      // Full mode (`/chat`) starts unscoped — backend tools decide retrieval.
-      // documentId and documentTypeCode are mutually exclusive at the backend.
-      documentId: this.isPanelMode() ? this.documentId() ?? null : null,
-      documentTypeCode: null,
-    });
+  startDraft(): void {
+    this.activeConversation.set(null);
+    this.messages.set([]);
+    this.selectedCitation.set(null);
+    this.sourceRequestId++;
+    this.isLoadingSource.set(false);
+    this.sourceDocument.set(null);
+    this.sourceError.set(null);
   }
 
   deleteConversation(conversation: ChatConversationListItemDto, event: Event): void {
@@ -303,23 +301,6 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
     return document.fileOrigin?.originalFileName || document.originalFileBlobName || document.id || 'Source document';
   }
 
-  private maybeOpenScopedConversation(): void {
-    if (!this.isPanelMode()) return;
-    const documentId = this.documentId();
-    if (!documentId) return;
-
-    const existing = this.conversations().find(c => c.documentId === documentId);
-    if (existing?.id) {
-      this.selectConversation(existing.id);
-      return;
-    }
-
-    this.createAndOpen({
-      documentId,
-      documentTypeCode: null,
-    });
-  }
-
   private createAndOpen(
     input: CreateChatConversationInput,
     afterCreate?: (conversation: ChatConversationDto) => void
@@ -340,7 +321,6 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
             this.isLoadingSource.set(false);
             this.sourceDocument.set(null);
           }
-          this.title.set('');
           this.loadConversations();
           afterCreate?.(conversation);
         },
@@ -428,11 +408,6 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
     } catch {
       return [];
     }
-  }
-
-  private emptyToNull(value: string): string | null {
-    const trimmed = value.trim();
-    return trimmed ? trimmed : null;
   }
 
   /**

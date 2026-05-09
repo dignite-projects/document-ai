@@ -205,12 +205,17 @@ public class DocumentChatAppService : PaperbaseAppService, IDocumentChatAppServi
 
         var userMessageId = GuidGenerator.Create();
         var assistantMessageId = GuidGenerator.Create();
+        var shouldGenerateTitle = ShouldGenerateTitle(conversation);
 
         conversation.AppendUserMessage(Clock, userMessageId, input.Message, input.ClientTurnId);
 
         var isDegraded = !run.Capture.HasSearches;
         var citationsJson = SerializeCitations(run.Capture.Results);
         conversation.AppendAssistantMessage(Clock, assistantMessageId, run.Text, citationsJson, isDegraded);
+        if (shouldGenerateTitle)
+        {
+            await TryGenerateAndApplyTitleAsync(conversation, input.Message, run.Text);
+        }
 
         // The aggregate is already tracked through the FindByIdWithMessagesAsync load;
         // the ambient unit of work flushes changes on commit. Calling repository.UpdateAsync
@@ -624,10 +629,15 @@ public class DocumentChatAppService : PaperbaseAppService, IDocumentChatAppServi
 
             // Stream completed — persist the full turn in one shot.
             var fullText = sb.ToString();
+            var shouldGenerateTitle = ShouldGenerateTitle(conversation);
             conversation.AppendUserMessage(Clock, userMessageId, input.Message, input.ClientTurnId);
             var isDegraded = !setup.Capture.HasSearches;
             var citationsJson = SerializeCitations(setup.Capture.Results);
             conversation.AppendAssistantMessage(Clock, assistantMessageId, fullText, citationsJson, isDegraded);
+            if (shouldGenerateTitle)
+            {
+                await TryGenerateAndApplyTitleAsync(conversation, input.Message, fullText, ct);
+            }
 
             var citations = BuildCitationDtos(setup.Capture.Results);
             sw.Stop();
@@ -706,6 +716,62 @@ public class DocumentChatAppService : PaperbaseAppService, IDocumentChatAppServi
             count++;
         }
         return sb.ToString();
+    }
+
+    protected virtual bool ShouldGenerateTitle(ChatConversation conversation)
+        => conversation.Messages.Count == 0
+            && conversation.Title == L["DocumentChat:UntitledConversation"].Value;
+
+    protected virtual async Task TryGenerateAndApplyTitleAsync(
+        ChatConversation conversation,
+        string userMessage,
+        string assistantMessage,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var template = _promptProvider.GetConversationTitlePrompt(_aiOptions.DefaultLanguage);
+            var prompt = $"""
+                User question:
+                {PromptBoundary.WrapQuestion(userMessage)}
+
+                Assistant answer:
+                {PromptBoundary.WrapDocument(assistantMessage)}
+                """;
+
+            var response = await _chatClient.GetResponseAsync(
+                [new MeAi.ChatMessage(MeAi.ChatRole.User, prompt)],
+                new ChatOptions
+                {
+                    Instructions = template.SystemInstructions + " " + PromptBoundary.BoundaryRule
+                },
+                cancellationToken);
+
+            var title = NormalizeGeneratedTitle(response.Text);
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                conversation.Rename(title);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex,
+                "Failed to generate chat conversation title: ConversationId={ConversationId}",
+                conversation.Id);
+        }
+    }
+
+    protected virtual string NormalizeGeneratedTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+            return string.Empty;
+
+        var normalized = title.Trim().Trim('"', '\'', '“', '”', '‘', '’');
+        normalized = normalized.ReplaceLineEndings(" ");
+        while (normalized.Contains("  ", StringComparison.Ordinal))
+            normalized = normalized.Replace("  ", " ", StringComparison.Ordinal);
+
+        return TruncateByGrapheme(normalized, ChatConsts.MaxTitleLength);
     }
 
     // ── nested types ──────────────────────────────────────────────────────────

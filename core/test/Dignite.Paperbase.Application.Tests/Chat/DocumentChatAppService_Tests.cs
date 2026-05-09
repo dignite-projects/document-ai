@@ -256,6 +256,51 @@ public class DocumentChatAppService_Tests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Should_Generate_Title_After_First_Turn_When_Title_Is_Default()
+    {
+        _chatClient.GetResponseAsync(
+                Arg.Any<IEnumerable<MEAI.ChatMessage>>(),
+                Arg.Is<ChatOptions?>(o => o != null && o.Instructions != null && o.Instructions.Contains("conversation titles")),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(
+                new ChatResponse([new MEAI.ChatMessage(ChatRole.Assistant, "\"Contract Renewal\"")])));
+
+        var conversationId = await WithUnitOfWorkAsync(async () =>
+        {
+            using (ChangeUser(OwnerUserId))
+            {
+                var dto = await _appService.CreateConversationAsync(new CreateChatConversationInput
+                {
+                    DocumentTypeCode = "contract.general"
+                });
+                return dto.Id;
+            }
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            using (ChangeUser(OwnerUserId))
+            {
+                await _appService.SendMessageAsync(conversationId, new SendChatMessageInput
+                {
+                    Message = "When does this contract renew?",
+                    ClientTurnId = Guid.NewGuid()
+                });
+            }
+        });
+
+        var conversation = await WithUnitOfWorkAsync(async () =>
+        {
+            using (ChangeUser(OwnerUserId))
+            {
+                return await _repository.GetAsync(conversationId);
+            }
+        });
+
+        conversation.Title.ShouldBe("Contract Renewal");
+    }
+
     // ── 8. Concurrency conflict surfaces as AbpDbConcurrencyException ───────
 
     [Fact]
