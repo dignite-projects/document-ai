@@ -14,5 +14,11 @@ public class DocumentListItemDto : EntityDto<Guid>
     public DocumentReviewStatus ReviewStatus { get; set; }
     public double ClassificationConfidence { get; set; }
     public bool HasEmbedding { get; set; }
+
+    /// <summary>
+    /// 展示标题；迁移前的历史文档可能为 null，UI 需回退到 <see cref="FileOriginDto.OriginalFileName"/>。
+    /// </summary>
+    public string? Title { get; set; }
+
     public DateTime CreationTime { get; set; }
 }

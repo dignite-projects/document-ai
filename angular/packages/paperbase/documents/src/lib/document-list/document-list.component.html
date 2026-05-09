@@ -118,7 +118,7 @@
                 </td>
                 <td>
                   <span class="fw-semibold">
-                    {{ doc.fileOrigin?.originalFileName || doc.originalFileBlobName }}
+                    {{ doc.title || doc.fileOrigin?.originalFileName || doc.originalFileBlobName }}
                   </span>
                 </td>
                 <td>
@@ -208,7 +208,7 @@
         </div>
         <div class="modal-body">
           <p class="text-muted small mb-3">
-            {{ doc.fileOrigin?.originalFileName || doc.originalFileBlobName }}
+            {{ doc.title || doc.fileOrigin?.originalFileName || doc.originalFileBlobName }}
           </p>
           <p class="fw-semibold mb-2">{{ '::Document:SelectDocumentType' | abpLocalization }}</p>
           @if (getCandidates(doc).length > 0) {

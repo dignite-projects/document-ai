@@ -57,7 +57,9 @@ public class DocumentTextExtractionBackgroundJob
             var result = await _textExtractor.ExtractAsync(blobStream, ctx);
 
             var actualSourceType = result.UsedOcr ? SourceType.Physical : SourceType.Digital;
-            await CompleteRunAsync(args.DocumentId, workItem.RunId, result.Markdown, actualSourceType);
+            var title = MarkdownTitleExtractor.ExtractTitle(result.Markdown)
+                ?? FallbackTitleFromFileName(workItem.OriginalFileName);
+            await CompleteRunAsync(args.DocumentId, workItem.RunId, result.Markdown, title, actualSourceType);
         }
         catch (Exception ex)
         {
@@ -87,6 +89,7 @@ public class DocumentTextExtractionBackgroundJob
         Guid documentId,
         Guid runId,
         string markdown,
+        string? title,
         SourceType actualSourceType)
     {
         using var uow = _unitOfWorkManager.Begin(requiresNew: true);
@@ -97,11 +100,34 @@ public class DocumentTextExtractionBackgroundJob
                 document, runId, PaperbasePipelines.TextExtraction);
 
         await _pipelineRunManager.CompleteTextExtractionAsync(
-            document, run, markdown, actualSourceType);
+            document, run, markdown, title, actualSourceType);
 
         await _pipelineJobScheduler.QueueAsync(document, PaperbasePipelines.Classification);
 
         await uow.CompleteAsync();
+    }
+
+    /// <summary>
+    /// Markdown 标题抽取失败时的确定性回退：使用不带扩展名的原始文件名。
+    /// 仍然为空（极端情况下 FileOrigin.OriginalFileName 为 null）则返回 null，让 UI 沿用原有文件名/blob 名展示。
+    /// </summary>
+    private static string? FallbackTitleFromFileName(string? originalFileName)
+    {
+        if (string.IsNullOrWhiteSpace(originalFileName))
+        {
+            return null;
+        }
+
+        var withoutExtension = Path.GetFileNameWithoutExtension(originalFileName);
+        if (string.IsNullOrWhiteSpace(withoutExtension))
+        {
+            return null;
+        }
+
+        var trimmed = withoutExtension.Trim();
+        return trimmed.Length <= DocumentConsts.MaxTitleLength
+            ? trimmed
+            : trimmed[..DocumentConsts.MaxTitleLength];
     }
 
     private async Task FailRunAsync(Guid documentId, Guid runId, string errorMessage)

@@ -46,6 +46,9 @@ export interface DocumentDto extends EntityDto<string> {
   classificationConfidence: number;
   classificationReason?: string | null;
   hasEmbedding: boolean;
+  // Display title generated from extracted Markdown (text extraction pipeline).
+  // Pre-migration documents may be null — UI must fall back to fileOrigin.originalFileName.
+  title?: string | null;
   markdown?: string;
   creationTime: string;
   pipelineRuns: DocumentPipelineRunDto[];

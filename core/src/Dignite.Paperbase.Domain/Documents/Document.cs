@@ -47,6 +47,13 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     public virtual string? Markdown { get; private set; }
 
     /// <summary>
+    /// 文档展示标题（文本提取流水线 Run 成功后写入，不可变）。
+    /// 由 <see cref="MarkdownTitleExtractor"/> 从 <see cref="Markdown"/> 提取，失败时上游回退为不带扩展名的文件名。
+    /// 迁移之前的历史记录可能为 null；读路径需回退到 <see cref="FileOrigin"/>.OriginalFileName / <see cref="OriginalFileBlobName"/>。
+    /// </summary>
+    public virtual string? Title { get; private set; }
+
+    /// <summary>
     /// 文档分类置信度（0.0 ~ 1.0），为最后一次成功分类 Run 的快照。
     /// 当 <see cref="DocumentTypeCode"/> 为 null 时此值为 0；是否等待人工确认由 <see cref="ReviewStatus"/> 表达。
     /// 人工确认（<see cref="DocumentReviewStatus.Reviewed"/>）时固定写入 1.0。
@@ -112,6 +119,23 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
         if (!string.IsNullOrEmpty(Markdown))
             throw new BusinessException(PaperbaseErrorCodes.MarkdownIsImmutable);
         Markdown = string.IsNullOrEmpty(markdown) ? null : markdown;
+    }
+
+    internal void SetTitle(string? title)
+    {
+        if (!string.IsNullOrEmpty(Title))
+            throw new BusinessException(PaperbaseErrorCodes.TitleIsImmutable);
+
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            Title = null;
+            return;
+        }
+
+        var trimmed = title.Trim();
+        Title = trimmed.Length <= DocumentConsts.MaxTitleLength
+            ? trimmed
+            : trimmed[..DocumentConsts.MaxTitleLength];
     }
 
     internal void SetSourceType(SourceType sourceType)

@@ -19,6 +19,12 @@ public class DocumentDto : EntityDto<Guid>
     public bool HasEmbedding { get; set; }
 
     /// <summary>
+    /// 展示标题（文本提取流水线 Run 成功后写入）。
+    /// 迁移之前的历史文档可能为 null，UI 需回退到 <see cref="FileOriginDto.OriginalFileName"/>。
+    /// </summary>
+    public string? Title { get; set; }
+
+    /// <summary>
     /// 文档结构化 Markdown 内容（文本提取流水线 Run 成功后写入）。
     /// 前端可直接渲染；需要纯文本时由前端 strip 或后端通过 <c>MarkdownStripper.Strip</c> 投影。
     /// </summary>

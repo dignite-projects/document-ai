@@ -24,6 +24,7 @@ public static class PaperbaseDbContextModelCreatingExtensions
             b.Property(x => x.ReviewStatus).IsRequired();
             b.Property(x => x.ClassificationReason);
             b.Property(x => x.Markdown);
+            b.Property(x => x.Title).HasMaxLength(DocumentConsts.MaxTitleLength);
 
             b.OwnsOne(x => x.FileOrigin, fo =>
             {

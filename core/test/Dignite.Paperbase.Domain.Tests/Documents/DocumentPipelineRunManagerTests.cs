@@ -320,4 +320,56 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
 
         ex.Code.ShouldBe(PaperbaseErrorCodes.InvalidDocumentTypeCode);
     }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // Scenario 11: TextExtraction completion persists Markdown + Title atomically;
+    //              Title accepts null and is write-once for non-null values.
+    // ────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CompleteTextExtraction_Persists_Markdown_And_Title()
+    {
+        var doc = CreateDocument();
+        var run = await _manager.StartAsync(doc, PaperbasePipelines.TextExtraction);
+
+        await _manager.CompleteTextExtractionAsync(
+            doc, run, markdown: "# Hello\n\nbody", title: "Hello", sourceType: SourceType.Digital);
+
+        doc.Markdown.ShouldBe("# Hello\n\nbody");
+        doc.Title.ShouldBe("Hello");
+        doc.SourceType.ShouldBe(SourceType.Digital);
+        run.Status.ShouldBe(PipelineRunStatus.Succeeded);
+    }
+
+    [Fact]
+    public async Task CompleteTextExtraction_Allows_Null_Title_For_Backfill_Path()
+    {
+        var doc = CreateDocument();
+        var run = await _manager.StartAsync(doc, PaperbasePipelines.TextExtraction);
+
+        await _manager.CompleteTextExtractionAsync(
+            doc, run, markdown: "irrelevant", title: null);
+
+        doc.Title.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task CompleteTextExtraction_Title_Is_WriteOnce()
+    {
+        var doc = CreateDocument();
+
+        // 1st extraction succeeds with a title
+        var run1 = await _manager.StartAsync(doc, PaperbasePipelines.TextExtraction);
+        await _manager.CompleteTextExtractionAsync(doc, run1, "# Original", "Original");
+
+        // A second completion attempt must fail — Markdown invariant guards write-once.
+        var run2 = await _manager.StartAsync(doc, PaperbasePipelines.TextExtraction);
+        await Should.ThrowAsync<BusinessException>(async () =>
+        {
+            await _manager.CompleteTextExtractionAsync(doc, run2, "# Other", "Other");
+        });
+
+        // Title remains the originally persisted value.
+        doc.Title.ShouldBe("Original");
+    }
 }

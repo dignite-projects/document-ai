@@ -10,6 +10,9 @@
       {{ '::Document:Detail' | abpLocalization }}
     </h5>
     @if (document()) {
+      <span class="ms-2 fw-semibold text-truncate" style="max-width: 480px;" [title]="document()!.title || document()!.fileOrigin?.originalFileName">
+        {{ document()!.title || document()!.fileOrigin?.originalFileName || document()!.originalFileBlobName }}
+      </span>
       <span [class]="getStatusBadgeClass(document()!.lifecycleStatus)" class="ms-2">
         @if (isProcessing()) {
           <span class="spinner-border spinner-border-sm me-1" role="status"></span>

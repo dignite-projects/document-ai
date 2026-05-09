@@ -111,10 +111,12 @@ public class DocumentPipelineRunManager : DomainService
         Document document,
         DocumentPipelineRun run,
         string markdown,
+        string? title,
         SourceType sourceType = SourceType.Physical)
     {
         document.SetSourceType(sourceType);
         document.SetMarkdown(markdown);
+        document.SetTitle(title);
         return CompleteAsync(document, run);
     }
 

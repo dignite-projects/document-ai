@@ -166,7 +166,9 @@ public class DocumentRelationAppService : PaperbaseAppService, IDocumentRelation
         return new DocumentRelationNodeDto
         {
             DocumentId = documentId,
-            Title = document?.FileOrigin.OriginalFileName ?? document?.OriginalFileBlobName,
+            Title = document?.Title
+                ?? document?.FileOrigin.OriginalFileName
+                ?? document?.OriginalFileBlobName,
             DocumentTypeCode = document?.DocumentTypeCode,
             LifecycleStatus = document?.LifecycleStatus ?? default,
             ReviewStatus = document?.ReviewStatus ?? default,
