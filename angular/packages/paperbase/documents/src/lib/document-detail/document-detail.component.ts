@@ -20,6 +20,7 @@ import {
 } from '@dignite/paperbase';
 import { ChatPanelComponent } from '@dignite/paperbase/chat';
 import { DocumentRelationsComponent } from '../document-relations/document-relations.component';
+import { DocumentRelationGraphComponent } from '../document-relation-graph/document-relation-graph.component';
 
 interface PipelineRow {
   pipelineCode: string;
@@ -43,7 +44,7 @@ const KNOWN_PIPELINE_CODES = [
   selector: 'lib-document-detail',
   templateUrl: './document-detail.component.html',
   styleUrls: ['./document-detail.component.scss'],
-  imports: [CommonModule, RouterModule, LocalizationPipe, ChatPanelComponent, DocumentRelationsComponent],
+  imports: [CommonModule, RouterModule, LocalizationPipe, ChatPanelComponent, DocumentRelationsComponent, DocumentRelationGraphComponent],
 })
 export class DocumentDetailComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
@@ -55,7 +56,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   isLoading = signal(true);
   isTextExpanded = signal(false);
   imageError = signal(false);
-  activeTab = signal<'info' | 'relations'>('info');
+  activeTab = signal<'info' | 'relations' | 'graph'>('info');
   retryingPipeline = signal<string | null>(null);
   blobUrl = signal<string | null>(null);
 
@@ -146,7 +147,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     });
   }
 
-  setTab(tab: 'info' | 'relations'): void {
+  setTab(tab: 'info' | 'relations' | 'graph'): void {
     this.activeTab.set(tab);
   }
 
