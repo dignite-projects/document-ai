@@ -3,6 +3,7 @@ export const PAPERBASE_PERMISSIONS = {
     Default: 'Paperbase.Documents',
     Upload: 'Paperbase.Documents.Upload',
     Delete: 'Paperbase.Documents.Delete',
+    PermanentDelete: 'Paperbase.Documents.PermanentDelete',
     Restore: 'Paperbase.Documents.Restore',
     Export: 'Paperbase.Documents.Export',
     ConfirmClassification: 'Paperbase.Documents.ConfirmClassification',

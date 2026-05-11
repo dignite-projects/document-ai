@@ -73,6 +73,18 @@ export class DocumentService {
       { apiName: this.apiName }
     );
 
+  permanentDelete = (id: string): Observable<void> =>
+    this.rest.request<void, void>(
+      { method: 'DELETE', url: `${this.basePath}/${id}/permanent` },
+      { apiName: this.apiName }
+    );
+
+  restore = (id: string): Observable<void> =>
+    this.rest.request<void, void>(
+      { method: 'POST', url: `${this.basePath}/${id}/restore` },
+      { apiName: this.apiName }
+    );
+
   getBlob = (id: string): Observable<Blob> =>
     this.rest.request<void, Blob>(
       { method: 'GET', url: `${this.basePath}/${id}/blob`, responseType: 'blob' as any },
