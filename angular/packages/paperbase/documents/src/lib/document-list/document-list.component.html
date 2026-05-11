@@ -149,13 +149,15 @@
                       <i class="fas fa-check"></i>
                     </button>
                   }
-                  <button
-                    class="btn btn-sm btn-outline-danger"
-                    (click)="delete(doc, $event)"
-                    title="{{ '::Delete' | abpLocalization }}"
-                  >
-                    <i class="fas fa-trash"></i>
-                  </button>
+                  @if (canDelete) {
+                    <button
+                      class="btn btn-sm btn-outline-danger"
+                      (click)="delete(doc, $event)"
+                      title="{{ '::Delete' | abpLocalization }}"
+                    >
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  }
                 </td>
               </tr>
             }

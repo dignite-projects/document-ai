@@ -8,14 +8,15 @@ import {
 } from '@angular/core';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CommonModule } from '@angular/common';
-import { LocalizationPipe } from '@abp/ng.core';
-import { ToasterService } from '@abp/ng.theme.shared';
+import { LocalizationPipe, PermissionService } from '@abp/ng.core';
+import { Confirmation, ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
 import {
   DocumentDto,
   DocumentLifecycleStatus,
   DocumentPipelineRunDto,
   DocumentReviewStatus,
   DocumentService,
+  PAPERBASE_PERMISSIONS,
   PipelineRunStatus,
 } from '@dignite/paperbase';
 import { ChatPanelComponent } from '@dignite/paperbase/chat';
@@ -51,6 +52,12 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly documentService = inject(DocumentService);
   private readonly toaster = inject(ToasterService);
+  private readonly confirmation = inject(ConfirmationService);
+  private readonly permissionService = inject(PermissionService);
+
+  readonly canDelete = this.permissionService.getGrantedPolicy(
+    PAPERBASE_PERMISSIONS.Documents.Delete,
+  );
 
   document = signal<DocumentDto | null>(null);
   isLoading = signal(true);
@@ -166,6 +173,22 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
 
   goBack(): void {
     this.router.navigate(['/documents']);
+  }
+
+  delete(): void {
+    const doc = this.document();
+    if (!doc) return;
+    this.confirmation
+      .warn('::Document:AreYouSureToDelete', '::AreYouSure')
+      .subscribe(status => {
+        if (status !== Confirmation.Status.confirm) return;
+        this.documentService.delete(doc.id).subscribe({
+          next: () => {
+            this.toaster.success('::Document:DeletedSuccessfully', '::Success');
+            this.router.navigate(['/documents']);
+          },
+        });
+      });
   }
 
   getStatusBadgeClass(status: DocumentLifecycleStatus): string {

@@ -52,6 +52,8 @@ export interface DocumentDto extends EntityDto<string> {
   markdown?: string;
   creationTime: string;
   pipelineRuns: DocumentPipelineRunDto[];
+  // 软删除时间（仅当 isDeleted=true 的列表查询时有值）。
+  deletionTime?: string | null;
 }
 
 export interface GetDocumentListInput {
@@ -61,6 +63,8 @@ export interface GetDocumentListInput {
   lifecycleStatus?: DocumentLifecycleStatus | number | null;
   documentTypeCode?: string | null;
   reviewStatus?: DocumentReviewStatus | null;
+  // true = 仅返回已软删除文档（回收站视图）；undefined/false = 仅返回未删除文档
+  isDeleted?: boolean | null;
 }
 
 export interface DocumentRelationDto extends EntityDto<string> {

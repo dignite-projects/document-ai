@@ -21,4 +21,9 @@ public class DocumentListItemDto : EntityDto<Guid>
     public string? Title { get; set; }
 
     public DateTime CreationTime { get; set; }
+
+    /// <summary>
+    /// 软删除时间。仅当 <see cref="GetDocumentListInput.IsDeleted"/> = true（回收站视图）时有值。
+    /// </summary>
+    public DateTime? DeletionTime { get; set; }
 }

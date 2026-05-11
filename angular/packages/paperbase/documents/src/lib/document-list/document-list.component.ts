@@ -9,7 +9,7 @@ import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { LocalizationPipe } from '@abp/ng.core';
+import { LocalizationPipe, PermissionService } from '@abp/ng.core';
 import type { PagedResultDto } from '@abp/ng.core';
 import { ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
 import { Confirmation } from '@abp/ng.theme.shared';
@@ -21,6 +21,7 @@ import {
   DocumentReviewStatus,
   DocumentService,
   GetDocumentListInput,
+  PAPERBASE_PERMISSIONS,
 } from '@dignite/paperbase';
 
 interface UploadResult {
@@ -41,6 +42,11 @@ export class DocumentListComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly confirmation = inject(ConfirmationService);
   private readonly toaster = inject(ToasterService);
+  private readonly permissionService = inject(PermissionService);
+
+  readonly canDelete = this.permissionService.getGrantedPolicy(
+    PAPERBASE_PERMISSIONS.Documents.Delete,
+  );
 
   documents = signal<PagedResultDto<DocumentDto>>({ totalCount: 0, items: [] });
   isLoading = signal(true);

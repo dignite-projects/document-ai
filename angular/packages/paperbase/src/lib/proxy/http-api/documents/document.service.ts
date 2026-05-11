@@ -29,6 +29,7 @@ export class DocumentService {
           lifecycleStatus: input.lifecycleStatus ?? undefined,
           documentTypeCode: input.documentTypeCode ?? undefined,
           reviewStatus: input.reviewStatus ?? undefined,
+          isDeleted: input.isDeleted ?? undefined,
         },
       },
       { apiName: this.apiName }

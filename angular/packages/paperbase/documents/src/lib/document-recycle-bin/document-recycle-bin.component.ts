@@ -1,0 +1,108 @@
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { LocalizationPipe, PermissionService } from '@abp/ng.core';
+import type { PagedResultDto } from '@abp/ng.core';
+import { Confirmation, ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
+import {
+  DocumentDto,
+  DocumentService,
+  PAPERBASE_PERMISSIONS,
+} from '@dignite/paperbase';
+
+@Component({
+  selector: 'lib-document-recycle-bin',
+  templateUrl: './document-recycle-bin.component.html',
+  styleUrls: ['./document-recycle-bin.component.scss'],
+  imports: [CommonModule, FormsModule, LocalizationPipe],
+})
+export class DocumentRecycleBinComponent implements OnInit {
+  private readonly documentService = inject(DocumentService);
+  private readonly confirmation = inject(ConfirmationService);
+  private readonly toaster = inject(ToasterService);
+  private readonly permissionService = inject(PermissionService);
+
+  documents = signal<PagedResultDto<DocumentDto>>({ totalCount: 0, items: [] });
+  isLoading = signal(true);
+  page = signal(0);
+  pageSize = 10;
+  totalPages = computed(() => Math.ceil(this.documents().totalCount / this.pageSize));
+
+  readonly canRestore = this.permissionService.getGrantedPolicy(
+    PAPERBASE_PERMISSIONS.Documents.Restore,
+  );
+  readonly canPermanentDelete = this.permissionService.getGrantedPolicy(
+    PAPERBASE_PERMISSIONS.Documents.PermanentDelete,
+  );
+
+  ngOnInit(): void {
+    this.loadList();
+  }
+
+  refresh(): void {
+    this.loadList();
+  }
+
+  navigateTo(page: number): void {
+    this.page.set(page);
+    this.loadList();
+  }
+
+  private loadList(): void {
+    this.isLoading.set(true);
+    this.documentService
+      .getList({
+        isDeleted: true,
+        maxResultCount: this.pageSize,
+        skipCount: this.page() * this.pageSize,
+        sorting: 'creationTime desc',
+      })
+      .subscribe({
+        next: result => {
+          this.documents.set(result);
+          this.isLoading.set(false);
+        },
+        error: () => this.isLoading.set(false),
+      });
+  }
+
+  restore(doc: DocumentDto): void {
+    this.confirmation
+      .warn('::Document:AreYouSureToRestore', '::AreYouSure')
+      .subscribe(status => {
+        if (status !== Confirmation.Status.confirm) return;
+        this.documentService.restore(doc.id).subscribe({
+          next: () => {
+            this.toaster.success('::Document:RestoredSuccessfully', '::Success');
+            this.loadList();
+          },
+        });
+      });
+  }
+
+  permanentDelete(doc: DocumentDto): void {
+    this.confirmation
+      .warn('::Document:AreYouSureToPermanentlyDelete', '::AreYouSure', {
+        yesText: '::Document:PermanentDelete',
+      })
+      .subscribe(status => {
+        if (status !== Confirmation.Status.confirm) return;
+        this.documentService.permanentDelete(doc.id).subscribe({
+          next: () => {
+            this.toaster.success('::Document:PermanentlyDeletedSuccessfully', '::Success');
+            this.loadList();
+          },
+        });
+      });
+  }
+
+  isImage(doc: DocumentDto): boolean {
+    return doc.fileOrigin?.contentType?.startsWith('image/') ?? false;
+  }
+
+  formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+}

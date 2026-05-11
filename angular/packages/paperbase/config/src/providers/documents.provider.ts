@@ -38,6 +38,15 @@ export function provideDocuments(): EnvironmentProviders {
           order: 2,
           layout: eLayoutType.application,
         },
+        {
+          path: '/documents/recycle',
+          name: '::Menu:DocumentRecycleBin',
+          iconClass: 'fas fa-trash-can',
+          parentName: '::Menu:Documents',
+          requiredPolicy: PAPERBASE_PERMISSIONS.Documents.Restore,
+          order: 3,
+          layout: eLayoutType.application,
+        },
       ]);
     }),
   ]);

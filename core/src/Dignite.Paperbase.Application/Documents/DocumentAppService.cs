@@ -63,8 +63,29 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     {
         await CheckPolicyAsync(PaperbasePermissions.Documents.Default);
 
+        // 回收站视图：需要 Restore 权限，且整个查询管道必须在 DataFilter.Disable<ISoftDelete> 作用域内
+        if (input.IsDeleted == true)
+        {
+            await CheckPolicyAsync(PaperbasePermissions.Documents.Restore);
+            using (DataFilter.Disable<ISoftDelete>())
+            {
+                return await ExecuteListQueryAsync(input, onlyDeleted: true);
+            }
+        }
+
+        return await ExecuteListQueryAsync(input, onlyDeleted: false);
+    }
+
+    protected virtual async Task<PagedResultDto<DocumentListItemDto>> ExecuteListQueryAsync(
+        GetDocumentListInput input,
+        bool onlyDeleted)
+    {
         var query = await _documentRepository.GetQueryableAsync();
         query = ApplyFilter(query, input);
+        if (onlyDeleted)
+        {
+            query = query.Where(d => d.IsDeleted);
+        }
 
         var totalCount = await AsyncExecuter.CountAsync(query);
 
