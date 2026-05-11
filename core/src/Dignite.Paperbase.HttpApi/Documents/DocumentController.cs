@@ -49,6 +49,12 @@ public class DocumentController : PaperbaseController, IDocumentAppService
         return _documentAppService.DeleteAsync(id);
     }
 
+    [HttpDelete("{id}/permanent")]
+    public virtual Task PermanentDeleteAsync(Guid id)
+    {
+        return _documentAppService.PermanentDeleteAsync(id);
+    }
+
     [HttpPost("{id}/restore")]
     public virtual Task RestoreAsync(Guid id)
     {

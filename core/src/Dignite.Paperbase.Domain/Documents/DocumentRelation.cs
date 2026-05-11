@@ -9,7 +9,7 @@ namespace Dignite.Paperbase.Documents;
 /// <summary>
 /// 文档间关系。独立聚合根，不内嵌于 Document。
 /// </summary>
-public class DocumentRelation : CreationAuditedAggregateRoot<Guid>, IMultiTenant
+public class DocumentRelation : FullAuditedAggregateRoot<Guid>, IMultiTenant
 {
     public virtual Guid? TenantId { get; private set; }
 

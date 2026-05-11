@@ -16,4 +16,6 @@ public interface IDocumentRelationRepository : IRepository<DocumentRelation, Gui
         IReadOnlyCollection<Guid> documentIds,
         bool includeAiSuggested = true,
         CancellationToken cancellationToken = default);
+
+    Task HardDeleteByDocumentIdAsync(Guid documentId, CancellationToken cancellationToken = default);
 }

@@ -115,6 +115,7 @@
     "Permission:Documents": "Documents",
     "Permission:Documents.Upload": "Upload Documents",
     "Permission:Documents.Delete": "Delete Documents",
+    "Permission:Documents.PermanentDelete": "Permanently Delete Documents",
     "Permission:Documents.Export": "Export Documents",
     "Permission:DocumentRelations": "Document Relations",
     "Permission:DocumentRelations.Create": "Create Document Relation",

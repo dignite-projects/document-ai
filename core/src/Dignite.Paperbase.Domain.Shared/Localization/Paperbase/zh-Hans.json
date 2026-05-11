@@ -16,6 +16,7 @@
     "Permission:Documents": "文档",
     "Permission:Documents.Upload": "上传文档",
     "Permission:Documents.Delete": "删除文档",
+    "Permission:Documents.PermanentDelete": "彻底删除文档",
     "Permission:Documents.Export": "导出文档",
     "Permission:DocumentRelations": "文档关联",
     "Permission:DocumentRelations.Create": "创建文档关联",

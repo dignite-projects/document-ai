@@ -59,4 +59,15 @@ public class EfCoreDocumentRelationRepository
             .Select(g => g.First())
             .ToList();
     }
+
+    public virtual async Task HardDeleteByDocumentIdAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var dbContext = await GetDbContextAsync();
+        await dbContext.Set<DocumentRelation>()
+            .IgnoreQueryFilters()
+            .Where(r => r.SourceDocumentId == documentId || r.TargetDocumentId == documentId)
+            .ExecuteDeleteAsync(GetCancellationToken(cancellationToken));
+    }
 }

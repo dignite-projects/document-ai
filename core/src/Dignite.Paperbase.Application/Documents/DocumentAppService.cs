@@ -150,20 +150,47 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     [Authorize(PaperbasePermissions.Documents.Delete)]
     public virtual async Task DeleteAsync(Guid id)
     {
-        var document = await _documentRepository.GetAsync(id, includeDetails: true);
+        await _documentRepository.GetAsync(id);
 
-        // 立即投递本地事件（onUnitOfWorkComplete:false），handler 在主 UoW 仍活跃时
-        // 注册 after-commit 回调，主事务提交后再以新 UoW 清理各 provider 的 chunks。
-        await _localEventBus.PublishAsync(
-            new DocumentDeletingEvent(id, document.TenantId),
-            onUnitOfWorkComplete: false);
-
-        await _documentRepository.DeleteAsync(id);
-
+        // 级联软删除关系（DocumentRelation 实现 ISoftDelete，ABP 拦截为 UPDATE IsDeleted=1）
         var relations = await _relationRepository.GetListByDocumentIdAsync(id);
         if (relations.Count > 0)
         {
             await _relationRepository.DeleteManyAsync(relations);
+        }
+
+        await _documentRepository.DeleteAsync(id);
+    }
+
+    [Authorize(PaperbasePermissions.Documents.PermanentDelete)]
+    public virtual async Task PermanentDeleteAsync(Guid id)
+    {
+        Document document;
+        using (DataFilter.Disable<ISoftDelete>())
+        {
+            document = await _documentRepository.GetAsync(id, includeDetails: true);
+        }
+
+        // 注册 after-commit 回调，UoW 提交后清理向量存储
+        await _localEventBus.PublishAsync(
+            new DocumentDeletingEvent(id, document.TenantId),
+            onUnitOfWorkComplete: false);
+
+        // 硬删除关系（含已软删除的）—— DocumentRelation 已实现 ISoftDelete，
+        // 必须走 ExecuteDeleteAsync 才能真正物理删除
+        await _relationRepository.HardDeleteByDocumentIdAsync(id);
+
+        await _documentRepository.HardDeleteAsync(id);
+
+        try
+        {
+            await _blobContainer.DeleteAsync(document.OriginalFileBlobName);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex,
+                "Failed to delete blob {BlobName} for document {DocumentId}.",
+                document.OriginalFileBlobName, id);
         }
 
         await _distributedEventBus.PublishAsync(new DocumentDeletedEto
@@ -190,6 +217,20 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             document.DeleterId = null;
 
             await _documentRepository.UpdateAsync(document);
+
+            // 级联恢复软删除的关系（边界 case：文档软删除前用户显式删过的关系也会被恢复，可接受）
+            var relations = await _relationRepository.GetListByDocumentIdAsync(id);
+            var deletedRelations = relations.Where(r => r.IsDeleted).ToList();
+            foreach (var relation in deletedRelations)
+            {
+                relation.IsDeleted = false;
+                relation.DeletionTime = null;
+                relation.DeleterId = null;
+            }
+            if (deletedRelations.Count > 0)
+            {
+                await _relationRepository.UpdateManyAsync(deletedRelations);
+            }
 
             await _distributedEventBus.PublishAsync(new DocumentRestoredEto
             {

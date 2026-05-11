@@ -67,4 +67,13 @@ public class EfCoreDocumentRepository
     {
         return (await GetQueryableAsync()).IncludeDetails();
     }
+
+    public virtual async Task HardDeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var dbContext = await GetDbContextAsync();
+        await dbContext.Set<Document>()
+            .IgnoreQueryFilters()
+            .Where(d => d.Id == id)
+            .ExecuteDeleteAsync(GetCancellationToken(cancellationToken));
+    }
 }

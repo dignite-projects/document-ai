@@ -19,4 +19,6 @@ public interface IDocumentRepository : IRepository<Document, Guid>
     Task<List<Document>> GetListByIdsAsync(
         IReadOnlyCollection<Guid> ids,
         CancellationToken cancellationToken = default);
+
+    Task HardDeleteAsync(Guid id, CancellationToken cancellationToken = default);
 }
