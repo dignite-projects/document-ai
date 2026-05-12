@@ -82,7 +82,7 @@ Preserve `ChunkIndex`, `PageNumber`, and `DocumentTypeCode` through the round tr
 
 `VectorSearchRequest.QueryText` is provider-neutral. When non-null, providers that support hybrid search (e.g. Qdrant native dense + BM25 sparse with RRF) may combine dense recall with keyword recall. Providers that do not support it ignore the field and perform pure dense-vector search — no caller change required.
 
-If your provider supports hybrid mode, gate it behind a per-provider option (see `QdrantKnowledgeIndexOptions.EnableHybridSearch`) so deployments can toggle it without code changes. See [hybrid-search.md](hybrid-search.md) for the Qdrant implementation details and score-semantics caveats.
+If your provider supports hybrid mode, gate it behind a per-provider option (see `QdrantKnowledgeIndexOptions.EnableHybridSearch`) so deployments can toggle it without code changes. See [knowledge-qdrant.md](knowledge-qdrant.md) for the Qdrant implementation details and score-semantics caveats.
 
 ## Register with ABP
 

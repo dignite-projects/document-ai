@@ -58,5 +58,5 @@ There is no "rolling re-embed" mode. Plan downtime around step 4–5 or run two 
 
 - [AI provider](ai-provider.md) — where the embedding model id is configured
 - [Knowledge index](knowledge-index.md) — where the vectors are stored, plus payload-index schema
-- [Hybrid search](hybrid-search.md) — how the chunk text feeds BM25 sparse recall in addition to dense recall
+- [Qdrant provider details](knowledge-qdrant.md) — how the chunk text feeds BM25 sparse recall in addition to dense recall
 - [Pipeline runs](pipeline-runs.md) — embedding-job state and history

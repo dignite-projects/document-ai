@@ -52,7 +52,7 @@ The agent uses `ChatToolMode.Auto` — the model picks when (and with what `docu
 
 `IChatToolContributor.DocumentTypeCode` is **informational** — it is *not* a filter. Every contributor's tools are exposed on every turn regardless of conversation anchor. The field is used only as a tie-breaker hint for `MaxToolsPerTurn` trimming and to help reviewers understand intent. Do not rely on it for authorization (do that inside each tool body — see *Adding a tool contributor* below).
 
-The hard cap on tool-call rounds within a single turn is configured at host wiring time via `PaperbaseAI:MaxToolIterations` (default `10`); see [ai-provider.md → Provider wiring](ai-provider.md#provider-wiring-paperbaseai). For prompt language behavior, see [ai-provider.md → Cross-cutting LLM behavior](ai-provider.md#cross-cutting-llm-behavior-paperbaseaibehavior). For retrieval `topK` / `minScore` defaults, see [knowledge-index.md](knowledge-index.md). For BM25-augmented hybrid retrieval, see [hybrid-search.md](hybrid-search.md).
+The hard cap on tool-call rounds within a single turn is configured at host wiring time via `PaperbaseAI:MaxToolIterations` (default `10`); see [ai-provider.md → Provider wiring](ai-provider.md#provider-wiring-paperbaseai). For prompt language behavior, see [ai-provider.md → Cross-cutting LLM behavior](ai-provider.md#cross-cutting-llm-behavior-paperbaseaibehavior). For retrieval `topK` / `minScore` defaults, see [knowledge-index.md](knowledge-index.md). For BM25-augmented hybrid retrieval, see [knowledge-qdrant.md](knowledge-qdrant.md).
 
 ## Tools
 
@@ -214,6 +214,6 @@ Reference implementation: `modules/contracts/src/Dignite.Paperbase.Contracts.App
 
 - [HTTP client guide](chat-client.md) — request/response shapes, idempotency, 409 retry pattern
 - [Knowledge index](knowledge-index.md) — what backs retrieval
-- [Hybrid search](hybrid-search.md) — BM25 + dense recall fusion
+- [Qdrant provider details](knowledge-qdrant.md) — BM25 + dense recall fusion
 - [Embedding pipeline](embedding.md) — where chunks come from
 - [Relation discovery](relation-discovery.md) — populates the `DocumentRelation` graph the chat agent reaches via `get_document_relations`
