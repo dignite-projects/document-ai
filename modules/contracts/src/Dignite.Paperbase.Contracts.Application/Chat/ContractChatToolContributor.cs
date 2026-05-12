@@ -212,6 +212,40 @@ public class ContractChatToolContributor : IChatToolContributor, ITransientDepen
                 queryable.OrderByDescending(c => c.CreationTime).Take(MaxResultRows),
                 cancellationToken);
 
+            // Empty-result hint: when the structured filter matches nothing, return a
+            // payload that explicitly directs the next step. Without this, models reading
+            // bare `{documentIds:[], contracts:[]}` reliably conclude "answer is: nothing
+            // exists" and skip vector retrieval — even when the system prompt tells them
+            // to fall back. Tool-result instructions live IN the model's context and beat
+            // system-prompt advisories when the two conflict. See trace
+            // 82e2a5efa5b120441f1ccd6e334c6ee3 for the failure mode this fixes.
+            //
+            // The hint covers three real causes of empty result here:
+            //   (a) the document has never been classified as a contract (extraction not
+            //       run, or classified as a different type) — Contract entity doesn't exist
+            //   (b) the contract exists but NeedsReview=true (the !NeedsReview WHERE clause
+            //       above hides pending extractions from list-style search)
+            //   (c) the party name / contract number was extracted with slightly different
+            //       spelling than the filter string
+            if (contracts.Count == 0)
+            {
+                var emptyHint = new
+                {
+                    documentIds = System.Array.Empty<System.Guid>(),
+                    contracts = System.Array.Empty<object>(),
+                    note = "No contracts matched the structured filters. This does NOT mean " +
+                           "the document is absent. Before answering 'not found', call " +
+                           "search_paperbase_documents with the same query as a semantic " +
+                           "search — the document may exist in the vector store but: " +
+                           "(1) it hasn't been classified as a contract yet, " +
+                           "(2) its extraction is pending review and is excluded from this " +
+                           "structured search, or " +
+                           "(3) the party name / contract number was extracted with " +
+                           "different spelling than your filter."
+                };
+                return JsonSerializer.Serialize(emptyHint);
+            }
+
             var result = new
             {
                 documentIds = contracts.Select(c => c.DocumentId).ToList(),
@@ -248,7 +282,21 @@ public class ContractChatToolContributor : IChatToolContributor, ITransientDepen
 
             if (contract == null)
             {
-                return JsonSerializer.Serialize(new { found = false, documentId });
+                // Same hint-in-tool-result pattern as the empty branch in SearchAsync:
+                // tell the model explicitly what 'not found' here means and what to try next.
+                // Note get_contract_detail does NOT have the !NeedsReview filter that
+                // search_contracts has, so a null here means the documentId really isn't
+                // in the Contract table at all (vs filtered out for pending review).
+                return JsonSerializer.Serialize(new
+                {
+                    found = false,
+                    documentId,
+                    note = "No Contract record exists for this documentId. The document may " +
+                           "still be in the vector store — try search_paperbase_documents " +
+                           "with the user's query terms to read its content directly. Common " +
+                           "causes: the document was not classified as a contract type, or " +
+                           "classification ran but contract field extraction failed."
+                });
             }
 
             var detail = new
