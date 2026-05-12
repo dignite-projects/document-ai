@@ -1,7 +1,9 @@
 import { CommonModule } from '@angular/common';
 import {
   AfterViewChecked,
+  ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
   OnChanges,
   OnInit,
@@ -12,12 +14,14 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { SafeHtml, DomSanitizer } from '@angular/platform-browser';
 import { RouterModule } from '@angular/router';
 import { LocalizationPipe, LocalizationService } from '@abp/ng.core';
 import { Confirmation, ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
-import { finalize } from 'rxjs';
+import { forkJoin } from 'rxjs';
+import { finalize } from 'rxjs/operators';
 import { marked } from 'marked';
 import {
   ChatMessageRole,
@@ -73,6 +77,7 @@ export type ChatPanelMode = 'full' | 'panel';
   templateUrl: './chat-panel.component.html',
   styleUrls: ['./chat-panel.component.scss'],
   imports: [CommonModule, FormsModule, RouterModule, LocalizationPipe],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
   private readonly chatService = inject(ChatService);
@@ -81,6 +86,7 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
   private readonly toaster = inject(ToasterService);
   private readonly sanitizer = inject(DomSanitizer);
   private readonly localization = inject(LocalizationService);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly mode = input<ChatPanelMode>('full');
   // In `panel` mode the panel auto-scopes new conversations to this `documentId`
@@ -120,13 +126,18 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
 
   activeConversationId = computed(() => this.activeConversation()?.id ?? null);
   canSend = computed(() => !!this.message().trim() && !this.isSending());
+  // Intermediate computed so re-parsing only happens when the markdown *string*
+  // changes. Without this, any `sourceDocument.set(newObject)` (e.g. metadata
+  // refresh) would invalidate markdownHtml's cache even when the text is
+  // identical, and 50KB+ documents reparse every time.
+  private readonly sourceMarkdown = computed(() => this.sourceDocument()?.markdown ?? null);
   // Markdown is rendered (rather than displayed as `<pre>` text) because the project
   // is AI-first and the persisted Markdown is the single canonical text artifact —
   // headings/lists/tables carry semantic structure that helps the user scan.
   // marked is configured with `mangle:false` and `headerIds:false` to keep output
   // deterministic and free of injected anchor IDs.
   markdownHtml = computed<SafeHtml | null>(() => {
-    const markdown = this.sourceDocument()?.markdown;
+    const markdown = this.sourceMarkdown();
     if (!markdown) return null;
     const html = marked.parse(markdown, { async: false, gfm: true }) as string;
     return this.sanitizer.bypassSecurityTrustHtml(html);
@@ -170,7 +181,10 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
         skipCount: 0,
         sorting: 'CreationTime DESC',
       })
-      .pipe(finalize(() => this.isLoadingConversations.set(false)))
+      .pipe(
+        finalize(() => this.isLoadingConversations.set(false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: result => {
           this.conversations.set(result.items ?? []);
@@ -184,35 +198,37 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
     if (!conversationId) return;
 
     this.isLoadingMessages.set(true);
-    this.chatService.getConversation(conversationId).subscribe({
-      next: conversation => {
-        this.activeConversation.set(conversation);
-        this.selectedCitation.set(null);
-        this.sourceError.set(null);
-        if (!this.isPanelMode() && conversation.documentId) {
-          this.loadSourceDocument(conversation.documentId);
-        } else {
-          this.sourceRequestId++;
-          this.isLoadingSource.set(false);
-          this.sourceDocument.set(null);
-        }
-        this.chatService
-          .getMessageList(conversationId, {
-            maxResultCount: 100,
-            skipCount: 0,
-            sorting: 'CreationTime ASC',
-          })
-          .pipe(finalize(() => this.isLoadingMessages.set(false)))
-          .subscribe({
-            next: result => this.messages.set((result.items ?? []).map(m => this.toMessageView(m))),
-            error: () => this.toaster.error('::Chat:LoadFailed', '::Error'),
-          });
-      },
-      error: () => {
-        this.isLoadingMessages.set(false);
-        this.toaster.error('::Chat:LoadFailed', '::Error');
-      },
-    });
+    // forkJoin runs the two independent reads in parallel; before this change
+    // getMessageList was issued from inside getConversation's subscribe, so the
+    // user paid the sum of both round-trips when switching conversations.
+    forkJoin({
+      conversation: this.chatService.getConversation(conversationId),
+      messages: this.chatService.getMessageList(conversationId, {
+        maxResultCount: 100,
+        skipCount: 0,
+        sorting: 'CreationTime ASC',
+      }),
+    })
+      .pipe(
+        finalize(() => this.isLoadingMessages.set(false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: ({ conversation, messages }) => {
+          this.activeConversation.set(conversation);
+          this.selectedCitation.set(null);
+          this.sourceError.set(null);
+          this.messages.set((messages.items ?? []).map(m => this.toMessageView(m)));
+          if (!this.isPanelMode() && conversation.documentId) {
+            this.loadSourceDocument(conversation.documentId);
+          } else {
+            this.sourceRequestId++;
+            this.isLoadingSource.set(false);
+            this.sourceDocument.set(null);
+          }
+        },
+        error: () => this.toaster.error('::Chat:LoadFailed', '::Error'),
+      });
   }
 
   startDraft(): void {
@@ -231,10 +247,13 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
 
     this.confirmation
       .warn('::Chat:AreYouSureToDelete', '::AreYouSure')
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
 
-        this.chatService.deleteConversation(conversation.id!).subscribe({
+        this.chatService.deleteConversation(conversation.id!)
+          .pipe(takeUntilDestroyed(this.destroyRef))
+          .subscribe({
           next: () => {
             if (this.activeConversationId() === conversation.id) {
               this.activeConversation.set(null);
@@ -323,7 +342,10 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
     this.isCreating.set(true);
     this.chatService
       .createConversation(input)
-      .pipe(finalize(() => this.isCreating.set(false)))
+      .pipe(
+        finalize(() => this.isCreating.set(false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: conversation => {
           this.activeConversation.set(conversation);
@@ -385,7 +407,10 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
     this.isSending.set(true);
     this.chatService
       .sendMessageStream(conversation.id, { message: text, clientTurnId })
-      .pipe(finalize(() => this.isSending.set(false)))
+      .pipe(
+        finalize(() => this.isSending.set(false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: delta => this.applyDelta(pendingAssistantId, delta),
         error: () => {
@@ -414,69 +439,80 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
    * `ChatTurnDeltaKind`.
    */
   private applyDelta(pendingAssistantId: string, delta: ChatTurnDeltaDto): void {
-    this.messages.update(items =>
-      items.map(item => {
-        if (item.id !== pendingAssistantId) return item;
+    // findIndex + single-element spread instead of items.map(): a long streamed
+    // reply emits 100+ PartialText deltas. The old map() rebuilt every row
+    // wrapper for every token; this runs the per-row branch exactly once per
+    // delta and lets the rest of the array pass through by reference.
+    this.messages.update(items => {
+      const idx = items.findIndex(item => item.id === pendingAssistantId);
+      if (idx < 0) return items;
+      const item = items[idx];
+      const updated = this.applyDeltaToMessage(item, delta);
+      if (updated === item) return items;
+      const next = items.slice();
+      next[idx] = updated;
+      return next;
+    });
+  }
 
-        switch (delta.kind) {
-          case ChatTurnDeltaKind.ToolCallStarted: {
-            // Defensive: ignore events with no callId — the matching Completed
-            // would be unbindable, leaving a hung "pending" card.
-            if (!delta.toolCallId || !delta.toolName) return item;
-            const events = [...(item.toolEvents ?? [])];
-            events.push({
-              toolCallId: delta.toolCallId,
-              toolName: delta.toolName,
-              description: delta.progressDescription ?? `正在执行 ${delta.toolName}…`,
-              status: 'pending',
-            });
-            return { ...item, toolEvents: events };
-          }
-          case ChatTurnDeltaKind.ToolCallCompleted: {
-            if (!delta.toolCallId) return item;
-            const events = (item.toolEvents ?? []).map(ev =>
-              ev.toolCallId === delta.toolCallId
-                ? {
-                    ...ev,
-                    status: delta.toolCallSucceeded === false ? 'failure' as const : 'success' as const,
-                    elapsedMs: delta.elapsedMs,
-                  }
-                : ev
-            );
-            return { ...item, toolEvents: events };
-          }
-          case ChatTurnDeltaKind.PartialText: {
-            return {
-              ...item,
-              // First text chunk implicitly clears the spinner. If the model
-              // answers without invoking any tool, this is the first thing the
-              // user sees on screen.
-              isPending: false,
-              content: item.content + (delta.text ?? ''),
-            };
-          }
-          case ChatTurnDeltaKind.Done: {
-            return {
-              ...item,
-              id: delta.assistantMessageId ?? item.id,
-              isPending: false,
-              citations: delta.citations ?? [],
-              isDegraded: delta.isDegraded,
-            };
-          }
-          case ChatTurnDeltaKind.Error: {
-            return {
-              ...item,
-              isPending: false,
-              isError: true,
-              content: delta.errorMessage ?? 'Chat:SendFailed',
-            };
-          }
-          default:
-            return item;
-        }
-      })
-    );
+  private applyDeltaToMessage(item: ChatMessageView, delta: ChatTurnDeltaDto): ChatMessageView {
+    switch (delta.kind) {
+      case ChatTurnDeltaKind.ToolCallStarted: {
+        // Defensive: ignore events with no callId — the matching Completed
+        // would be unbindable, leaving a hung "pending" card.
+        if (!delta.toolCallId || !delta.toolName) return item;
+        const events = [...(item.toolEvents ?? [])];
+        events.push({
+          toolCallId: delta.toolCallId,
+          toolName: delta.toolName,
+          description: delta.progressDescription ?? `正在执行 ${delta.toolName}…`,
+          status: 'pending',
+        });
+        return { ...item, toolEvents: events };
+      }
+      case ChatTurnDeltaKind.ToolCallCompleted: {
+        if (!delta.toolCallId) return item;
+        const events = (item.toolEvents ?? []).map(ev =>
+          ev.toolCallId === delta.toolCallId
+            ? {
+                ...ev,
+                status: delta.toolCallSucceeded === false ? 'failure' as const : 'success' as const,
+                elapsedMs: delta.elapsedMs,
+              }
+            : ev
+        );
+        return { ...item, toolEvents: events };
+      }
+      case ChatTurnDeltaKind.PartialText: {
+        return {
+          ...item,
+          // First text chunk implicitly clears the spinner. If the model
+          // answers without invoking any tool, this is the first thing the
+          // user sees on screen.
+          isPending: false,
+          content: item.content + (delta.text ?? ''),
+        };
+      }
+      case ChatTurnDeltaKind.Done: {
+        return {
+          ...item,
+          id: delta.assistantMessageId ?? item.id,
+          isPending: false,
+          citations: delta.citations ?? [],
+          isDegraded: delta.isDegraded,
+        };
+      }
+      case ChatTurnDeltaKind.Error: {
+        return {
+          ...item,
+          isPending: false,
+          isError: true,
+          content: delta.errorMessage ?? 'Chat:SendFailed',
+        };
+      }
+      default:
+        return item;
+    }
   }
 
   private toMessageView(message: ChatMessageDto): ChatMessageView {
@@ -617,11 +653,14 @@ export class ChatPanelComponent implements OnInit, OnChanges, AfterViewChecked {
 
     this.documentService
       .get(documentId)
-      .pipe(finalize(() => {
-        if (requestId === this.sourceRequestId) {
-          this.isLoadingSource.set(false);
-        }
-      }))
+      .pipe(
+        finalize(() => {
+          if (requestId === this.sourceRequestId) {
+            this.isLoadingSource.set(false);
+          }
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: document => {
           if (requestId !== this.sourceRequestId) return;

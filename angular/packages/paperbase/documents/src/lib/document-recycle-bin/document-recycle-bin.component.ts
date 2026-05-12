@@ -1,4 +1,5 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { LocalizationPipe, PermissionService } from '@abp/ng.core';
@@ -15,18 +16,21 @@ import {
   templateUrl: './document-recycle-bin.component.html',
   styleUrls: ['./document-recycle-bin.component.scss'],
   imports: [CommonModule, FormsModule, LocalizationPipe],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DocumentRecycleBinComponent implements OnInit {
   private readonly documentService = inject(DocumentService);
   private readonly confirmation = inject(ConfirmationService);
   private readonly toaster = inject(ToasterService);
   private readonly permissionService = inject(PermissionService);
+  private readonly destroyRef = inject(DestroyRef);
 
   documents = signal<PagedResultDto<DocumentDto>>({ totalCount: 0, items: [] });
   isLoading = signal(true);
   page = signal(0);
   pageSize = 10;
   totalPages = computed(() => Math.ceil(this.documents().totalCount / this.pageSize));
+  paginationPages = computed(() => Array.from({ length: this.totalPages() }, (_, i) => i));
 
   readonly canRestore = this.permissionService.getGrantedPolicy(
     PAPERBASE_PERMISSIONS.Documents.Restore,
@@ -57,6 +61,7 @@ export class DocumentRecycleBinComponent implements OnInit {
         skipCount: this.page() * this.pageSize,
         sorting: 'creationTime desc',
       })
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: result => {
           this.documents.set(result);
@@ -69,14 +74,17 @@ export class DocumentRecycleBinComponent implements OnInit {
   restore(doc: DocumentDto): void {
     this.confirmation
       .warn('::Document:AreYouSureToRestore', '::AreYouSure')
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.documentService.restore(doc.id).subscribe({
-          next: () => {
-            this.toaster.success('::Document:RestoredSuccessfully', '::Success');
-            this.loadList();
-          },
-        });
+        this.documentService.restore(doc.id)
+          .pipe(takeUntilDestroyed(this.destroyRef))
+          .subscribe({
+            next: () => {
+              this.toaster.success('::Document:RestoredSuccessfully', '::Success');
+              this.loadList();
+            },
+          });
       });
   }
 
@@ -85,14 +93,17 @@ export class DocumentRecycleBinComponent implements OnInit {
       .warn('::Document:AreYouSureToPermanentlyDelete', '::AreYouSure', {
         yesText: '::Document:PermanentDelete',
       })
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.documentService.permanentDelete(doc.id).subscribe({
-          next: () => {
-            this.toaster.success('::Document:PermanentlyDeletedSuccessfully', '::Success');
-            this.loadList();
-          },
-        });
+        this.documentService.permanentDelete(doc.id)
+          .pipe(takeUntilDestroyed(this.destroyRef))
+          .subscribe({
+            next: () => {
+              this.toaster.success('::Document:PermanentlyDeletedSuccessfully', '::Success');
+              this.loadList();
+            },
+          });
       });
   }
 

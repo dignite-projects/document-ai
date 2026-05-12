@@ -116,9 +116,9 @@
                   <i class="fas fa-chevron-left"></i>
                 </button>
               </li>
-              @for (p of [].constructor(totalPages()); track $index) {
-                <li class="page-item" [class.active]="page() === $index">
-                  <button class="page-link" (click)="navigateTo($index)">{{ $index + 1 }}</button>
+              @for (p of paginationPages(); track p) {
+                <li class="page-item" [class.active]="page() === p">
+                  <button class="page-link" (click)="navigateTo(p)">{{ p + 1 }}</button>
                 </li>
               }
               <li class="page-item" [class.disabled]="page() === totalPages() - 1">

@@ -221,11 +221,11 @@
                           {{ row.pipelineCode }}
                         }
                       </span>
-                      <span [class]="getRunStatusBadgeClass(row.run?.status)">
-                        @if (isRunInProgress(row.run?.status)) {
+                      <span [class]="row.statusBadgeClass">
+                        @if (row.inProgress) {
                           <span class="spinner-border spinner-border-sm me-1" role="status"></span>
                         }
-                        {{ getRunStatusLabel(row.run?.status) | abpLocalization }}
+                        {{ row.statusLabel | abpLocalization }}
                       </span>
                       @if (row.run && row.run.attemptNumber > 1) {
                         <span class="badge bg-light text-muted border">
@@ -233,15 +233,15 @@
                           #{{ row.run.attemptNumber }}
                         </span>
                       }
-                      @if (row.run && getElapsedMs(row.run) !== null) {
+                      @if (row.elapsedDisplay !== null) {
                         <span class="text-muted ms-auto">
-                          <i class="fas fa-clock me-1"></i>{{ formatElapsed(row.run) }}
+                          <i class="fas fa-clock me-1"></i>{{ row.elapsedDisplay }}
                         </span>
                       }
-                      @if (row.isKnown && isRetryable(row.run)) {
+                      @if (row.retryable) {
                         <button
                           class="btn btn-outline-primary btn-sm"
-                          [class.ms-auto]="!(row.run && getElapsedMs(row.run) !== null)"
+                          [class.ms-auto]="row.elapsedDisplay === null"
                           [disabled]="retryingPipeline() !== null"
                           (click)="retryPipeline(row.pipelineCode)">
                           @if (retryingPipeline() === row.pipelineCode) {

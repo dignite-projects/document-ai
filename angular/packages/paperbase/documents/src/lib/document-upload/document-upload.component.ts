@@ -1,9 +1,17 @@
-import { Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { LocalizationPipe } from '@abp/ng.core';
 import { ToasterService } from '@abp/ng.theme.shared';
 import { DocumentService } from '@dignite/paperbase';
+import { from, of } from 'rxjs';
+import { catchError, map, mergeMap } from 'rxjs/operators';
+
+// Limits the number of concurrent /api/documents/upload requests to avoid
+// exhausting the browser's per-origin connection pool and overloading the
+// server when the user drops dozens of files at once.
+const MAX_CONCURRENT_UPLOADS = 3;
 
 interface FileUploadState {
   name: string;
@@ -16,11 +24,13 @@ interface FileUploadState {
   templateUrl: './document-upload.component.html',
   styleUrls: ['./document-upload.component.scss'],
   imports: [CommonModule, LocalizationPipe],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DocumentUploadComponent {
   private readonly documentService = inject(DocumentService);
   private readonly router = inject(Router);
   private readonly toaster = inject(ToasterService);
+  private readonly destroyRef = inject(DestroyRef);
 
   isDragOver = signal(false);
   isUploading = signal(false);
@@ -78,35 +88,37 @@ export class DocumentUploadComponent {
     this.isUploading.set(true);
     this.uploadingFiles.set(valid.map(f => ({ name: f.name, done: false, error: false })));
 
-    let completed = 0;
-    const onAllDone = () => {
-      this.isUploading.set(false);
-      const hasError = this.uploadingFiles().some(f => f.error);
-      if (hasError) {
-        this.toaster.warn('::Document:SomeUploadsFailed', '::Warning');
-      } else {
-        this.toaster.success('::Document:UploadedSuccessfully', '::Success');
-      }
-      this.router.navigate(['/documents']);
-    };
-
-    for (let i = 0; i < valid.length; i++) {
-      const file = valid[i];
-      const idx = i;
-      this.documentService.upload(file).subscribe({
-        next: () => {
+    const indexed = valid.map((file, idx) => ({ file, idx }));
+    from(indexed)
+      .pipe(
+        mergeMap(
+          ({ file, idx }) =>
+            this.documentService.upload(file).pipe(
+              map(() => ({ idx, success: true })),
+              catchError(() => of({ idx, success: false })),
+            ),
+          MAX_CONCURRENT_UPLOADS,
+        ),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: ({ idx, success }) => {
           this.uploadingFiles.update(list =>
-            list.map((item, j) => j === idx ? { ...item, done: true } : item)
+            list.map((item, j) =>
+              j === idx ? { ...item, done: success, error: !success } : item,
+            ),
           );
-          if (++completed === valid.length) onAllDone();
         },
-        error: () => {
-          this.uploadingFiles.update(list =>
-            list.map((item, j) => j === idx ? { ...item, error: true } : item)
-          );
-          if (++completed === valid.length) onAllDone();
+        complete: () => {
+          this.isUploading.set(false);
+          const hasError = this.uploadingFiles().some(f => f.error);
+          if (hasError) {
+            this.toaster.warn('::Document:SomeUploadsFailed', '::Warning');
+          } else {
+            this.toaster.success('::Document:UploadedSuccessfully', '::Success');
+          }
+          this.router.navigate(['/documents']);
         },
       });
-    }
   }
 }

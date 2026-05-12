@@ -1,10 +1,13 @@
 import {
+  ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   OnInit,
   inject,
   signal,
   computed,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
@@ -23,6 +26,12 @@ import {
   GetDocumentListInput,
   PAPERBASE_PERMISSIONS,
 } from '@dignite/paperbase';
+import { from, of } from 'rxjs';
+import { catchError, map, mergeMap } from 'rxjs/operators';
+
+// Mirrors document-upload.component.ts. Limits concurrent /upload requests
+// so a 50-file drop does not saturate the browser connection pool.
+const MAX_CONCURRENT_UPLOADS = 3;
 
 interface UploadResult {
   fileName: string;
@@ -36,6 +45,7 @@ interface UploadResult {
   templateUrl: './document-list.component.html',
   styleUrls: ['./document-list.component.scss'],
   imports: [CommonModule, RouterModule, FormsModule, LocalizationPipe],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DocumentListComponent implements OnInit {
   private readonly documentService = inject(DocumentService);
@@ -43,6 +53,7 @@ export class DocumentListComponent implements OnInit {
   private readonly confirmation = inject(ConfirmationService);
   private readonly toaster = inject(ToasterService);
   private readonly permissionService = inject(PermissionService);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly canDelete = this.permissionService.getGrantedPolicy(
     PAPERBASE_PERMISSIONS.Documents.Delete,
@@ -62,6 +73,7 @@ export class DocumentListComponent implements OnInit {
   page = signal(0);
   pageSize = 10;
   totalPages = computed(() => Math.ceil(this.documents().totalCount / this.pageSize));
+  paginationPages = computed(() => Array.from({ length: this.totalPages() }, (_, i) => i));
   pendingReviewCount = computed(() =>
     this.documents().items.filter(d => d.reviewStatus === DocumentReviewStatus.PendingReview).length
   );
@@ -87,7 +99,9 @@ export class DocumentListComponent implements OnInit {
       skipCount: this.page() * this.pageSize,
       sorting: 'creationTime desc',
       reviewStatus: this.reviewStatusFilter(),
-    }).subscribe({
+    })
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe({
       next: result => {
         this.documents.set(result);
         this.isLoading.set(false);
@@ -119,25 +133,28 @@ export class DocumentListComponent implements OnInit {
     this.isBulkUploading.set(true);
     this.bulkUploadResults.set([]);
 
-    let completed = 0;
-    const onAllDone = () => {
-      this.isBulkUploading.set(false);
-      this.loadList();
-      input.value = '';
-    };
-
-    for (const file of files) {
-      this.documentService.upload(file).subscribe({
-        next: doc => {
-          this.bulkUploadResults.update(r => [...r, { fileName: file.name, documentId: doc.id, succeeded: true }]);
-          if (++completed === files.length) onAllDone();
-        },
-        error: err => {
-          this.bulkUploadResults.update(r => [...r, { fileName: file.name, succeeded: false, errorMessage: err.message }]);
-          if (++completed === files.length) onAllDone();
+    from(files)
+      .pipe(
+        mergeMap(
+          file =>
+            this.documentService.upload(file).pipe(
+              map(doc => ({ fileName: file.name, documentId: doc.id, succeeded: true } as UploadResult)),
+              catchError(err =>
+                of({ fileName: file.name, succeeded: false, errorMessage: err?.message } as UploadResult),
+              ),
+            ),
+          MAX_CONCURRENT_UPLOADS,
+        ),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: result => this.bulkUploadResults.update(r => [...r, result]),
+        complete: () => {
+          this.isBulkUploading.set(false);
+          this.loadList();
+          input.value = '';
         },
       });
-    }
   }
 
   exportCsv(): void {
@@ -149,9 +166,12 @@ export class DocumentListComponent implements OnInit {
     event.stopPropagation();
     this.confirmation
       .warn('::Document:AreYouSureToDelete', '::AreYouSure')
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status === Confirmation.Status.confirm) {
-          this.documentService.delete(doc.id).subscribe({
+          this.documentService.delete(doc.id)
+            .pipe(takeUntilDestroyed(this.destroyRef))
+            .subscribe({
             next: () => {
               this.toaster.success('::Document:DeletedSuccessfully', '::Success');
               this.loadList();
@@ -207,7 +227,9 @@ export class DocumentListComponent implements OnInit {
     const doc = this.confirmingDoc();
     if (!doc || !this.selectedTypeCode()) return;
     this.isConfirming.set(true);
-    this.documentService.confirmClassification(doc.id, this.selectedTypeCode()).subscribe({
+    this.documentService.confirmClassification(doc.id, this.selectedTypeCode())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
       next: () => {
         this.isConfirming.set(false);
         this.closeConfirmDialog();

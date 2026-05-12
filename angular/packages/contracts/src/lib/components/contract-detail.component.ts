@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { LocalizationPipe } from '@abp/ng.core';
@@ -35,6 +36,7 @@ interface ContractFormState {
   imports: [CommonModule, FormsModule, RouterModule, LocalizationPipe],
   templateUrl: './contract-detail.component.html',
   styleUrls: ['./contract-detail.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ContractDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
@@ -42,6 +44,7 @@ export class ContractDetailComponent implements OnInit {
   private readonly service = inject(ContractsService);
   private readonly toaster = inject(ToasterService);
   private readonly confirmation = inject(ConfirmationService);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly ContractStatus = ContractStatus;
   readonly ContractReviewStatus = ContractReviewStatus;
@@ -79,7 +82,10 @@ export class ContractDetailComponent implements OnInit {
     this.saving.set(true);
     this.service
       .update(c.id, this.toUpdateDto(this.form()))
-      .pipe(finalize(() => this.saving.set(false)))
+      .pipe(
+        finalize(() => this.saving.set(false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: updated => {
           this.applyContract(updated);
@@ -95,13 +101,17 @@ export class ContractDetailComponent implements OnInit {
 
     this.confirmation
       .info('::Contract:ConfirmExtraction', '::AreYouSure')
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
 
         this.confirming.set(true);
         this.service
           .confirm(c.id)
-          .pipe(finalize(() => this.confirming.set(false)))
+          .pipe(
+            finalize(() => this.confirming.set(false)),
+            takeUntilDestroyed(this.destroyRef),
+          )
           .subscribe({
             next: () => {
               // Re-fetch to get updated NeedsReview / ReviewStatus / Status from server.
@@ -147,7 +157,10 @@ export class ContractDetailComponent implements OnInit {
     this.loading.set(true);
     this.service
       .get(id)
-      .pipe(finalize(() => this.loading.set(false)))
+      .pipe(
+        finalize(() => this.loading.set(false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: dto => this.applyContract(dto),
         error: () => {

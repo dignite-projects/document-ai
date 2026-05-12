@@ -1,7 +1,7 @@
 <div class="container-fluid py-3">
   <div class="d-flex align-items-center mb-3 gap-2">
     <button class="btn btn-outline-secondary btn-sm" (click)="back()">
-      <i class="fa fa-arrow-left me-1"></i>
+      <i class="fas fa-arrow-left me-1"></i>
       {{ '::Back' | abpLocalization }}
     </button>
     <h1 class="h4 mb-0 ms-2">{{ '::Contract:Detail' | abpLocalization }}</h1>
@@ -12,7 +12,7 @@
         [routerLink]="['/documents', c.documentId]"
         title="{{ '::Contract:OpenSourceDocument' | abpLocalization }}"
       >
-        <i class="fa fa-file-alt me-1"></i>
+        <i class="fas fa-file-alt me-1"></i>
         {{ '::Contract:OpenSourceDocument' | abpLocalization }}
       </a>
       <span [ngClass]="reviewStatusBadgeClass(c.reviewStatus)">
@@ -31,7 +31,7 @@
   @if (contract(); as c) {
     @if (c.needsReview) {
       <div class="alert alert-warning d-flex align-items-center mb-3" role="alert">
-        <i class="fa fa-exclamation-triangle me-2"></i>
+        <i class="fas fa-exclamation-triangle me-2"></i>
         <span>{{ '::Contract:NeedsReviewMessage' | abpLocalization }}</span>
       </div>
     }
@@ -234,7 +234,7 @@
               @if (confirming()) {
                 <span class="spinner-border spinner-border-sm me-1"></span>
               }
-              <i class="fa fa-check me-1"></i>
+              <i class="fas fa-check me-1"></i>
               {{ '::Contract:ConfirmExtraction' | abpLocalization }}
             </button>
           }
@@ -246,7 +246,7 @@
             @if (saving()) {
               <span class="spinner-border spinner-border-sm me-1"></span>
             }
-            <i class="fa fa-save me-1"></i>
+            <i class="fas fa-save me-1"></i>
             {{ 'AbpUi::Save' | abpLocalization }}
           </button>
         </div>

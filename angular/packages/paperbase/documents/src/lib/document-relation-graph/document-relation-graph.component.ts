@@ -1,4 +1,5 @@
-import { Component, Input, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, Input, OnInit, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { Router, RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -43,11 +44,13 @@ interface PositionedEdge {
   templateUrl: './document-relation-graph.component.html',
   styleUrls: ['./document-relation-graph.component.scss'],
   imports: [CommonModule, RouterModule, FormsModule, LocalizationPipe],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DocumentRelationGraphComponent implements OnInit {
   @Input({ required: true }) documentId!: string;
 
   private readonly relationService = inject(DocumentRelationService);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly router = inject(Router);
 
   readonly RelationSource = RelationSource;
@@ -149,6 +152,7 @@ export class DocumentRelationGraphComponent implements OnInit {
         depth: this.depth(),
         includeAiSuggested: this.includeAiSuggested(),
       })
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: g => {
           this.graph.set(g);

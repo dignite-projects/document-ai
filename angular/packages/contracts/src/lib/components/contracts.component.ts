@@ -1,5 +1,6 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { LocalizationPipe } from '@abp/ng.core';
@@ -14,6 +15,7 @@ import {
 @Component({
   selector: 'lib-contracts',
   imports: [CommonModule, FormsModule, RouterModule, LocalizationPipe],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   styles: [
     `
       .contract-row { cursor: pointer; }
@@ -26,11 +28,11 @@ import {
         <h1 class="h3 mb-0">{{ '::DocumentType:Contract' | abpLocalization }}</h1>
         <div class="d-flex gap-2">
           <button type="button" class="btn btn-outline-success" (click)="exportCsv()">
-            <i class="fa fa-download me-1"></i>
+            <i class="fas fa-download me-1"></i>
             {{ '::Contract:ExportCsv' | abpLocalization }}
           </button>
-          <button type="button" class="btn btn-outline-primary" (click)="load()" [disabled]="loading">
-            <i class="fa fa-refresh me-1"></i>
+          <button type="button" class="btn btn-outline-primary" (click)="load()" [disabled]="loading()">
+            <i class="fas fa-refresh me-1"></i>
             {{ 'AbpUi::Refresh' | abpLocalization }}
           </button>
         </div>
@@ -46,7 +48,8 @@ import {
             class="form-control"
             type="search"
             name="counterpartyKeyword"
-            [(ngModel)]="counterpartyKeyword"
+            [ngModel]="counterpartyKeyword()"
+            (ngModelChange)="counterpartyKeyword.set($event)"
             (keyup.enter)="load()"
           />
         </div>
@@ -59,7 +62,8 @@ import {
             class="form-control"
             type="date"
             name="expirationDateFrom"
-            [(ngModel)]="expirationDateFrom"
+            [ngModel]="expirationDateFrom()"
+            (ngModelChange)="expirationDateFrom.set($event)"
           />
         </div>
         <div class="col-6 col-md-2">
@@ -71,7 +75,8 @@ import {
             class="form-control"
             type="date"
             name="expirationDateTo"
-            [(ngModel)]="expirationDateTo"
+            [ngModel]="expirationDateTo()"
+            (ngModelChange)="expirationDateTo.set($event)"
           />
         </div>
         <div class="col-6 col-md-2">
@@ -83,7 +88,8 @@ import {
             class="form-control"
             type="number"
             name="amountMin"
-            [(ngModel)]="amountMin"
+            [ngModel]="amountMin()"
+            (ngModelChange)="amountMin.set($event)"
             min="0"
           />
         </div>
@@ -96,7 +102,8 @@ import {
             class="form-control"
             type="number"
             name="amountMax"
-            [(ngModel)]="amountMax"
+            [ngModel]="amountMax()"
+            (ngModelChange)="amountMax.set($event)"
             min="0"
           />
         </div>
@@ -108,7 +115,8 @@ import {
             id="reviewStatus"
             class="form-select"
             name="reviewStatus"
-            [(ngModel)]="reviewStatusFilter"
+            [ngModel]="reviewStatusFilter()"
+            (ngModelChange)="reviewStatusFilter.set($event)"
             (change)="load()"
           >
             <option [ngValue]="undefined">{{ 'AbpUi::All' | abpLocalization }}</option>
@@ -124,8 +132,8 @@ import {
           </select>
         </div>
         <div class="col-12 col-md-auto">
-          <button type="button" class="btn btn-primary" (click)="load()" [disabled]="loading">
-            <i class="fa fa-search me-1"></i>
+          <button type="button" class="btn btn-primary" (click)="load()" [disabled]="loading()">
+            <i class="fas fa-search me-1"></i>
             {{ 'AbpUi::Search' | abpLocalization }}
           </button>
         </div>
@@ -146,7 +154,7 @@ import {
             </tr>
           </thead>
           <tbody>
-            @if (loading) {
+            @if (loading()) {
               <tr>
                 <td colspan="8" class="text-center py-4">
                   <span class="spinner-border spinner-border-sm me-2"></span>
@@ -154,7 +162,7 @@ import {
                 </td>
               </tr>
             }
-            @for (contract of contracts; track contract.id) {
+            @for (contract of contracts(); track contract.id) {
               <tr
                 class="contract-row"
                 role="button"
@@ -190,7 +198,7 @@ import {
                 </td>
               </tr>
             }
-            @if (!loading && contracts.length === 0) {
+            @if (!loading() && contracts().length === 0) {
               <tr>
                 <td colspan="8" class="text-center text-muted py-4">
                   {{ 'AbpUi::NoDataAvailable' | abpLocalization }}
@@ -208,14 +216,18 @@ export class ContractsComponent implements OnInit {
   protected readonly service = inject(ContractsService);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
-  protected contracts: ContractDto[] = [];
-  protected counterpartyKeyword = '';
-  protected expirationDateFrom = '';
-  protected expirationDateTo = '';
-  protected amountMin: number | null = null;
-  protected amountMax: number | null = null;
-  protected reviewStatusFilter: ContractReviewStatus | undefined = undefined;
-  protected loading = false;
+  private readonly destroyRef = inject(DestroyRef);
+  // signals are required for OnPush compatibility — the subscribe callbacks
+  // below run outside of any Zone-tracked event handler, so plain field
+  // assignments would not trigger change detection on this component.
+  protected contracts = signal<ContractDto[]>([]);
+  protected counterpartyKeyword = signal('');
+  protected expirationDateFrom = signal('');
+  protected expirationDateTo = signal('');
+  protected amountMin = signal<number | null>(null);
+  protected amountMax = signal<number | null>(null);
+  protected reviewStatusFilter = signal<ContractReviewStatus | undefined>(undefined);
+  protected loading = signal(false);
 
   ngOnInit(): void {
     this.load();
@@ -223,33 +235,36 @@ export class ContractsComponent implements OnInit {
 
   protected exportCsv(): void {
     const url = this.service.getExportUrl({
-      counterpartyKeyword: this.counterpartyKeyword || undefined,
-      expirationDateFrom: this.expirationDateFrom || undefined,
-      expirationDateTo: this.expirationDateTo || undefined,
-      amountMin: this.amountMin ?? undefined,
-      amountMax: this.amountMax ?? undefined,
-      reviewStatus: this.reviewStatusFilter,
+      counterpartyKeyword: this.counterpartyKeyword() || undefined,
+      expirationDateFrom: this.expirationDateFrom() || undefined,
+      expirationDateTo: this.expirationDateTo() || undefined,
+      amountMin: this.amountMin() ?? undefined,
+      amountMax: this.amountMax() ?? undefined,
+      reviewStatus: this.reviewStatusFilter(),
     });
     window.open(url, '_blank');
   }
 
   protected load(): void {
-    this.loading = true;
+    this.loading.set(true);
     this.service
       .getList({
         skipCount: 0,
         maxResultCount: 20,
         sorting: 'expirationDate',
-        counterpartyKeyword: this.counterpartyKeyword || undefined,
-        expirationDateFrom: this.expirationDateFrom || undefined,
-        expirationDateTo: this.expirationDateTo || undefined,
-        amountMin: this.amountMin ?? undefined,
-        amountMax: this.amountMax ?? undefined,
-        reviewStatus: this.reviewStatusFilter,
+        counterpartyKeyword: this.counterpartyKeyword() || undefined,
+        expirationDateFrom: this.expirationDateFrom() || undefined,
+        expirationDateTo: this.expirationDateTo() || undefined,
+        amountMin: this.amountMin() ?? undefined,
+        amountMax: this.amountMax() ?? undefined,
+        reviewStatus: this.reviewStatusFilter(),
       })
-      .pipe(finalize(() => (this.loading = false)))
+      .pipe(
+        finalize(() => this.loading.set(false)),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe(result => {
-        this.contracts = result.items;
+        this.contracts.set(result.items);
       });
   }
 

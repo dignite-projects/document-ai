@@ -1,11 +1,14 @@
 import {
+  ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   OnInit,
   OnDestroy,
   inject,
   signal,
   computed,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { LocalizationPipe, PermissionService } from '@abp/ng.core';
@@ -28,6 +31,16 @@ interface PipelineRow {
   labelKey: string;
   isKnown: boolean;
   run: DocumentPipelineRunDto | null;
+  // Pre-computed view fields. Without these, the template re-invoked
+  // getRunStatusBadgeClass / getElapsedMs / formatElapsed / isRetryable on
+  // every change detection cycle for every row. Now they are derived once
+  // when the pipelineRows signal recomputes (i.e. when the document is
+  // (re)loaded).
+  statusBadgeClass: string;
+  statusLabel: string;
+  inProgress: boolean;
+  elapsedDisplay: string | null;
+  retryable: boolean;
 }
 
 // Mirrors core/src/Dignite.Paperbase.Domain.Shared/Documents/PaperbasePipelines.cs.
@@ -46,6 +59,7 @@ const KNOWN_PIPELINE_CODES = [
   templateUrl: './document-detail.component.html',
   styleUrls: ['./document-detail.component.scss'],
   imports: [CommonModule, RouterModule, LocalizationPipe, ChatPanelComponent, DocumentRelationsComponent, DocumentRelationGraphComponent],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DocumentDetailComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
@@ -54,6 +68,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   private readonly toaster = inject(ToasterService);
   private readonly confirmation = inject(ConfirmationService);
   private readonly permissionService = inject(PermissionService);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly canDelete = this.permissionService.getGrantedPolicy(
     PAPERBASE_PERMISSIONS.Documents.Delete,
@@ -77,12 +92,12 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     if (!doc) return [];
 
     const allRuns = doc.pipelineRuns ?? [];
-    const known: PipelineRow[] = KNOWN_PIPELINE_CODES.map(code => ({
-      pipelineCode: code,
-      labelKey: `::Document:Pipeline:${code}`,
-      isKnown: true,
-      run: this.pickLatestRun(allRuns, code),
-    }));
+    const known: PipelineRow[] = KNOWN_PIPELINE_CODES.map(code => this.toPipelineRow(
+      code,
+      `::Document:Pipeline:${code}`,
+      true,
+      this.pickLatestRun(allRuns, code),
+    ));
 
     const unknownCodes = Array.from(
       new Set(
@@ -92,15 +107,38 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       )
     );
 
-    const unknown: PipelineRow[] = unknownCodes.map(code => ({
-      pipelineCode: code,
-      labelKey: code,
-      isKnown: false,
-      run: this.pickLatestRun(allRuns, code),
-    }));
+    const unknown: PipelineRow[] = unknownCodes.map(code => this.toPipelineRow(
+      code,
+      code,
+      false,
+      this.pickLatestRun(allRuns, code),
+    ));
 
     return [...known, ...unknown];
   });
+
+  protected toPipelineRow(
+    pipelineCode: string,
+    labelKey: string,
+    isKnown: boolean,
+    run: DocumentPipelineRunDto | null,
+  ): PipelineRow {
+    return {
+      pipelineCode,
+      labelKey,
+      isKnown,
+      run,
+      statusBadgeClass: this.getRunStatusBadgeClass(run?.status),
+      statusLabel: this.getRunStatusLabel(run?.status),
+      inProgress: this.isRunInProgress(run?.status),
+      elapsedDisplay: run ? this.formatElapsedOrNull(run) : null,
+      retryable: isKnown && this.isRetryable(run),
+    };
+  }
+
+  protected formatElapsedOrNull(run: DocumentPipelineRunDto): string | null {
+    return this.getElapsedMs(run) === null ? null : this.formatElapsed(run);
+  }
 
   needsReview = computed(() =>
     this.document()?.reviewStatus === DocumentReviewStatus.PendingReview
@@ -133,7 +171,9 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
 
   private loadDocument(): void {
     this.isLoading.set(true);
-    this.documentService.get(this.documentId).subscribe({
+    this.documentService.get(this.documentId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
       next: doc => {
         this.document.set(doc);
         this.isLoading.set(false);
@@ -153,9 +193,11 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     if (oldUrl) URL.revokeObjectURL(oldUrl);
     this.blobUrl.set(null);
 
-    this.documentService.getBlob(this.documentId).subscribe({
-      next: blob => this.blobUrl.set(URL.createObjectURL(blob)),
-    });
+    this.documentService.getBlob(this.documentId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: blob => this.blobUrl.set(URL.createObjectURL(blob)),
+      });
   }
 
   openFile(): void {
@@ -165,17 +207,19 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       return;
     }
     this.isBlobLoading.set(true);
-    this.documentService.getBlob(this.documentId).subscribe({
-      next: blob => {
-        const url = URL.createObjectURL(blob);
-        this.blobUrl.set(url);
-        this.isBlobLoading.set(false);
-        window.open(url, '_blank');
-      },
-      error: () => {
-        this.isBlobLoading.set(false);
-      },
-    });
+    this.documentService.getBlob(this.documentId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: blob => {
+          const url = URL.createObjectURL(blob);
+          this.blobUrl.set(url);
+          this.isBlobLoading.set(false);
+          window.open(url, '_blank');
+        },
+        error: () => {
+          this.isBlobLoading.set(false);
+        },
+      });
   }
 
   setTab(tab: 'info' | 'relations' | 'graph'): void {
@@ -204,9 +248,12 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     if (!doc) return;
     this.confirmation
       .warn('::Document:AreYouSureToDelete', '::AreYouSure')
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.documentService.delete(doc.id).subscribe({
+        this.documentService.delete(doc.id)
+          .pipe(takeUntilDestroyed(this.destroyRef))
+          .subscribe({
           next: () => {
             this.toaster.success('::Document:DeletedSuccessfully', '::Success');
             this.router.navigate(['/documents']);
@@ -269,7 +316,9 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     if (this.retryingPipeline() !== null) return;
 
     this.retryingPipeline.set(pipelineCode);
-    this.documentService.retryPipeline(this.documentId, pipelineCode).subscribe({
+    this.documentService.retryPipeline(this.documentId, pipelineCode)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
       next: () => {
         this.retryingPipeline.set(null);
         this.toaster.success('::Document:Pipeline:RetryQueued', '::Success');

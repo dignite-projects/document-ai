@@ -229,7 +229,7 @@
 
             @if (item.citations.length > 0) {
               <div class="citations">
-                @for (citation of item.citations; track $index) {
+                @for (citation of item.citations; track citation) {
                   <button
                     type="button"
                     class="citation btn btn-light btn-sm w-100 text-start border-start border-primary rounded-0 mt-1"
