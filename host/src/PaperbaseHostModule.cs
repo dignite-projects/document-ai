@@ -436,7 +436,8 @@ public class PaperbaseHostModule : AbpModule
 
         // Title-generator chat client: same shape as the summarizer — single-shot,
         // tool-free, prompt-unique-per-call so distributed caching is a net negative.
-        // Consumed by ChatAppService.TryGenerateAndApplyTitleAsync via
+        // Consumed by ChatAppService.TryGenerateAndApplyTitleAsync and by
+        // DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync via
         // [FromKeyedServices(PaperbaseAIConsts.TitleGeneratorChatClientKey)]. Falls back
         // to the primary ChatModelId when TitleGeneratorModelId is unset; a host that
         // wants to cut cost can point this at a small fast model (e.g. Qwen3-8B) while
@@ -446,6 +447,23 @@ public class PaperbaseHostModule : AbpModule
         context.Services.AddKeyedChatClient(
             PaperbaseAIConsts.TitleGeneratorChatClientKey,
             _ => openAIClient.GetChatClient(titleGeneratorModelId).AsIChatClient())
+            .UseOpenTelemetry()
+            .UseLogging();
+
+        // Structured-output chat client: shared by every single-shot RunAsync<T> caller
+        // (DocumentClassificationWorkflow, DocumentRerankWorkflow, RelationInferenceAgent,
+        // ContractDocumentHandler.ExtractFieldsAsync). All four are tool-free and their
+        // prompts are document-content-derived (unique per call), so FunctionInvocation
+        // and DistributedCache are pure overhead. OTel + Logging stay so each structured
+        // call shows up as a clean chat <model> span (no phantom orchestrate_tools wrap).
+        // Falls back to ChatModelId when StructuredModelId is unset; production teams
+        // running tight token budgets can point this at a smaller / cheaper model that
+        // can still satisfy schema-bound output.
+        var structuredModelId = configuration["PaperbaseAI:StructuredModelId"]
+            ?? configuration["PaperbaseAI:ChatModelId"]!;
+        context.Services.AddKeyedChatClient(
+            PaperbaseAIConsts.StructuredChatClientKey,
+            _ => openAIClient.GetChatClient(structuredModelId).AsIChatClient())
             .UseOpenTelemetry()
             .UseLogging();
 

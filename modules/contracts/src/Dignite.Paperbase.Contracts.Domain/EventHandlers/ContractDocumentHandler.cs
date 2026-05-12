@@ -2,10 +2,12 @@ using System.Text;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Abstractions.Agents;
 using Dignite.Paperbase.Abstractions.Documents;
+using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Contracts.Contracts;
 using Dignite.Paperbase.Contracts.Telemetry;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Volo.Abp.DependencyInjection;
@@ -23,6 +25,14 @@ public class ContractDocumentHandler :
 {
     private readonly IContractRepository _contractRepository;
     private readonly ContractManager _contractManager;
+    /// <summary>
+    /// Structured-output (<c>RunAsync&lt;ContractExtractionResult&gt;</c>), tool-free,
+    /// prompt-unique field extraction — routed through the dedicated structured keyed
+    /// client (<see cref="PaperbaseAIConsts.StructuredChatClientKey"/>) shared with
+    /// classification, rerank, and relation inference. Same shape: no tools, schema-bound
+    /// output, prompt derived from document Markdown (unique per call). The
+    /// <c>WithValidationRetry</c> middleware below adds its own retry loop on top.
+    /// </summary>
     private readonly IChatClient _chatClient;
     private readonly ICurrentTenant _currentTenant;
     private readonly IContractExtractionExampleProvider _exampleProvider;
@@ -33,7 +43,7 @@ public class ContractDocumentHandler :
     public ContractDocumentHandler(
         IContractRepository contractRepository,
         ContractManager contractManager,
-        IChatClient chatClient,
+        [FromKeyedServices(PaperbaseAIConsts.StructuredChatClientKey)] IChatClient chatClient,
         ICurrentTenant currentTenant,
         IContractExtractionExampleProvider exampleProvider,
         IExtractionValidator<ContractExtractionResult> extractionValidator,

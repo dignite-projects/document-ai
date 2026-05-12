@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Volo.Abp.DependencyInjection;
 
@@ -56,11 +57,18 @@ public class RelationInferenceAgent : ITransientDependency
         "\n" +
         PromptBoundary.BoundaryRule;
 
+    /// <summary>
+    /// Structured-output (<c>RunAsync&lt;RelationInferenceResult&gt;</c>), tool-free,
+    /// prompt-unique — routed through the dedicated structured keyed client
+    /// (<see cref="PaperbaseAIConsts.StructuredChatClientKey"/>). L3 inference runs
+    /// per candidate pair and can be high-volume; the structured client's lack of
+    /// FunctionInvocation + DistributedCache wrappers keeps each call efficient.
+    /// </summary>
     private readonly IChatClient _chatClient;
     private readonly PaperbaseAIBehaviorOptions _aiOptions;
 
     public RelationInferenceAgent(
-        IChatClient chatClient,
+        [FromKeyedServices(PaperbaseAIConsts.StructuredChatClientKey)] IChatClient chatClient,
         IOptions<PaperbaseAIBehaviorOptions> aiOptions)
     {
         _chatClient = chatClient;

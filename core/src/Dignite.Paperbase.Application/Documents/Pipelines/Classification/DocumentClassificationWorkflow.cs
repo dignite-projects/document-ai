@@ -6,6 +6,7 @@ using Dignite.Paperbase.Abstractions.Documents;
 using Dignite.Paperbase.Ai;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -18,6 +19,13 @@ namespace Dignite.Paperbase.Documents.Pipelines.Classification;
 /// </summary>
 public class DocumentClassificationWorkflow : ITransientDependency
 {
+    /// <summary>
+    /// Structured-output (<c>RunAsync&lt;ClassificationResponse&gt;</c>), tool-free,
+    /// prompt-unique call — routed through the dedicated keyed client
+    /// (<see cref="PaperbaseAIConsts.StructuredChatClientKey"/>) so traces stay clean
+    /// and hosts can optionally point classification at a smaller / cheaper model than
+    /// the main agentic chat. See <c>docs/ai-provider.md</c> keyed-clients table.
+    /// </summary>
     private readonly IChatClient _chatClient;
     private readonly IPromptProvider _promptProvider;
     private readonly PaperbaseAIBehaviorOptions _options;
@@ -26,7 +34,7 @@ public class DocumentClassificationWorkflow : ITransientDependency
         = NullLogger<DocumentClassificationWorkflow>.Instance;
 
     public DocumentClassificationWorkflow(
-        IChatClient chatClient,
+        [FromKeyedServices(PaperbaseAIConsts.StructuredChatClientKey)] IChatClient chatClient,
         IOptions<PaperbaseAIBehaviorOptions> options,
         IPromptProvider promptProvider)
     {

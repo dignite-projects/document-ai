@@ -59,17 +59,24 @@ Field extraction is more forgiving than chat because the prompt explicitly deman
 
 ### Choosing per-pipeline (advanced)
 
-A single `PaperbaseAI` block registers one main chat client plus two keyed side-clients out of the box, falling back to `ChatModelId` when not overridden:
+A single `PaperbaseAI` block registers one main chat client plus three keyed side-clients out of the box, all falling back to `ChatModelId` when their own model id is not overridden:
 
 | Config key | Keyed registration | Consumed by |
 |---|---|---|
-| `PaperbaseAI:ChatModelId` (required) | default `IChatClient` (with `UseFunctionInvocation` + optional `UseDistributedCache`) | Document chat, classification, business-module field extractors, rerank |
-| `PaperbaseAI:SummarizerModelId` (optional) | `PaperbaseAIConsts.SummarizerChatClientKey` (no FunctionInvocation, no DistributedCache) | `SummarizationCompactionStrategy` |
-| `PaperbaseAI:TitleGeneratorModelId` (optional) | `PaperbaseAIConsts.TitleGeneratorChatClientKey` (no FunctionInvocation, no DistributedCache) | `ChatAppService.TryGenerateAndApplyTitleAsync` for auto-generated conversation titles |
+| `PaperbaseAI:ChatModelId` (required) | default `IChatClient` (with `UseFunctionInvocation` + optional `UseDistributedCache`) | The agentic document chat path (`ChatAppService` main turn) — the **only** path that needs tool calling |
+| `PaperbaseAI:SummarizerModelId` (optional) | `PaperbaseAIConsts.SummarizerChatClientKey` (no FunctionInvocation, no DistributedCache) | `SummarizationCompactionStrategy` for chat history compaction |
+| `PaperbaseAI:TitleGeneratorModelId` (optional) | `PaperbaseAIConsts.TitleGeneratorChatClientKey` (no FunctionInvocation, no DistributedCache) | Auto-generated short titles: `ChatAppService.TryGenerateAndApplyTitleAsync` (conversation titles) + `DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync` (document titles from Markdown) |
+| `PaperbaseAI:StructuredModelId` (optional) | `PaperbaseAIConsts.StructuredChatClientKey` (no FunctionInvocation, no DistributedCache) | All single-shot schema-bound `RunAsync<T>` calls: `DocumentClassificationWorkflow`, `DocumentRerankWorkflow`, `RelationInferenceAgent`, and business-module field extractors (e.g. `ContractDocumentHandler.ExtractFieldsAsync`) |
 
-The two side-clients exist to keep single-shot text-completion calls off the main client's tool-calling pipeline — no phantom `orchestrate_tools` spans on traces, no DistributedCache lookups for guaranteed-unique prompts. Both fall back to the main `ChatModelId` automatically, so a host that doesn't care about cost can leave them unset and ship.
+The three side-clients exist to keep single-shot text-completion / structured-output calls off the main client's tool-calling pipeline. Splitting buys three things on every non-agentic call:
 
-To split further (e.g. small fast model for classification + large model for chat), replace `ConfigureAI` in your host with additional per-purpose `AddKeyedChatClient` registrations following the same pattern. Production teams running tight token budgets often go this route.
+- **Trace cleanliness** — no phantom `orchestrate_tools` span wrapping a call that has no tools to invoke
+- **No cache waste** — every non-agentic prompt in Paperbase is document-content-derived (unique per call), so `UseDistributedCache` lookups are guaranteed misses
+- **Per-task model tuning** — production teams running tight token budgets can point classification / rerank / extraction at a smaller / cheaper model that can still satisfy schema-bound output, while keeping the main chat on a stronger model
+
+The "agentic vs single-shot" distinction matches what each path actually needs from the model. Hosts that don't care about cost can leave the three optional model ids unset and ship — everything falls back to `ChatModelId` automatically.
+
+To split even further (e.g. a different model per workflow), replace `ConfigureAI` in your host with additional per-purpose `AddKeyedChatClient` registrations following the same pattern as the existing three. The four sites that share `StructuredChatClientKey` today are deliberately consolidated because their call shape is identical; split them only when production telemetry shows a real per-task cost or quality reason.
 
 ## Where it is used
 

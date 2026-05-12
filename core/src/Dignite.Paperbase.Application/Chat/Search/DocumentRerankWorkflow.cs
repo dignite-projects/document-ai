@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -20,6 +21,12 @@ namespace Dignite.Paperbase.Chat.Search;
 /// </summary>
 public class DocumentRerankWorkflow : ITransientDependency
 {
+    /// <summary>
+    /// Structured-output (<c>RunAsync&lt;RerankResponse&gt;</c>), tool-free, prompt-unique
+    /// — routed through the dedicated structured keyed client
+    /// (<see cref="PaperbaseAIConsts.StructuredChatClientKey"/>). See
+    /// <c>docs/ai-provider.md</c> keyed-clients table.
+    /// </summary>
     private readonly IChatClient _chatClient;
     private readonly IPromptProvider _promptProvider;
     private readonly PaperbaseAIBehaviorOptions _options;
@@ -28,7 +35,7 @@ public class DocumentRerankWorkflow : ITransientDependency
         = NullLogger<DocumentRerankWorkflow>.Instance;
 
     public DocumentRerankWorkflow(
-        IChatClient chatClient,
+        [FromKeyedServices(PaperbaseAIConsts.StructuredChatClientKey)] IChatClient chatClient,
         IOptions<PaperbaseAIBehaviorOptions> options,
         IPromptProvider promptProvider)
     {
