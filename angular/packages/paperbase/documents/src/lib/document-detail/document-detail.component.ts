@@ -66,6 +66,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   activeTab = signal<'info' | 'relations' | 'graph'>('info');
   retryingPipeline = signal<string | null>(null);
   blobUrl = signal<string | null>(null);
+  isBlobLoading = signal(false);
 
   readonly DocumentLifecycleStatus = DocumentLifecycleStatus;
   readonly DocumentReviewStatus = DocumentReviewStatus;
@@ -136,7 +137,10 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       next: doc => {
         this.document.set(doc);
         this.isLoading.set(false);
-        this.loadBlob();
+        // 仅图片需要立即加载（内联预览）；非图片等用户点击"打开文件"时再下载
+        if (doc.fileOrigin?.contentType?.startsWith('image/')) {
+          this.loadBlob();
+        }
       },
       error: () => {
         this.isLoading.set(false);
@@ -151,6 +155,26 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
 
     this.documentService.getBlob(this.documentId).subscribe({
       next: blob => this.blobUrl.set(URL.createObjectURL(blob)),
+    });
+  }
+
+  openFile(): void {
+    const existing = this.blobUrl();
+    if (existing) {
+      window.open(existing, '_blank');
+      return;
+    }
+    this.isBlobLoading.set(true);
+    this.documentService.getBlob(this.documentId).subscribe({
+      next: blob => {
+        const url = URL.createObjectURL(blob);
+        this.blobUrl.set(url);
+        this.isBlobLoading.set(false);
+        window.open(url, '_blank');
+      },
+      error: () => {
+        this.isBlobLoading.set(false);
+      },
     });
   }
 
