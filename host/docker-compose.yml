@@ -24,6 +24,32 @@ services:
       - hf_cache:/root/.cache/huggingface
     restart: unless-stopped
 
+  # Local observability backend for the OTel pipeline wired in PaperbaseHostModule
+  # (Issue #142). Receives traces / metrics / logs over OTLP and renders them at
+  # http://localhost:18888. Profile-gated so it doesn't start on plain
+  # `docker compose up` — bring it up only when you want to look at signals:
+  #
+  #   docker compose --profile observability up -d aspire-dashboard
+  #
+  # Then in appsettings.Development.json (or env vars) set:
+  #   OpenTelemetry:Enabled = true
+  #   OpenTelemetry:Otlp:Endpoint = http://localhost:4317
+  #
+  # Production should point the same env vars at the team's OTLP backend
+  # (Jaeger / Datadog / App Insights / Grafana Tempo). OTLP is the vendor-neutral
+  # standard, no code change required.
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:latest
+    profiles: ["observability"]
+    ports:
+      - "18888:18888"  # browser UI
+      - "4317:18889"   # OTLP gRPC ingest (aspire internal port is 18889)
+    environment:
+      # Skip the login token for local dev so the UI opens without copying a token
+      # from container logs. Never set this in production.
+      DASHBOARD__FRONTEND__AUTHMODE: "Unsecured"
+      DASHBOARD__OTLP__AUTHMODE: "Unsecured"
+
 volumes:
   qdrant_data:
   paddleocr_models:
