@@ -107,7 +107,7 @@ The `PaperbaseAI` section becomes irrelevant in that case — drop it from `apps
 
 | Required | Why |
 | --- | --- |
-| `IChatClient` registered via `services.AddChatClient(...)` with `.UseFunctionInvocation()` | Chat tool calling (`IChatToolContributor`) and any business-module function tools rely on this middleware — without it the LLM's `tool_call` requests are returned to the caller instead of being executed. |
+| `IChatClient` registered via `services.AddChatClient(...)` with `.UseFunctionInvocation()` | Chat tool calling — `search_paperbase_documents`, MAF `AgentSkillsProvider` meta-tools (`load_skill` / `run_skill_script` / `read_skill_resource`), and every business-module skill script — relies on this middleware. Without it the LLM's `tool_call` requests are returned to the caller instead of being executed. |
 | `IEmbeddingGenerator<string, Embedding<float>>` registered via `services.AddEmbeddingGenerator(...)` | The embedding pipeline and hybrid search require it. If your chat provider has no embedding model (e.g. native Anthropic), pair it with a separate embedding provider — the chat and embedding registrations are independent. |
 | `.UseDistributedCache()` on the chat builder when prompt caching is desired | Provider-agnostic; relies only on the host's `IDistributedCache`. |
 

@@ -9,13 +9,18 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Dignite.Paperbase.Abstractions.Chat;
 using Microsoft.Extensions.AI;
 using Volo.Abp.DependencyInjection;
 
 namespace Dignite.Paperbase.Chat.Telemetry;
 
-public class ChatToolFactory : IChatToolFactory, ITransientDependency
+/// <summary>
+/// Issue #149: was <c>IChatToolFactory</c> in Abstractions, exposed to business modules
+/// so contributors could build audited <see cref="AIFunction"/>s. Business modules now use
+/// MAF Agent Skills directly, so the factory collapses to a single concrete core-internal
+/// type that only the core <c>search_paperbase_documents</c> wrapper consumes.
+/// </summary>
+public class ChatToolFactory : ITransientDependency
 {
     // Short-prefix hash is plenty for dedup/correlation in audit/metrics; longer
     // prefixes give attackers more rainbow-table grip on free-form natural-language
@@ -61,6 +66,25 @@ public class ChatToolFactory : IChatToolFactory, ITransientDependency
         var inner = AIFunctionFactory.Create(method, name, description);
         return new AuditedChatFunction(inner, ctx, _recorder, progressDescriber);
     }
+
+    /// <summary>
+    /// Issue #149: wraps an existing <see cref="AIFunction"/> (e.g. one of the three
+    /// meta-tools emitted by <see cref="Microsoft.Agents.AI.AgentSkillsProvider"/>:
+    /// <c>load_skill</c> / <c>read_skill_resource</c> / <c>run_skill_script</c>) with
+    /// <see cref="AuditedChatFunction"/> so skill script invocations enter the same
+    /// audit + grounding pipeline as <c>search_paperbase_documents</c>.
+    ///
+    /// <para>
+    /// Idempotent: if <paramref name="inner"/> is already an <see cref="AuditedChatFunction"/>
+    /// the same instance is returned unchanged. That matters because MAF's base
+    /// <c>AIContextProvider.InvokingCoreAsync</c> merges the upstream context's tools into
+    /// the provider's returned <c>AIContext</c>, so the
+    /// <see cref="AuditingSkillsContextProvider"/> decorator can see (and would otherwise
+    /// double-wrap) the already-audited <c>search_paperbase_documents</c> tool.
+    /// </para>
+    /// </summary>
+    public virtual AIFunction WrapAudited(AIFunction inner, ChatToolContext ctx)
+        => inner is AuditedChatFunction ? inner : new AuditedChatFunction(inner, ctx, _recorder);
 
     private static IReadOnlyDictionary<string, object?> SummarizeArguments(AIFunctionArguments? arguments)
     {
@@ -331,6 +355,13 @@ public class ChatToolFactory : IChatToolFactory, ITransientDependency
             CancellationToken cancellationToken)
         {
             var sw = Stopwatch.StartNew();
+            // Issue #149: when this wrapper sits on top of MAF's `run_skill_script` meta-tool
+            // the inner Name is always "run_skill_script", losing per-skill granularity in
+            // audit + grounding classification. Derive the effective ToolName from the
+            // run-time arguments — `skill:<skill-name>/<script-name>` — so each skill call
+            // is auditable on its own and ClassifyGrounding can distinguish meta calls
+            // (load_skill / read_skill_resource) from real data fetches.
+            var auditToolName = DeriveSkillAwareToolName(Name, arguments);
             try
             {
                 var result = await _inner.InvokeAsync(arguments, cancellationToken);
@@ -345,7 +376,7 @@ public class ChatToolFactory : IChatToolFactory, ITransientDependency
                     DocumentId = _ctx.DocumentId,
                     DocumentTypeCode = _ctx.DocumentTypeCode,
                     TraceId = Activity.Current?.TraceId.ToString(),
-                    ToolName = Name,
+                    ToolName = auditToolName,
                     ArgumentsSummary = SummarizeArguments(arguments),
                     ResultSummary = resultSummary,
                     ResultSizeBytes = GetResultSizeBytes(resultSummary),
@@ -366,7 +397,7 @@ public class ChatToolFactory : IChatToolFactory, ITransientDependency
                     DocumentId = _ctx.DocumentId,
                     DocumentTypeCode = _ctx.DocumentTypeCode,
                     TraceId = Activity.Current?.TraceId.ToString(),
-                    ToolName = Name,
+                    ToolName = auditToolName,
                     ArgumentsSummary = SummarizeArguments(arguments),
                     ElapsedMs = sw.Elapsed.TotalMilliseconds,
                     Outcome = ChatTelemetryOutcome.Failure,
@@ -374,6 +405,56 @@ public class ChatToolFactory : IChatToolFactory, ITransientDependency
                 });
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Derives the audit ToolName from a MAF skills meta-tool call so each underlying
+        /// skill script appears as its own audit entry. Without this, every contract /
+        /// navigation skill call would collapse to "run_skill_script" — losing per-skill
+        /// granularity for grounding classification and for spotting which skills are
+        /// being invoked under what tenant/user.
+        /// </summary>
+        /// <remarks>
+        /// Returns one of:
+        /// <list type="bullet">
+        ///   <item><c>skill:&lt;skill-name&gt;/&lt;script-name&gt;</c> when the wrapped function is
+        ///         <c>run_skill_script</c> and both arg names parse cleanly</item>
+        ///   <item>the raw inner Name otherwise (covers <c>search_paperbase_documents</c>,
+        ///         <c>load_skill</c>, <c>read_skill_resource</c>, and any future direct tool)</item>
+        /// </list>
+        /// </remarks>
+        internal static string DeriveSkillAwareToolName(string innerName, AIFunctionArguments? arguments)
+        {
+            if (innerName != "run_skill_script" || arguments is null)
+            {
+                return innerName;
+            }
+
+            var skill = TryGetStringArg(arguments, "skillName");
+            var script = TryGetStringArg(arguments, "scriptName");
+            if (string.IsNullOrWhiteSpace(skill) || string.IsNullOrWhiteSpace(script))
+            {
+                return innerName;
+            }
+
+            return $"skill:{skill}/{script}";
+        }
+
+        private static string? TryGetStringArg(AIFunctionArguments arguments, string key)
+        {
+            if (!arguments.TryGetValue(key, out var value) || value is null)
+            {
+                return null;
+            }
+            if (value is string s)
+            {
+                return s;
+            }
+            if (value is JsonElement json && json.ValueKind == JsonValueKind.String)
+            {
+                return json.GetString();
+            }
+            return value.ToString();
         }
     }
 }

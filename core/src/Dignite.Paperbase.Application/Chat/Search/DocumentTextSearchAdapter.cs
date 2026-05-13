@@ -7,7 +7,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
-using Dignite.Paperbase.Abstractions.Chat;
 using Dignite.Paperbase.KnowledgeIndex;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -142,7 +141,7 @@ public class DocumentTextSearchAdapter : ITransientDependency
         DocumentSearchScope? baseScope,
         DocumentSearchCapture capture,
         ChatToolContext toolContext,
-        IChatToolFactory toolFactory,
+        Telemetry.ChatToolFactory toolFactory,
         string functionName,
         string functionDescription)
     {

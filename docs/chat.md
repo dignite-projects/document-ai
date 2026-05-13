@@ -50,62 +50,59 @@ Chat-related knobs live in `PaperbaseAIBehavior` alongside the other Application
 
 The agent uses `ChatToolMode.Auto` — the model picks when (and with what `documentIds` / `documentTypeCode` / `topK` / `minScore`) to invoke each tool. There is no operator switch for "always retrieve before answering" — see *When the answer is degraded* below for the honest-signal contract that replaced it.
 
-`IChatToolContributor.DocumentTypeCode` is **informational** — it is *not* a filter. Every contributor's tools are exposed on every turn regardless of conversation anchor. The field is used only as a tie-breaker hint for `MaxToolsPerTurn` trimming and to help reviewers understand intent. Do not rely on it for authorization (do that inside each tool body — see *Adding a tool contributor* below).
+Every business-module skill (e.g. `search-contracts`) is advertised on every turn regardless of conversation anchor — there is no per-conversation filter. The chat agent picks which skill (if any) to load based on the user's question. Do not rely on the conversation anchor for authorization — each skill script body re-asserts the relevant feature permission (see *Adding a skill* below).
 
 The hard cap on tool-call rounds within a single turn is configured at host wiring time via `PaperbaseAI:MaxToolIterations` (default `10`); see [ai-provider.md → Provider wiring](ai-provider.md#provider-wiring-paperbaseai). For prompt language behavior, see [ai-provider.md → Cross-cutting LLM behavior](ai-provider.md#cross-cutting-llm-behavior-paperbaseaibehavior). For retrieval `topK` / `minScore` defaults, see [knowledge-index.md](knowledge-index.md). For BM25-augmented hybrid retrieval, see [knowledge-qdrant.md](knowledge-qdrant.md).
 
-## Tools
+## Tools and skills
 
-The agent's toolset is the union of the built-in tools below plus every `IChatToolContributor`-registered tool. The model picks when, in what order, and with what arguments to invoke each — there is no scripted workflow.
+The chat agent exposes capabilities in two shapes:
 
-### Built-in tools
+- **Always-available tools** — high-frequency primitives registered directly on the agent's `ChatOptions.Tools`. There is exactly one: `search_paperbase_documents`. Every content-class question routes through it, so paying a `load_skill` round-trip is wasted.
+- **Agent skills** — domain capabilities advertised by [MAF `AgentSkillsProvider`](https://learn.microsoft.com/agent-framework/agents/skills) ([open spec](https://agentskills.io)) using progressive disclosure. Each skill is advertised in ~100 tokens; the LLM calls `load_skill("name")` only when relevant, then `run_skill_script("name", "invoke", args)` to execute the script body.
+
+The model picks when, in what order, and with what arguments to invoke each — there is no scripted workflow.
+
+### Always-available tool
 
 | Tool | What it does | Notes |
 |---|---|---|
-| `search_paperbase_documents` | Semantic vector search over the user's documents. The model supplies a natural-language `query`; optional `documentIds[]`, `documentTypeCode`, `topK`, `minScore` parameters let it drill in after a structured-tool round. | Tenant-scoped at the binding layer (`_tenantId` is captured in the closure, not derived from `DataFilter`). Defaults from `PaperbaseAIBehavior:ChatTopK` / `:ChatMinScore`. Citations from all calls in one turn are appended + deduplicated up to `MaxCapturedCitations`. |
-| `get_document_relations` | Bidirectional lookup over the `DocumentRelation` aggregate — returns documents linked to a given `documentId` (manual + AI-discovered edges). Ordered by source (`Manual` first) then by `Confidence` desc, capped at 20 per call. | Requires `Paperbase.Documents.Default` (re-asserted inside the tool body). Powers cross-document reasoning chains like contract → matching invoices. See [relation-discovery.md](relation-discovery.md) for how the underlying graph is populated. |
-| `get_document_outline` | Returns the Markdown heading tree (level + title + line number) of a single document by `documentId`. Body text is omitted — this is for structural navigation, not retrieval. Capped at 50 headers per call with a `truncated` flag. | Vector search struggles with questions like "how many sections" or "what's in chapter 3". This tool gives the model an O(1) view of structure so it can decide whether to drill in further with `get_document_excerpt` or fall back to vector search. Requires `Paperbase.Documents.Default`. Cross-tenant hits collapse to `not_found` (no existence leak). |
-| `get_document_excerpt` | Exact-substring grep over a single document's Markdown body (case-insensitive), returning matching passages with 2 lines of context before/after each hit. Overlapping windows merge so consecutive hits don't return duplicated lines. Capped at 5 matches per call. | Vector embeddings underweight precise tokens — contract numbers, invoice IDs, specific dates, proper nouns. This tool is the literal-match complement to `search_paperbase_documents`. Requires `Paperbase.Documents.Default`. Same tenant isolation as outline. |
+| `search_paperbase_documents` | Semantic vector search over the user's documents. The model supplies a natural-language `query`; optional `documentIds[]`, `documentTypeCode`, `topK`, `minScore` parameters let it drill in after a skill round. | Tenant-scoped at the binding layer (`_tenantId` is captured in the closure, not derived from `DataFilter`). Defaults from `PaperbaseAIBehavior:ChatTopK` / `:ChatMinScore`. Citations from all calls in one turn are appended + deduplicated up to `MaxCapturedCitations`. |
 
-### Contributor tools
+### Core skills (inline, owned by the platform)
 
-Every business module that wants to expose structured queries to the agent ships an `IChatToolContributor` (registered as `ITransientDependency`). Reference: `modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/ContractChatToolContributor.cs` contributes:
+| Skill | Scripts | What it does |
+|---|---|---|
+| `get-document-relations` | `invoke(documentId)` | Bidirectional lookup over the `DocumentRelation` aggregate — returns documents linked to a given `documentId` (manual + AI-discovered edges). Ordered by source (`Manual` first) then by `Confidence` desc, capped at 20 per call. Powers cross-document reasoning chains like contract → matching invoices. See [relation-discovery.md](relation-discovery.md) for how the underlying graph is populated. |
+| `document-inspection` | `outline(documentId)` / `excerpt(documentId, query)` | Precise-navigation complement to vector search: `outline` returns the Markdown heading tree (level + title + line number) of a single document — body text omitted, capped at 50 headers per call. `excerpt` is exact-substring grep with 2 lines of surrounding context, capped at 5 matches per call. Vector embeddings underweight precise tokens (contract numbers, invoice IDs, dates, proper nouns); this skill is the literal-match path. |
 
-- `search_contracts` — list contracts by counterparty / number / status
-- `get_contract_detail` — fetch a single contract's structured fields
-- `get_contract_aggregate` — sum amounts across a filtered contract set
+Both core skills require `Paperbase.Documents.Default` (re-asserted inside each script). Cross-tenant hits collapse to `not_found` so existence is not leaked.
 
-See [Adding a tool contributor](#adding-a-tool-contributor-business-modules) for the contract every new contributor must follow.
+### Business-module skills
+
+Every business module that wants to expose structured queries to the agent ships one or more `AgentClassSkill<TSelf>` subclasses (registered as `ITransientDependency` with `[ExposeServices(typeof(AgentSkill))]`). Reference: the contracts module contributes three skills:
+
+- `search-contracts` — list contracts by counterparty / number / date / amount range — see `modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/SearchContractsSkill.cs`
+- `get-contract-detail` — fetch a single contract's full extracted field set — see `GetContractDetailSkill.cs`
+- `aggregate-contracts` — sum amounts and counts across a filtered contract set — see `AggregateContractsSkill.cs`
+
+See [Adding a skill](#adding-a-skill-business-modules) for the contract every new skill must follow.
 
 ### The fail-closed contract
 
-Every tool — built-in or contributor — must satisfy the same three rules inside its method body, because the LLM (not the HTTP authorization filter) decides when to call it. HTTP-level `[Authorize]` on the AppService does **not** cover these calls.
+Every script body — core skill, business-module skill, or the always-available `search_paperbase_documents` tool — must satisfy the same three rules, because the LLM (not the HTTP authorization filter) decides when to call it. HTTP-level `[Authorize]` on the AppService does **not** cover these calls.
 
-1. **Explicit permission check** via `IAuthorizationService.CheckAsync(...)`. The Chat permission alone is insufficient — each tool re-asserts the feature permission relevant to its data.
-2. **Explicit tenant predicate** in the query (`Where(x => x.TenantId == _tenantId)`). Do not rely on ABP's ambient `DataFilter` — any code path that disables it would silently leak across tenants.
+1. **Explicit permission check** via `IAuthorizationService.CheckAsync(...)`. The Chat permission alone is insufficient — each script re-asserts the feature permission relevant to its data.
+2. **Explicit tenant predicate** in the query (`Where(x => x.TenantId == tenantId)`). Do not rely on ABP's ambient `DataFilter` — any code path that disables it would silently leak across tenants.
 3. **Hard `Take(N)` row cap** to defend against prompt-injection-driven recall bombs.
+
+Skill scripts resolve `IAuthorizationService` / `ICurrentTenant` / repositories per call via the `IServiceProvider` parameter that MAF auto-injects (see `core/src/Dignite.Paperbase.Application/Chat/Tools/DocumentRelationsTool.InvokeAsync` for the pattern). User-derived free-text fields in the JSON return value are wrapped via `PromptBoundary.WrapField(...)`.
 
 Reverse examples and the rationale: [`.claude/rules/doc-chat-anti-patterns.md`](../.claude/rules/doc-chat-anti-patterns.md), reverse examples C and D.
 
 ### Tool-call progress description
 
-The streaming endpoint emits a `ToolCallStarted` delta when the model fires a tool. The user-facing label on that delta comes from the optional `progressDescriber` parameter on `IChatToolFactory.Create(..., progressDescriber)`:
-
-```csharp
-yield return toolFactory.Create(
-    ctx,
-    binding.SearchAsync,
-    name: "search_contracts",
-    description: "Search contracts by counterparty…",
-    progressDescriber: args =>
-    {
-        if (args.TryGetValue("partyName", out _)) return "正在按甲方筛选合同…";
-        if (args.TryGetValue("contractNumber", out _)) return "正在按合同编号查找合同…";
-        return "正在检索合同…";
-    });
-```
-
-The describer is **structural only** — it inspects which arguments the model supplied but **must never echo their values**. Echoing raw arguments would leak data before any per-tool permission check has fired (see [`.claude/rules/doc-chat-anti-patterns.md`](../.claude/rules/doc-chat-anti-patterns.md) reverse example C #4). Tools that omit `progressDescriber` get a generic fallback (`"正在执行 {toolName}…"`).
+The streaming endpoint emits a `ToolCallStarted` delta when the model fires a tool. The label is currently **structural only**: for the always-available `search_paperbase_documents` tool, the binding's `progressDescriber` (e.g. "正在跨全库向量检索…") is used; for skill calls (which surface as MAF's `run_skill_script` / `load_skill` meta-tools) the fallback `"正在执行 {toolName}…"` is rendered. The describer must **never echo raw model arguments** — that would leak data before any per-skill permission check has fired (see [`.claude/rules/doc-chat-anti-patterns.md`](../.claude/rules/doc-chat-anti-patterns.md) reverse example C #4).
 
 ## Citation-to-source navigation
 
@@ -200,15 +197,68 @@ Notable fields on `Chat.Turn`:
 
 These dimensions are what drives the upgrade decision in the future: if production telemetry shows `ToolCallDepth > 8` for ≥ 20% of turns, that is the trigger to evaluate planner sub-agents (Magentic Orchestration). Until then, the single `ChatClientAgent` + flat tool list is intentionally kept simple — see [`.claude/rules/doc-chat-anti-patterns.md`](../.claude/rules/doc-chat-anti-patterns.md) reverse example D for the rationale against premature `AsAIFunction()` sub-agents.
 
-## Adding a tool contributor (business modules)
+## Adding a skill (business modules)
 
-To let the chat answer business-domain questions ("show contracts with Acme Corp expiring this quarter"), a business module implements `IChatToolContributor`. Three rules apply, each enforced at PR review:
+To let the chat answer business-domain questions ("show contracts with Acme Corp expiring this quarter"), a business module ships one or more [MAF Agent Skills](https://learn.microsoft.com/agent-framework/agents/skills) ([open spec](https://agentskills.io)) — Paperbase consumes the framework primitive directly, no custom contributor abstraction.
 
-1. **`ContributeTools` returns `AIFunction`s with static descriptions** — never interpolate user-controlled text into the description (prompt-injection vector).
-2. **Each tool method is fail-closed**: explicit `IAuthorizationService.CheckAsync(...)` for the feature permission + explicit `Where(x => x.TenantId == _tenantId)` (do not rely on ABP's ambient `DataFilter`) + a hard `Take(N)` row cap.
-3. **No raw SQL.** Compose queries via `IRepository<T>.GetQueryableAsync()` so all framework filters (soft-delete, tenant, audit) stay in effect.
+The pattern is one capability per skill class:
 
-Reference implementation: `modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/ContractChatToolContributor.cs`. Counter-examples and the rationale: [`.claude/rules/doc-chat-anti-patterns.md`](../.claude/rules/doc-chat-anti-patterns.md).
+```csharp
+[ExposeServices(typeof(AgentSkill))]
+public sealed class SearchInvoicesSkill : AgentClassSkill<SearchInvoicesSkill>, ITransientDependency
+{
+    public override AgentSkillFrontmatter Frontmatter { get; } = new(
+        "search-invoices",
+        "Find invoices by structured filters: number, vendor, date, amount range. Use when ...");
+
+    protected override string Instructions => """
+        Use this skill when the user asks for a list of invoices ...
+        ...detailed how-to-use guidance loaded via `load_skill` only when relevant.
+        """;
+
+    [AgentSkillScript("invoke")]
+    [Description("Search invoices by structured criteria.")]
+    private static async Task<string> InvokeAsync(
+        string? vendorName,
+        /* other [Description] params */
+        IServiceProvider serviceProvider,
+        CancellationToken cancellationToken = default)
+    {
+        // Fail-closed: explicit auth + explicit tenant predicate + bounded result set.
+        var authSvc = serviceProvider.GetRequiredService<IAuthorizationService>();
+        await authSvc.CheckAsync(InvoicePermissions.Default);
+
+        var currentTenant = serviceProvider.GetRequiredService<ICurrentTenant>();
+        var repo = serviceProvider.GetRequiredService<IInvoiceRepository>();
+        var q = (await repo.GetQueryableAsync()).Where(i => i.TenantId == currentTenant.Id);
+
+        var rows = await /* IAsyncQueryableExecuter.ToListAsync */ (q.Where(...).Take(MaxResultRows));
+
+        // User-derived free-text fields wrapped before serialization.
+        return JsonSerializer.Serialize(new
+        {
+            rows = rows.Select(r => new
+            {
+                r.Id, r.Amount,
+                vendorName = PromptBoundary.WrapField(r.VendorName),
+                description = PromptBoundary.WrapField(r.Description)
+            })
+        });
+    }
+}
+```
+
+Three rules, each enforced at PR review:
+
+1. **`Frontmatter` and `Instructions` are static** — never interpolate user-controlled text. Both feed directly into the LLM context (Frontmatter advertised every turn, Instructions loaded via `load_skill`).
+2. **Each script method is fail-closed**: explicit `IAuthorizationService.CheckAsync(...)` for the feature permission + explicit `Where(x => x.TenantId == currentTenant.Id)` (do not rely on ABP's ambient `DataFilter`) + a hard `Take(N)` row cap.
+3. **No raw SQL.** Compose queries via `IRepository<T>.GetQueryableAsync()` so all framework filters (soft-delete, tenant, audit) stay in effect. Wrap user-derived free-text fields via `PromptBoundary.WrapField(...)` before serialization.
+
+ABP auto-registers the skill via `[ExposeServices(typeof(AgentSkill))]` + `ITransientDependency`; `ChatAppService` collects every registered `AgentSkill` into a single MAF `AgentSkillsProvider` per turn — no module-side wiring needed beyond the class itself.
+
+**Granularity guideline**: each public capability gets its own skill class (one `Frontmatter` per capability, one `[AgentSkillScript("invoke")]` method). Multiple related scripts on one skill are reserved for cases where they share an intent and the same SKILL.md instructions cover all of them — `document-inspection`'s `outline` + `excerpt` is the canonical example of "two scripts, one intent".
+
+Reference implementations: `modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/SearchContractsSkill.cs` (and the sibling `GetContractDetailSkill.cs` / `AggregateContractsSkill.cs` / `ContractSkillHelpers.cs`). Counter-examples and the rationale: [`.claude/rules/doc-chat-anti-patterns.md`](../.claude/rules/doc-chat-anti-patterns.md).
 
 ## See also
 

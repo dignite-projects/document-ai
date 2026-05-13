@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.Metrics;
 using System.Linq;
-using Dignite.Paperbase.Abstractions.Chat;
 using Microsoft.Extensions.Logging;
 using Volo.Abp.Auditing;
 using Volo.Abp.DependencyInjection;
@@ -213,6 +212,16 @@ public class ChatTelemetryRecorder : ISingletonDependency
     /// Classifies a turn's grounding source from the tool names invoked.
     /// Override to extend classification (e.g. when a future business module
     /// contributes another vector-style search tool).
+    ///
+    /// <para>
+    /// Issue #149: skill script invocations enter the audit stream with names of the
+    /// form <c>skill:&lt;skill-name&gt;/&lt;script-name&gt;</c> (derived by
+    /// <c>ChatToolFactory.AuditedChatFunction.DeriveSkillAwareToolName</c>). These count
+    /// as <see cref="GroundingSource.Structured"/>. MAF's meta tools (<c>load_skill</c>,
+    /// <c>read_skill_resource</c>) are filtered out — they retrieve no answer-grounding
+    /// data, only the SKILL.md instructions or supporting resources, so they don't
+    /// belong in the grounding signal.
+    /// </para>
     /// </summary>
     protected virtual GroundingSource ClassifyGrounding(IReadOnlyList<ChatToolAuditEntry> toolCalls)
     {
@@ -225,6 +234,11 @@ public class ChatTelemetryRecorder : ISingletonDependency
         var hasStructured = false;
         foreach (var t in toolCalls)
         {
+            if (IsSkillMetaTool(t.ToolName))
+            {
+                continue;   // load_skill / read_skill_resource — not grounding evidence
+            }
+
             if (IsVectorSearchTool(t.ToolName))
             {
                 hasVector = true;
@@ -255,6 +269,15 @@ public class ChatTelemetryRecorder : ISingletonDependency
     /// </summary>
     protected virtual bool IsVectorSearchTool(string toolName)
         => string.Equals(toolName, ChatConsts.SearchPaperbaseDocumentsToolName, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Returns true for MAF's skill-system meta tools that do not constitute grounding
+    /// evidence (loading SKILL.md instructions or supporting resources is preparatory
+    /// reasoning, not data retrieval).
+    /// </summary>
+    protected virtual bool IsSkillMetaTool(string toolName)
+        => string.Equals(toolName, "load_skill", StringComparison.Ordinal)
+        || string.Equals(toolName, "read_skill_resource", StringComparison.Ordinal);
 
     private IReadOnlyList<ChatToolAuditEntry> ReadToolCallsFromAuditScope()
     {

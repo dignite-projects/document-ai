@@ -2,7 +2,15 @@
     <PropertyGroup>
         <LangVersion>latest</LangVersion>
         <Version>1.0.0</Version>
-        <NoWarn>$(NoWarn);CS1591</NoWarn>
+        <!--
+          CS1591: missing XML docs (we document public APIs with rich /// comments where it matters
+                  but don't require it everywhere).
+          MAAI001: Microsoft.Agents.AI experimental APIs. MAF 1.5 is stable in our usage;
+                   Experimental is Microsoft's surface-area-lock attribute, not a quality flag.
+                   We knowingly depend on `AgentClassSkill`, `AgentSkillsProvider`,
+                   `AgentSkillsProviderBuilder` etc. for the chat skills migration (Issue #149).
+        -->
+        <NoWarn>$(NoWarn);CS1591;MAAI001</NoWarn>
         <NuGetAudit>false</NuGetAudit>
     </PropertyGroup>
 

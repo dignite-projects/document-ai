@@ -217,7 +217,7 @@ data: {"kind":1,"userMessageId":"a1b2c3d4-…001","assistantMessageId":"a1b2c3d4
 ### Consumer guarantees
 
 - **Tool-call correlation** — `ToolCallStarted` and `ToolCallCompleted` are correlated by `toolCallId`. The server emits started events as the model fires them and completed events as each finishes; the model can fan out tools in parallel, so completed events do not necessarily arrive in started-event order.
-- **`progressDescription` is always sanitised** — every tool registered through `IChatToolFactory.Create(..., progressDescriber)` produces a static or structurally-derived label (e.g. `"正在按甲方筛选合同…"`). It **never echoes raw user input or raw model arguments**, so it is safe to render directly in the UI before any per-tool authorization check has fired.
+- **`progressDescription` is always sanitised** — labels are static or structurally derived (e.g. `"正在跨全库向量检索…"` from the `search_paperbase_documents` binding). They **never echo raw user input or raw model arguments**, so they are safe to render directly in the UI before any per-tool authorization check has fired. Skill calls (MAF `run_skill_script` / `load_skill`) currently surface a generic fallback label.
 - **`Done` is the only signal that text is complete** — earlier `PartialText` events have no terminator. Wait for `kind == 1` before clearing any "thinking…" state.
 - **`Error` (`kind == 2`) is terminal** — the server closes the stream after emitting it. Treat as the stream-equivalent of a non-200 response on the buffered endpoint.
 - **JSON casing** — payloads are camelCase (`JsonSerializerDefaults.Web`), matching the rest of the proxy types.

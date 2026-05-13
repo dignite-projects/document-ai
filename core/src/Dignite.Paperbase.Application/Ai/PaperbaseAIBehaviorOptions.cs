@@ -72,15 +72,21 @@ public class PaperbaseAIBehaviorOptions
     public int ChatTopK { get; set; } = 5;
 
     /// <summary>
-    /// Hard upper bound on the number of <see cref="AIFunction"/> tools (built-in
-    /// search + every <c>IChatToolContributor</c> tool) exposed to the LLM
-    /// in a single turn. <c>0</c> = unbounded (current default; the production tool
-    /// inventory is well below the OpenAI/Azure OpenAI sweet spot of ≤ 10–15 tools
-    /// where routing accuracy is high). Activate this cap when the inventory grows
-    /// past ~15 tools and routing accuracy degrades. Trimmed contributors are
-    /// surfaced via the <c>tools_trimmed</c> telemetry signal so dropouts are
-    /// observable, not silent.
+    /// Hard upper bound on the number of <see cref="AIFunction"/> tools exposed to the
+    /// LLM in a single turn. <c>0</c> = unbounded (current default; the production tool
+    /// inventory is well below the OpenAI/Azure OpenAI sweet spot of ≤ 10–15 tools where
+    /// routing accuracy is high). Activate this cap when the inventory grows past ~15
+    /// tools and routing accuracy degrades. Trimmed tools are surfaced via the
+    /// <c>tools_trimmed</c> telemetry signal so dropouts are observable, not silent.
     /// </summary>
+    /// <remarks>
+    /// Issue #149: domain capabilities now ship as MAF Agent Skills behind
+    /// <c>AgentSkillsProvider</c>'s three meta-tools (<c>load_skill</c>,
+    /// <c>read_skill_resource</c>, <c>run_skill_script</c>). The advertised tool count is
+    /// effectively decoupled from the number of business modules — only those three meta-
+    /// tools plus the core <c>search_paperbase_documents</c> are always advertised. This
+    /// cap stays as a guardrail for future direct-tool additions.
+    /// </remarks>
     public int MaxToolsPerTurn { get; set; } = 0;
 
     /// <summary>

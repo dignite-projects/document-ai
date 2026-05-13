@@ -3,9 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Dignite.Paperbase.Abstractions.Chat;
 using Dignite.Paperbase.Ai;
+using Dignite.Paperbase.Chat;
 using Dignite.Paperbase.Chat.Search;
+using Dignite.Paperbase.Chat.Telemetry;
 using Dignite.Paperbase.KnowledgeIndex;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -119,7 +120,7 @@ public class DocumentTextSearchAdapter_Tests
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly TestDocumentRerankWorkflow _rerankWorkflow;
     private readonly PaperbaseAIBehaviorOptions _aiOptions;
-    private readonly IChatToolFactory _toolFactory;
+    private readonly ChatToolFactory _toolFactory;
 
     public DocumentTextSearchAdapter_Tests()
     {
@@ -128,7 +129,7 @@ public class DocumentTextSearchAdapter_Tests
         _embeddingGenerator = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _rerankWorkflow = GetRequiredService<TestDocumentRerankWorkflow>();
         _aiOptions = GetRequiredService<IOptions<PaperbaseAIBehaviorOptions>>().Value;
-        _toolFactory = GetRequiredService<IChatToolFactory>();
+        _toolFactory = GetRequiredService<ChatToolFactory>();
         _aiOptions.EnableLlmRerank = false;
         _aiOptions.RecallExpandFactor = 4;
 

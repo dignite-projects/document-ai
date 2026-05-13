@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Dignite.Paperbase.Abstractions.Chat;
 using Dignite.Paperbase.Chat.Tools;
 using Dignite.Paperbase.Documents;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using Volo.Abp.MultiTenancy;
 using Xunit;
@@ -14,17 +14,22 @@ using Xunit;
 namespace Dignite.Paperbase.Chat;
 
 /// <summary>
-/// Issue #101 — guards for the <c>get_document_relations</c> AIFunction. Verifies the
-/// fail-closed contract from <c>.claude/rules/doc-chat-anti-patterns.md</c> reverse
-/// example C: explicit tenant predicate (don't rely on ambient DataFilter), bidirectional
-/// lookup, ordering (manual first, then AI-suggested by confidence), and the result-set
+/// Issue #101 — guards for the <c>get-document-relations</c> MAF agent skill. Verifies the
+/// fail-closed contract from <c>.claude/rules/doc-chat-anti-patterns.md</c> reverse example C:
+/// explicit tenant predicate (don't rely on ambient DataFilter), bidirectional lookup,
+/// ordering (manual first, then AI-suggested by confidence descending), and the result-set
 /// upper bound that protects the LLM context from a relation explosion.
+///
+/// <para>Issue #149: previously asserted against the <c>get_document_relations</c> AIFunction
+/// built through <c>IChatToolFactory</c>. Now that the tool is exposed as a MAF inline-skill
+/// script, the tests drive the script body directly via the tool's <see cref="DocumentRelationsTool.InvokeAsync"/>
+/// public method — the script delegate is the same code path.</para>
 /// </summary>
 public class DocumentRelationsTool_Tests
     : PaperbaseApplicationTestBase<ChatAppServiceTestModule>
 {
     private readonly DocumentRelationsTool _tool;
-    private readonly IChatToolFactory _toolFactory;
+    private readonly IServiceProvider _serviceProvider;
     private readonly IDocumentRelationRepository _relationRepository;
     private readonly ICurrentTenant _currentTenant;
 
@@ -34,7 +39,7 @@ public class DocumentRelationsTool_Tests
     public DocumentRelationsTool_Tests()
     {
         _tool = GetRequiredService<DocumentRelationsTool>();
-        _toolFactory = GetRequiredService<IChatToolFactory>();
+        _serviceProvider = GetRequiredService<IServiceProvider>();
         _relationRepository = GetRequiredService<IDocumentRelationRepository>();
         _currentTenant = GetRequiredService<ICurrentTenant>();
     }
@@ -43,9 +48,8 @@ public class DocumentRelationsTool_Tests
     public async Task Returns_Empty_Payload_When_Anchor_Has_No_Relations()
     {
         var anchor = Guid.NewGuid();
-        var ctx = BuildContext(TenantA);
 
-        var payload = await InvokeAsync(ctx, anchor);
+        var payload = await InvokeAsync(TenantA, anchor);
 
         payload.GetProperty("anchorDocumentId").GetGuid().ShouldBe(anchor);
         payload.GetProperty("count").GetInt32().ShouldBe(0);
@@ -66,7 +70,7 @@ public class DocumentRelationsTool_Tests
             CreateRelation(TenantA, source: anchor, target: outgoingTarget, kind: RelationSource.Manual),
             CreateRelation(TenantA, source: incomingSource, target: anchor, kind: RelationSource.Manual));
 
-        var payload = await InvokeAsync(BuildContext(TenantA), anchor);
+        var payload = await InvokeAsync(TenantA, anchor);
 
         payload.GetProperty("count").GetInt32().ShouldBe(2);
         var relatedIds = payload.GetProperty("relations").EnumerateArray()
@@ -79,16 +83,14 @@ public class DocumentRelationsTool_Tests
     [Fact]
     public async Task RelatedDocumentId_Is_The_Other_Side_Of_The_Edge()
     {
-        // Tests the convenience field BuildAnchorContextAsync's prompt advice depends on:
-        // the model should not have to reason about edge direction, and the payload
-        // surfaces relatedDocumentId = whichever side is NOT the anchor.
+        // Convenience field: the model should not have to reason about edge direction.
         var anchor = Guid.NewGuid();
         var counterpart = Guid.NewGuid();
 
         await SeedRelationsAsync(
             CreateRelation(TenantA, source: counterpart, target: anchor, kind: RelationSource.Manual));
 
-        var payload = await InvokeAsync(BuildContext(TenantA), anchor);
+        var payload = await InvokeAsync(TenantA, anchor);
 
         var relation = payload.GetProperty("relations")[0];
         relation.GetProperty("sourceDocumentId").GetGuid().ShouldBe(counterpart);
@@ -108,7 +110,7 @@ public class DocumentRelationsTool_Tests
             CreateRelation(TenantA, source: anchor, target: Guid.NewGuid(),
                 kind: RelationSource.AiSuggested, confidence: 0.95));
 
-        var payload = await InvokeAsync(BuildContext(TenantA), anchor);
+        var payload = await InvokeAsync(TenantA, anchor);
 
         var relations = payload.GetProperty("relations").EnumerateArray().ToList();
         relations.Count.ShouldBe(3);
@@ -122,17 +124,15 @@ public class DocumentRelationsTool_Tests
     [Fact]
     public async Task Tenant_Predicate_Drops_Relations_Belonging_To_Other_Tenants()
     {
-        // Seed an edge under TenantB; querying as TenantA must NOT return it. This
-        // is the explicit-tenant-predicate check from reverse example C #2 — even if
-        // the ambient DataFilter is bypassed in some future code path, the tool's
-        // closure-captured _tenantId is the binding boundary.
+        // Seed an edge under TenantB; querying as TenantA must NOT return it.
+        // Reverse example C #2: explicit tenant predicate, not ambient DataFilter alone.
         var anchor = Guid.NewGuid();
         var leakedTarget = Guid.NewGuid();
 
         await SeedRelationsAsync(
             CreateRelation(TenantB, source: anchor, target: leakedTarget, kind: RelationSource.Manual));
 
-        var payload = await InvokeAsync(BuildContext(TenantA), anchor);
+        var payload = await InvokeAsync(TenantA, anchor);
 
         payload.GetProperty("count").GetInt32().ShouldBe(0);
     }
@@ -151,46 +151,44 @@ public class DocumentRelationsTool_Tests
             .ToArray();
         await SeedRelationsAsync(relations);
 
-        var payload = await InvokeAsync(BuildContext(TenantA), anchor);
+        var payload = await InvokeAsync(TenantA, anchor);
 
-        payload.GetProperty("count").GetInt32().ShouldBe(20);
-        payload.GetProperty("relations").GetArrayLength().ShouldBe(20);
+        payload.GetProperty("count").GetInt32().ShouldBe(DocumentRelationsTool.MaxResultRows);
+        payload.GetProperty("relations").GetArrayLength().ShouldBe(DocumentRelationsTool.MaxResultRows);
+    }
+
+    [Fact]
+    public void CreateSkill_Exposes_Skill_With_Expected_Frontmatter_And_Single_Script()
+    {
+        var skill = _tool.CreateSkill();
+
+        skill.Frontmatter.Name.ShouldBe("get-document-relations");
+        skill.Frontmatter.Description.ShouldNotBeNullOrEmpty();
+        skill.Scripts.ShouldNotBeNull();
+        skill.Scripts!.Count.ShouldBe(1);
+        skill.Scripts[0].Name.ShouldBe("invoke");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    private async Task<JsonElement> InvokeAsync(ChatToolContext ctx, Guid documentId)
+    private async Task<JsonElement> InvokeAsync(Guid tenantId, Guid documentId)
     {
-        var function = _tool.CreateAIFunction(ctx, _toolFactory);
-        var args = new AIFunctionArguments
-        {
-            ["documentId"] = documentId
-        };
-
-        // Production callers (FunctionInvokingChatClient) invoke the AIFunction inside
+        // Production callers (FunctionInvokingChatClient) invoke the skill script inside
         // (a) the chat turn's active UoW (EF DbContext) and (b) the same ABP tenant
         // scope as the conversation. Tests must mirror both — without the tenant scope
         // the ambient ABP IMultiTenant filter would still hide our seeded rows even
         // though the tool's explicit predicate already covers the safety property.
         var raw = await WithUnitOfWorkAsync(async () =>
         {
-            using (_currentTenant.Change(ctx.TenantId))
+            using (_currentTenant.Change(tenantId))
             {
-                return await function.InvokeAsync(args);
+                return await _tool.InvokeAsync(documentId, _serviceProvider);
             }
         });
-        var json = raw?.ToString() ?? "{}";
-        return JsonDocument.Parse(json).RootElement;
+        return JsonDocument.Parse(raw).RootElement;
     }
-
-    private static ChatToolContext BuildContext(Guid tenantId) => new()
-    {
-        TenantId = tenantId,
-        ConversationId = Guid.NewGuid(),
-        UserId = Guid.NewGuid()
-    };
 
     private static DocumentRelation CreateRelation(
         Guid tenantId,

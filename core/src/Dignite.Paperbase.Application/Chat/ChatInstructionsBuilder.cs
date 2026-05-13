@@ -13,60 +13,43 @@ namespace Dignite.Paperbase.Chat;
 internal static class ChatInstructionsBuilder
 {
     /// <summary>
-    /// Multi-step / cross-document reasoning guidance appended to the system prompt
-    /// of every chat turn. Intent-driven: tells the model WHICH tool family fits the
-    /// question (content vs metadata vs anchor-graph).
+    /// Top-level reasoning guidance appended to the per-turn system prompt. After the
+    /// MAF Agent Skills migration (Issue #149), domain-specific capabilities are
+    /// advertised by <c>AgentSkillsProvider</c> in a dedicated <c>&lt;available_skills&gt;</c>
+    /// block — the LLM loads each skill's full instructions via <c>load_skill</c> on demand
+    /// and the per-skill SKILL.md carries the precise "how to use" detail (chaining
+    /// hints, empty-result fallback advice, parameter semantics).
     ///
     /// <para>
-    /// Empirical motivation: with a step-1-then-step-2 chain framing, DeepSeek-V3
-    /// reliably picked structured tools (e.g. <c>search_contracts</c>) first, treated
-    /// the empty/insufficient result as authoritative, and skipped vector search
-    /// because the prompt framed it as "follow up *if cross-document evidence is needed*"
-    /// — a conditional the model interpreted strictly. Switching to intent-driven
-    /// language reliably routes content questions through <c>search_paperbase_documents</c>.
-    /// </para>
-    ///
-    /// <para>
-    /// Issue #148: the previous "structured returned EMPTY → try vector before concluding
-    /// 'not found'" line was removed from the system prompt. That decision now lives in
-    /// each <c>IChatToolContributor</c> implementation — contributors whose data benefits
-    /// from a vector fallback (e.g. <c>ContractChatToolContributor</c>) embed a nudge in
-    /// their own empty-result payload; contributors whose data is fully structured (future
-    /// invoice / receipt modules) can return a clean empty payload with no nudge. This
-    /// keeps fully-structured modules from paying vector cost on questions they can already
-    /// answer "no records exist" to.
+    /// This block holds only what is **agent-level** and orthogonal to any specific
+    /// skill: the question-intent classification that decides whether to even reach for
+    /// a skill, the "anchor is a soft hint" rule, and the meta-rule that contributor-
+    /// supplied instructions inside tool result payloads should be obeyed.
     /// </para>
     /// </summary>
     public const string MultiStepReasoningGuidance =
-        "Tool selection by intent:\n" +
-        "  • CONTENT questions (clauses, terms, descriptions, any specific text inside documents) → " +
-             "call search_paperbase_documents directly. Primary content retrieval tool. " +
-             "Structured tools like search_contracts only expose fixed metadata (number, parties, " +
-             "amount, dates) and cannot answer content-level questions.\n" +
-        "  • METADATA-ONLY questions (contract count, total amount, list by party / date / amount range) → " +
-             "use the structured tool that matches (search_contracts, get_contract_aggregate, " +
-             "get_contract_detail). If the result fully answers the question, STOP — do not call " +
-             "vector search on top. That's wasted cost and risks contradicting the structured answer.\n" +
-        "  • ANCHOR-LINKED questions (anchor document id present AND question implies linked documents " +
-             "— payments, receipts, attachments, amendments) → call get_document_relations(anchorDocumentId) " +
-             "first to discover related document ids, then pass them into " +
-             "search_paperbase_documents(documentIds=[...]) for precise retrieval.\n" +
+        "Reasoning approach:\n" +
+        "  • CONTENT questions — clauses, terms, specific text inside documents — should be " +
+             "answered through `search_paperbase_documents`, which is the primary always-available " +
+             "vector-retrieval tool. It returns Markdown chunks with citations; cite them as [chunk N].\n" +
+        "  • METADATA / DOMAIN questions — counts, sums, structured filters, business-specific " +
+             "field lookups — should be answered through the relevant agent skill from the " +
+             "`<available_skills>` block (load via `load_skill`, then call the skill's scripts). " +
+             "If the skill's structured result fully answers a metadata-only question, STOP — do " +
+             "not also call vector search; that is wasted cost and risks contradicting the structured answer.\n" +
+        "  • ANCHOR-LINKED questions — anchor document id present AND question implies linked " +
+             "documents (payments, receipts, attachments, amendments) — should consult the " +
+             "`get-document-relations` skill first to discover related document ids, then pass them " +
+             "into `search_paperbase_documents` for precise retrieval.\n" +
         "\n" +
-        "When a structured tool returned ids / metadata but the question is about CONTENT " +
-        "(clauses, terms, specifics) → drill in via " +
-        "search_paperbase_documents(documentIds=returned_ids) to read the actual text. " +
-        "When a structured tool's own result payload contains an instruction to try vector " +
-        "search (e.g. an empty-result hint), follow that contributor-supplied instruction. " +
-        "Do NOT add a vector follow-up when the structured result fully answers a metadata-only question.\n" +
+        "When a skill returns ids / metadata but the question is about CONTENT, drill in via " +
+        "`search_paperbase_documents(documentIds=returned_ids)` to read the actual text.\n" +
+        "When any tool or skill result payload contains an explicit instruction to try another " +
+        "tool (e.g. an empty-result hint suggesting vector fallback), follow that contributor-" +
+        "supplied instruction. The skill author placed it there for a reason.\n" +
         "\n" +
-        "Chaining patterns:\n" +
-        "  • Narrow-then-content: search_contracts(filter) → search_paperbase_documents(documentIds=returned_ids).\n" +
-        "  • Pure content: search_paperbase_documents directly (no structured pre-step needed).\n" +
-        "  • Reconciliation: get_document_relations(anchorId) → " +
-             "search_paperbase_documents(documentIds=returned_ids, documentTypeCode='receipt.general').\n" +
-        "\n" +
-        "The anchor is a soft hint, never a hard scope. If a question references multiple document " +
-        "types or implies cross-document evidence, do not stay inside the anchor document.";
+        "The anchor is a soft hint, never a hard scope. If a question references multiple " +
+        "document types or implies cross-document evidence, do not stay inside the anchor document.";
 
     public static string Build(
         string baseInstructions,

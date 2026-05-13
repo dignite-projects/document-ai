@@ -1,7 +1,10 @@
 <Project>
     <PropertyGroup>
         <LangVersion>latest</LangVersion>
-        <NoWarn>$(NoWarn);CS1591;CS0436</NoWarn>
+        <!-- MAAI001: Microsoft.Agents.AI experimental APIs (AgentSkill / AgentClassSkill etc.).
+             Suppressed in common.props for src; mirror it here so test projects compiling
+             against the same surface stay clean. -->
+        <NoWarn>$(NoWarn);CS1591;CS0436;MAAI001</NoWarn>
         <NuGetAudit>false</NuGetAudit>
         <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
         <GenerateAssemblyConfigurationAttribute>false</GenerateAssemblyConfigurationAttribute>

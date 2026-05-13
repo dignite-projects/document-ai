@@ -20,9 +20,9 @@ namespace Dignite.Paperbase.Ai;
 ///
 /// <para>
 /// 放在 <c>Dignite.Paperbase.Abstractions</c> 而非 <c>core/Application</c>，是因为业务模块
-/// 的 <see cref="Abstractions.Chat.IChatToolContributor"/> 实现需要对返回值中的用户派生字段
-/// （合同 summary / partyAName、票据备注…）调用 <see cref="WrapField"/>。业务模块只依赖
-/// Abstractions，不依赖 Application。
+/// 的 MAF 技能（<see cref="Microsoft.Agents.AI.AgentClassSkill{TSelf}"/> 子类）的 script 实现
+/// 需要对返回值中的用户派生字段（合同 summary / partyAName、票据备注…）调用 <see cref="WrapField"/>。
+/// 业务模块只依赖 Abstractions，不依赖 Application。
 /// </para>
 /// </summary>
 public static class PromptBoundary
@@ -46,8 +46,8 @@ public static class PromptBoundary
         => $"<anchor>\n{Encode(text)}\n</anchor>";
 
     /// <summary>
-    /// 包裹业务模块 <see cref="Abstractions.Chat.IChatToolContributor"/> 工具返回值中的
-    /// **用户派生自由文本字段**——典型如 LLM 字段抽取写入的 <c>summary</c> /
+    /// 包裹业务模块 MAF 技能（<see cref="Microsoft.Agents.AI.AgentClassSkill{TSelf}"/> 子类）
+    /// 的 script 返回值中的**用户派生自由文本字段**——典型如 LLM 字段抽取写入的 <c>summary</c> /
     /// <c>title</c> / <c>partyAName</c>。这些字段的最终来源是用户上传的文档，攻击者
     /// 可以在文档里嵌入 "Ignore previous instructions ..." 之类的 indirect prompt
     /// injection，因此序列化进 tool result JSON 前必须包裹。

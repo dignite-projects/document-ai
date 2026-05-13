@@ -4,13 +4,15 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Dignite.Paperbase.Abstractions.Chat;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Permissions;
+using Microsoft.Agents.AI;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp.DependencyInjection;
 using Volo.Abp.Linq;
+using Volo.Abp.MultiTenancy;
 
 namespace Dignite.Paperbase.Chat.Tools;
 
@@ -36,120 +38,109 @@ namespace Dignite.Paperbase.Chat.Tools;
 /// </summary>
 public class DocumentRelationsTool : ITransientDependency
 {
-    private const int MaxResultRows = 20;
+    public const int MaxResultRows = 20;
 
-    private readonly IDocumentRelationRepository _repository;
-    private readonly IAsyncQueryableExecuter _asyncExecuter;
-    private readonly IAuthorizationService _authorizationService;
-
-    public DocumentRelationsTool(
-        IDocumentRelationRepository repository,
-        IAsyncQueryableExecuter asyncExecuter,
-        IAuthorizationService authorizationService)
+    /// <summary>
+    /// Builds the <c>get-document-relations</c> MAF agent skill (inline). Lives in
+    /// core's tool stack (not in any business module) because <see cref="DocumentRelation"/>
+    /// is a Core aggregate and the link semantics are owner-agnostic.
+    /// </summary>
+    public virtual AgentInlineSkill CreateSkill()
     {
-        _repository = repository;
-        _asyncExecuter = asyncExecuter;
-        _authorizationService = authorizationService;
-    }
-
-    public virtual AIFunction CreateAIFunction(
-        ChatToolContext ctx,
-        IChatToolFactory toolFactory)
-    {
-        var binding = new Binding(_repository, _asyncExecuter, _authorizationService, ctx.TenantId);
-        return toolFactory.Create(
-            ctx,
-            binding.GetRelationsAsync,
-            name: "get_document_relations",
+        return new AgentInlineSkill(
+            name: "get-document-relations",
             description:
-                "Look up the documents related to a given document via the DocumentRelation graph " +
-                "(both manual user-confirmed links and AI-suggested links). " +
-                "Use this BEFORE search_paperbase_documents when the question implies cross-document evidence " +
-                "(e.g. 'has this contract been paid?' → call get_document_relations on the contract, then " +
-                "drill into the returned documentIds with search_paperbase_documents). " +
-                "Returns up to 20 entries, ordered with manual links first, then AI-suggested links by confidence descending.",
-            // Issue #116 progress description: documentId is opaque to the user; the
-            // anchor doc is implicit from context. Generic label is fine here.
-            progressDescriber: _ => "正在查找该文档的关联文档…");
+                "Discover documents linked to an anchor document via the DocumentRelation graph " +
+                "(both user-confirmed manual links and AI-suggested links). Use when the user's " +
+                "question implies cross-document evidence — payments tied to a contract, attachments " +
+                "of an invoice, amendments of a master agreement.",
+            instructions:
+                "Use this skill when the question implies cross-document evidence — e.g. \"has this " +
+                "contract been paid?\", \"what documents reference this invoice?\", \"any amendments to " +
+                "this agreement?\".\n\n" +
+                "Steps:\n" +
+                "1. Take the anchor document ID from the current conversation context or a prior tool result.\n" +
+                "2. Call the `invoke` script with that document ID. The script returns up to " +
+                $"{MaxResultRows} related documents, manual links first, then AI-suggested links by " +
+                "confidence descending.\n" +
+                "3. To read the actual content of related documents, call the `search_paperbase_documents` " +
+                "tool with `documentIds` set to the returned `relatedDocumentId` values. The relations " +
+                "graph is a pointer; vector search is how you read the body.\n\n" +
+                "The result is structural (IDs, enum source labels, confidence numbers) — no user-derived " +
+                "free text, so no `<field>` wrapping is needed.")
+            .AddScript("invoke", InvokeAsync);
     }
 
     /// <summary>
-    /// Holds the bound context for the <c>get_document_relations</c> AIFunction.
-    /// Factored so parameter-level <see cref="DescriptionAttribute"/>s are accessible
-    /// via reflection (lambda parameters cannot carry attributes in C#).
+    /// Script body for the <c>invoke</c> script of the <c>get-document-relations</c> skill.
+    /// Resolves services per call via <see cref="IServiceProvider"/> so the body sees the
+    /// correct request-scoped <see cref="ICurrentTenant"/> / <see cref="IAuthorizationService"/>.
     /// </summary>
-    private sealed class Binding
+    /// <remarks>
+    /// fail-closed safety contract — see <c>.claude/rules/doc-chat-anti-patterns.md</c>
+    /// reverse example C: explicit <see cref="PaperbasePermissions.Documents.Default"/>
+    /// permission check, explicit tenant predicate (never rely on ambient ABP <c>DataFilter</c>),
+    /// hard <see cref="MaxResultRows"/> upper bound.
+    /// </remarks>
+    public virtual async Task<string> InvokeAsync(
+        [Description("Anchor document ID to look up relations for. Returns documents linked to it (in either direction).")]
+        Guid documentId,
+        IServiceProvider serviceProvider,
+        CancellationToken cancellationToken = default)
     {
-        private readonly IDocumentRelationRepository _repository;
-        private readonly IAsyncQueryableExecuter _asyncExecuter;
-        private readonly IAuthorizationService _authorizationService;
-        private readonly Guid? _tenantId;
+        var authorizationService = serviceProvider.GetRequiredService<IAuthorizationService>();
+        await authorizationService.CheckAsync(PaperbasePermissions.Documents.Default);
 
-        public Binding(
-            IDocumentRelationRepository repository,
-            IAsyncQueryableExecuter asyncExecuter,
-            IAuthorizationService authorizationService,
-            Guid? tenantId)
+        var repository = serviceProvider.GetRequiredService<IDocumentRelationRepository>();
+        var executer = serviceProvider.GetRequiredService<IAsyncQueryableExecuter>();
+        var currentTenant = serviceProvider.GetRequiredService<ICurrentTenant>();
+
+        var queryable = await repository.GetQueryableAsync();
+
+        // Explicit tenant predicate — defense-in-depth against any code path that
+        // disables ABP's ambient DataFilter (background jobs, non-HTTP contexts).
+        var tenantId = currentTenant.Id;
+        queryable = tenantId.HasValue
+            ? queryable.Where(r => r.TenantId == tenantId)
+            : queryable.Where(r => r.TenantId == null);
+
+        // Bidirectional lookup: relations are symmetric in semantics even though
+        // SourceDocumentId / TargetDocumentId encode a directed edge — the user is
+        // equally interested in "what does X link to" and "what links to X".
+        queryable = queryable.Where(r =>
+            r.SourceDocumentId == documentId || r.TargetDocumentId == documentId);
+
+        // Manual relations come first (user-confirmed = highest signal); within the
+        // AI-suggested bucket, descending by Confidence. Source enum: Manual=0,
+        // AiSuggested=1, so OrderBy(Source) naturally puts Manual first. Take(N)
+        // bounds context-window cost.
+        var relations = await executer.ToListAsync(
+            queryable
+                .OrderBy(r => r.Source)
+                .ThenByDescending(r => r.Confidence)
+                .Take(MaxResultRows),
+            cancellationToken);
+
+        var payload = new
         {
-            _repository = repository;
-            _asyncExecuter = asyncExecuter;
-            _authorizationService = authorizationService;
-            _tenantId = tenantId;
-        }
-
-        public async Task<string> GetRelationsAsync(
-            [Description("Anchor document ID to look up relations for. Returns documents linked to it (in either direction).")]
-            Guid documentId,
-            CancellationToken cancellationToken = default)
-        {
-            await _authorizationService.CheckAsync(PaperbasePermissions.Documents.Default);
-
-            var queryable = await _repository.GetQueryableAsync();
-
-            // Explicit tenant predicate — defense-in-depth against any code path that
-            // disables ABP's ambient DataFilter (background jobs, non-HTTP contexts).
-            queryable = _tenantId.HasValue
-                ? queryable.Where(r => r.TenantId == _tenantId)
-                : queryable.Where(r => r.TenantId == null);
-
-            // Bidirectional lookup: relations are symmetric in semantics even though
-            // SourceDocumentId / TargetDocumentId encode a directed edge — the user is
-            // equally interested in "what does X link to" and "what links to X".
-            queryable = queryable.Where(r =>
-                r.SourceDocumentId == documentId || r.TargetDocumentId == documentId);
-
-            // Manual relations come first (user-confirmed = highest signal); within the
-            // AI-suggested bucket, descending by Confidence. Source enum: Manual=0,
-            // AiSuggested=1, so OrderBy(Source) naturally puts Manual first. Take(N)
-            // bounds context-window cost.
-            var relations = await _asyncExecuter.ToListAsync(
-                queryable
-                    .OrderBy(r => r.Source)
-                    .ThenByDescending(r => r.Confidence)
-                    .Take(MaxResultRows),
-                cancellationToken);
-
-            var payload = new
+            anchorDocumentId = documentId,
+            count = relations.Count,
+            relations = relations.Select(r => new
             {
-                anchorDocumentId = documentId,
-                count = relations.Count,
-                relations = relations.Select(r => new
-                {
-                    id = r.Id,
-                    sourceDocumentId = r.SourceDocumentId,
-                    targetDocumentId = r.TargetDocumentId,
-                    // The "other side" relative to the anchor — convenience field so the
-                    // model doesn't have to reason about edge direction itself.
-                    relatedDocumentId = r.SourceDocumentId == documentId
-                        ? r.TargetDocumentId
-                        : r.SourceDocumentId,
-                    description = r.Description,
-                    source = r.Source.ToString(),   // "Manual" / "AiSuggested"
-                    confidence = r.Confidence
-                })
-            };
+                id = r.Id,
+                sourceDocumentId = r.SourceDocumentId,
+                targetDocumentId = r.TargetDocumentId,
+                // The "other side" relative to the anchor — convenience field so the
+                // model doesn't have to reason about edge direction itself.
+                relatedDocumentId = r.SourceDocumentId == documentId
+                    ? r.TargetDocumentId
+                    : r.SourceDocumentId,
+                description = r.Description,
+                source = r.Source.ToString(),   // "Manual" / "AiSuggested"
+                confidence = r.Confidence
+            })
+        };
 
-            return JsonSerializer.Serialize(payload);
-        }
+        return JsonSerializer.Serialize(payload);
     }
 }

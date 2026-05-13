@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using Dignite.Paperbase.Abstractions.Chat;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Chat.Compaction;
 using Dignite.Paperbase.Chat.Search;
@@ -72,10 +71,11 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
     private readonly IPromptProvider _promptProvider;
     private readonly ConversationHistoryProvider _historyProvider;
     private readonly PaperbaseAIBehaviorOptions _aiOptions;
-    private readonly IEnumerable<IChatToolContributor> _toolContributors;
-    private readonly IChatToolFactory _toolFactory;
+    private readonly IEnumerable<AgentSkill> _businessSkills;
+    private readonly ChatToolFactory _toolFactory;
     private readonly ChatTelemetryRecorder _telemetryRecorder;
     private readonly ChatCompactionStrategyFactory _compactionFactory;
+    private readonly IServiceProvider _serviceProvider;
 
     public ChatAppService(
         IChatConversationRepository conversationRepository,
@@ -88,10 +88,11 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
         IPromptProvider promptProvider,
         ConversationHistoryProvider historyProvider,
         IOptions<PaperbaseAIBehaviorOptions> aiOptions,
-        IEnumerable<IChatToolContributor> toolContributors,
-        IChatToolFactory toolFactory,
+        IEnumerable<AgentSkill> businessSkills,
+        ChatToolFactory toolFactory,
         ChatTelemetryRecorder telemetryRecorder,
-        ChatCompactionStrategyFactory compactionFactory)
+        ChatCompactionStrategyFactory compactionFactory,
+        IServiceProvider serviceProvider)
     {
         _conversationRepository = conversationRepository;
         _documentRepository = documentRepository;
@@ -103,10 +104,11 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
         _promptProvider = promptProvider;
         _historyProvider = historyProvider;
         _aiOptions = aiOptions.Value;
-        _toolContributors = toolContributors;
+        _businessSkills = businessSkills;
         _toolFactory = toolFactory;
         _telemetryRecorder = telemetryRecorder;
         _compactionFactory = compactionFactory;
+        _serviceProvider = serviceProvider;
     }
 
     [Authorize(PaperbasePermissions.Chat.Create)]
@@ -399,12 +401,19 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
             anchorContext: anchorContext,
             multiStepGuidance: ChatInstructionsBuilder.MultiStepReasoningGuidance);
 
-        // Single MAF tool-calling path: expose the RAG search function plus EVERY
-        // business-module contributor's tools (Issue #100). Contributors are no longer
-        // filtered by the conversation's document type — cross-document reasoning
-        // requires that, e.g., search_contracts AND search_receipts are both available
-        // on a single turn. fail-closed safety remains enforced inside each tool body
-        // (see .claude/rules/doc-chat-anti-patterns.md reverse example C).
+        // Issue #149: MAF Agent Skills migration.
+        //
+        //   ① search_paperbase_documents is a high-frequency primitive (every content
+        //     question routes through it). Direct AIFunction registration is the right
+        //     fit — `load_skill` round-trip would be wasted overhead on every turn.
+        //   ② Everything else (get-document-relations / document-inspection / contract
+        //     skills) is now exposed via AgentSkillsProvider (an AIContextProvider).
+        //     Skills are advertised in ~100 tokens each at the start of the turn; the
+        //     full body is loaded only when the model decides to use one.
+        //   ③ Business modules contribute via `services.AddTransient<AgentSkill, ...>()`
+        //     auto-registered through ABP DI on `AgentClassSkill<T>` subclasses with
+        //     `[ExposeServices(typeof(AgentSkill))]`. Paperbase no longer owns a
+        //     contributor abstraction — we use MAF's AgentSkill directly.
         //
         // Security note: function name and description are static string literals —
         // they MUST NOT contain user input or conversation metadata (prompt-injection risk).
@@ -424,24 +433,7 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
                 "Optional documentTypeCode: restrict to one type (e.g. 'contract.general', 'receipt.general'). " +
                 "Optional topK / minScore: override the configured defaults for this call (raise topK 10–15 for cross-document reconciliation).");
 
-        var tools = new List<AITool>
-        {
-            searchFn,
-            // Issue #101: get_document_relations is a core tool (graph walker over the
-            // DocumentRelation aggregate). Sits next to search_paperbase_documents because
-            // it's the natural pre-step for cross-document reasoning ("anchor → related →
-            // drill-into-content").
-            _documentRelationsTool.CreateAIFunction(toolContext, _toolFactory),
-            // Issue #144: precise-navigation complement to the vector search above.
-            //   get_document_outline → heading tree (no body), for structural questions.
-            //   get_document_excerpt → exact-substring grep with context, for tokens the
-            //                          vector recall is bad at (contract numbers, IDs).
-            // Single class, two AIFunctions, fail-closed inside each binding
-            // (see .claude/rules/doc-chat-anti-patterns.md reverse example C).
-            _documentContentTool.CreateOutlineFunction(toolContext, _toolFactory),
-            _documentContentTool.CreateExcerptFunction(toolContext, _toolFactory)
-        };
-        tools.AddRange(CollectContributorTools(conversation));
+        var tools = new List<AITool> { searchFn };
 
         // Idiomatic MAF wiring:
         // - UseProvidedChatClientAsIs = true: PaperbaseHostModule.ConfigureAI already
@@ -466,7 +458,7 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
             // about "summary leaks into stored history" is moot here because our
             // StoreChatHistoryAsync is no-op (persistence owned by ChatConversation
             // aggregate). Null when ChatCompaction.Enabled = false: zero overhead.
-            AIContextProviders = BuildContextProviders(),
+            AIContextProviders = BuildContextProviders(conversation),
             ChatOptions = new ChatOptions
             {
                 Instructions = instructions,
@@ -475,7 +467,12 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
             }
         };
 
-        var agent = new ChatClientAgent(_chatClient, agentOptions);
+        // Issue #149: pass the request-scoped IServiceProvider so MAF can DI-inject it
+        // into skill scripts (AgentClassSkill / AgentInlineSkill methods declaring an
+        // `IServiceProvider` parameter resolve services per call). Without this, skill
+        // scripts that look up ICurrentTenant / IAuthorizationService / repositories
+        // via the service provider would NRE.
+        var agent = new ChatClientAgent(_chatClient, agentOptions, services: _serviceProvider);
         var session = await agent.CreateSessionAsync(cancellationToken);
 
         // Stash conversation id so ConversationHistoryProvider can resolve which
@@ -494,58 +491,86 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
     }
 
     /// <summary>
-    /// Builds the agent-level <see cref="AIContextProvider"/> list. Returns
-    /// <see langword="null"/> when no providers are active so MAF skips the pipeline
-    /// entirely — keeps the no-compaction path identical to pre-compaction wiring.
+    /// Builds the agent-level <see cref="AIContextProvider"/> list — compaction (if
+    /// enabled) plus the MAF <c>AgentSkillsProvider</c> that exposes core navigation
+    /// skills (<c>get-document-relations</c>, <c>document-inspection</c>) and every
+    /// business-module skill registered through ABP DI as <see cref="AgentSkill"/>.
+    /// Returns <see langword="null"/> when nothing is active so MAF skips the pipeline.
     /// </summary>
-    protected virtual IList<AIContextProvider>? BuildContextProviders()
+    /// <remarks>
+    /// Issue #149: business modules contribute <see cref="AgentSkill"/> via
+    /// <c>services.AddTransient&lt;AgentSkill, YourSkill&gt;()</c> (or implicitly via
+    /// <c>[ExposeServices(typeof(AgentSkill))]</c> on <c>AgentClassSkill&lt;T&gt;</c>
+    /// subclasses marked <c>ITransientDependency</c>). The chat agent sees every
+    /// registered skill on every turn — Paperbase does not filter by document type
+    /// (Issue #100 — cross-document reasoning requires multiple modules' skills to be
+    /// co-resident). The skills provider is decorated with
+    /// <see cref="AuditingSkillsContextProvider"/> so every skill script invocation
+    /// produces a <c>ChatToolAuditEntry</c> and feeds <c>ClassifyGrounding</c> —
+    /// without it, structured-only turns are mis-classified as
+    /// <see cref="Telemetry.GroundingSource.None"/> / <c>IsDegraded = true</c>.
+    /// </remarks>
+    protected virtual IList<AIContextProvider>? BuildContextProviders(ChatConversation conversation)
     {
+        var providers = new List<AIContextProvider>();
+
         var compaction = _compactionFactory.CreateProvider();
-        if (compaction is null)
+        if (compaction is not null)
         {
-            return null;
+            providers.Add(compaction);
         }
-        return new List<AIContextProvider> { compaction };
+
+        var skillsProvider = BuildAgentSkillsProvider(conversation);
+        if (skillsProvider is not null)
+        {
+            providers.Add(skillsProvider);
+        }
+
+        return providers.Count == 0 ? null : providers;
     }
 
     /// <summary>
-    /// Collects <see cref="AIFunction"/> tools from <strong>every</strong> registered
-    /// <see cref="IChatToolContributor"/>. Issue #100 dropped the previous
-    /// per-conversation <c>DocumentTypeCode</c> filter: cross-document reasoning
-    /// requires that, e.g., search_contracts AND search_receipts are both available
-    /// on the same turn. <see cref="IChatToolContributor.DocumentTypeCode"/>
-    /// is now an informational hint, not a router. Contributors that need to scope
-    /// their behavior do so inside their tool bodies (with the standard fail-closed
-    /// permission/tenant assertions described in
-    /// <c>.claude/rules/doc-chat-anti-patterns.md</c> reverse example C).
+    /// Aggregates the core navigation skills (inline) and every <see cref="AgentSkill"/>
+    /// registered via ABP DI (class-based skills from business modules) into one
+    /// <see cref="AgentSkillsProvider"/>, then wraps it with
+    /// <see cref="AuditingSkillsContextProvider"/> so each emitted skill AIFunction
+    /// participates in <c>ChatToolAuditEntry</c> recording.
     /// </summary>
-    /// <remarks>
-    /// <see cref="PaperbaseAIBehaviorOptions.MaxToolsPerTurn"/> is reserved for a
-    /// future trimming policy when the inventory grows past the LLM's routing sweet
-    /// spot (~15 tools); the current code intentionally does not enforce it so we
-    /// don't ship dead-code policy ahead of need.
-    /// </remarks>
-    protected virtual List<AITool> CollectContributorTools(ChatConversation conversation)
+    protected virtual AIContextProvider? BuildAgentSkillsProvider(ChatConversation conversation)
     {
-        if (!_toolContributors.Any())
-            return new List<AITool>();
+        var builder = new AgentSkillsProviderBuilder();
+        var hasAny = false;
 
-        var ctx = CreateToolContext(conversation);
+        // Core inline skills — owned by Paperbase platform, not any business module.
+        // They piggyback on the same AgentSkillsProvider as business skills so the
+        // chat agent uses ONE skills entry point.
+        builder.UseSkill(_documentRelationsTool.CreateSkill());
+        builder.UseSkill(_documentContentTool.CreateSkill());
+        hasAny = true;
 
-        return _toolContributors
-            .SelectMany(c => c.ContributeTools(ctx, _toolFactory))
-            .Cast<AITool>()
-            .ToList();
+        // Business-module skills (ABP DI auto-resolution of every registered AgentSkill).
+        foreach (var skill in _businessSkills)
+        {
+            builder.UseSkill(skill);
+            hasAny = true;
+        }
+
+        if (!hasAny)
+        {
+            return null;
+        }
+
+        var inner = builder.Build();
+        return new AuditingSkillsContextProvider(inner, _toolFactory, CreateToolContext(conversation));
     }
 
     protected virtual ChatToolContext CreateToolContext(ChatConversation conversation)
         => new()
         {
             // Issue #100: scope is no longer pinned to the conversation. The hint
-            // remains nullable on ChatToolContext for forward compatibility
-            // (e.g. when a future tool wants to log "anchor type" alongside its call),
-            // but the AppService no longer supplies one — anchor metadata is in the
-            // system prompt, not the tool context.
+            // remains nullable on ChatToolContext for forward compatibility, but the
+            // AppService no longer supplies one — anchor metadata is in the system
+            // prompt, not the tool context.
             DocumentTypeCode = null,
             TenantId = conversation.TenantId,
             ConversationId = conversation.Id,

@@ -157,6 +157,140 @@ public class ChatTelemetryRecorder_Tests
     }
 
     [Fact]
+    public void RecordTurn_GroundingStructured_WhenOnlySkillScriptsCalled()
+    {
+        // Issue #149 (Codex finding 3): after the MAF Agent Skills migration, business
+        // skill invocations enter the audit stream under derived names like
+        // "skill:search-contracts/invoke" (via ChatToolFactory.AuditedChatFunction.
+        // DeriveSkillAwareToolName). They must still classify as Structured so a
+        // metadata-only turn doesn't get mis-labelled as IsDegraded.
+        using var auditScope = _auditingManager.BeginScope();
+
+        _recorder.RecordToolCall(BuildToolEntry("skill:search-contracts/invoke"));
+        _recorder.RecordToolCall(BuildToolEntry("skill:get-contract-detail/invoke"));
+
+        _recorder.RecordTurn(BuildTurnEntry());
+
+        var turn = ReadTurnFromAuditScope();
+        turn.GroundingSource.ShouldBe(GroundingSource.Structured);
+        turn.ToolCallDepth.ShouldBe(2);
+        turn.ToolCallSummary!.ShouldContainKeyAndValue("skill:search-contracts/invoke", 1);
+        turn.ToolCallSummary!.ShouldContainKeyAndValue("skill:get-contract-detail/invoke", 1);
+    }
+
+    [Fact]
+    public void RecordTurn_GroundingMixed_WhenSkillScriptAndVectorSearchBothCalled()
+    {
+        // The canonical "narrow-then-content" chain: search-contracts skill returns
+        // documentIds, then search_paperbase_documents drills into them. Grounding
+        // must classify as Mixed so observers see the chain happened.
+        using var auditScope = _auditingManager.BeginScope();
+
+        _recorder.RecordToolCall(BuildToolEntry("skill:search-contracts/invoke"));
+        _recorder.RecordToolCall(BuildToolEntry(ChatConsts.SearchPaperbaseDocumentsToolName));
+
+        _recorder.RecordTurn(BuildTurnEntry());
+
+        var turn = ReadTurnFromAuditScope();
+        turn.GroundingSource.ShouldBe(GroundingSource.Mixed);
+    }
+
+    [Fact]
+    public void RecordTurn_GroundingNone_WhenOnlySkillMetaToolsCalled()
+    {
+        // load_skill / read_skill_resource are MAF skill-system meta tools — they
+        // retrieve SKILL.md instructions or supporting resources, not answer-grounding
+        // data. A turn that only invoked them (but never ran a script) is genuinely
+        // ungrounded and should classify as None / IsDegraded.
+        using var auditScope = _auditingManager.BeginScope();
+
+        _recorder.RecordToolCall(BuildToolEntry("load_skill"));
+        _recorder.RecordToolCall(BuildToolEntry("read_skill_resource"));
+
+        _recorder.RecordTurn(BuildTurnEntry());
+
+        var turn = ReadTurnFromAuditScope();
+        turn.GroundingSource.ShouldBe(GroundingSource.None);
+        turn.ToolCallDepth.ShouldBe(2);   // depth still counts meta calls — they happened
+    }
+
+    [Fact]
+    public void RecordTurn_LoadSkillDoesNotContaminateStructuredGrounding()
+    {
+        // load_skill is a prerequisite for any skill invocation, so it almost always
+        // shows up alongside the actual run_skill_script audit entry. The recorder must
+        // ignore it when classifying — otherwise the load alone would (correctly)
+        // refuse to count as Structured, but the additional run_skill_script entry's
+        // Structured classification must still win.
+        using var auditScope = _auditingManager.BeginScope();
+
+        _recorder.RecordToolCall(BuildToolEntry("load_skill"));
+        _recorder.RecordToolCall(BuildToolEntry("skill:aggregate-contracts/invoke"));
+
+        _recorder.RecordTurn(BuildTurnEntry());
+
+        var turn = ReadTurnFromAuditScope();
+        turn.GroundingSource.ShouldBe(GroundingSource.Structured);
+    }
+
+    [Fact]
+    public void DeriveSkillAwareToolName_Returns_Derived_Name_For_RunSkillScript()
+    {
+        // The audit ToolName for a run_skill_script invocation must collapse to
+        // "skill:<skill>/<script>" so per-skill granularity survives in the audit log
+        // and ClassifyGrounding sees the right name. Pre-fix, every skill call would
+        // have appeared as the generic "run_skill_script" — losing audit signal.
+        var args = new Microsoft.Extensions.AI.AIFunctionArguments
+        {
+            ["skillName"] = "search-contracts",
+            ["scriptName"] = "invoke"
+        };
+
+        var derived = ChatToolFactory.AuditedChatFunction.DeriveSkillAwareToolName(
+            "run_skill_script", args);
+
+        derived.ShouldBe("skill:search-contracts/invoke");
+    }
+
+    [Fact]
+    public void DeriveSkillAwareToolName_Falls_Back_To_Raw_Name_For_NonSkillTools()
+    {
+        // Direct tools (search_paperbase_documents) and other meta tools (load_skill,
+        // read_skill_resource) keep their raw names — only run_skill_script gets the
+        // skill: prefix.
+        var args = new Microsoft.Extensions.AI.AIFunctionArguments();
+
+        ChatToolFactory.AuditedChatFunction.DeriveSkillAwareToolName(
+            ChatConsts.SearchPaperbaseDocumentsToolName, args)
+            .ShouldBe(ChatConsts.SearchPaperbaseDocumentsToolName);
+
+        ChatToolFactory.AuditedChatFunction.DeriveSkillAwareToolName("load_skill", args)
+            .ShouldBe("load_skill");
+    }
+
+    [Fact]
+    public void DeriveSkillAwareToolName_Falls_Back_When_RunSkillScript_Args_Malformed()
+    {
+        // Defensive: if MAF ever delivers run_skill_script with one or both args
+        // missing (test stubs, future API change), the audit name should fall back to
+        // the raw "run_skill_script" rather than synthesise an obviously broken name
+        // like "skill:/invoke".
+        var emptyArgs = new Microsoft.Extensions.AI.AIFunctionArguments();
+        ChatToolFactory.AuditedChatFunction.DeriveSkillAwareToolName(
+            "run_skill_script", emptyArgs)
+            .ShouldBe("run_skill_script");
+
+        var partialArgs = new Microsoft.Extensions.AI.AIFunctionArguments
+        {
+            ["skillName"] = "search-contracts"
+            // scriptName missing
+        };
+        ChatToolFactory.AuditedChatFunction.DeriveSkillAwareToolName(
+            "run_skill_script", partialArgs)
+            .ShouldBe("run_skill_script");
+    }
+
+    [Fact]
     public void RecordTurn_CountsFailedInvocations_BecauseTheyReflectModelBehavior()
     {
         // A failed tool call still counts toward ToolCallDepth — telemetry is about

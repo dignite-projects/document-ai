@@ -120,23 +120,26 @@ public virtual async Task<ChatTurnResultDto> SendMessageAsync(Guid conversationI
 
 ---
 
-## 反例 C：业务模块 `IChatToolContributor` 工具未做 fail-closed 安全门
+## 反例 C：业务模块 MAF Agent Skill 未做 fail-closed 安全门
 
-**规则来源**：Issue #69 验收标准 — "每个 tool 显式断言租户 + 权限"
+**规则来源**：Issue #69 验收标准 — "每个 script 显式断言租户 + 权限"；Issue #149 — 业务模块改用 MAF Agent Skills
 
-**背景**：业务模块通过 `IChatToolContributor` 把 `AIFunction` 挂进 Chat 后，函数体由 LLM 决定何时调用、参数由 LLM 决定如何填。HTTP 边界上的 `[Authorize]` 不再覆盖此调用——AIFunction 在 Chat 转一轮内被反射调用，绕过 controller。安全断言必须落到工具方法体内部。
+**背景**：业务模块通过 `AgentClassSkill<TSelf>` 暴露 `[AgentSkillScript]` 方法后，方法体由 LLM 调 `run_skill_script` 间接触发——MAF 反射调用 C# 方法。HTTP 边界上的 `[Authorize]` 不覆盖这个调用路径；script 方法体内的安全断言是唯一防线。
 
 ### ❌ 错误写法 1：依赖 AppService 上的 `[Authorize]` / 不做权限断言
 
 ```
-public class InvoiceChatToolContributor : IChatToolContributor, ITransientDependency
+[ExposeServices(typeof(AgentSkill))]
+public sealed class SearchInvoicesSkill : AgentClassSkill<SearchInvoicesSkill>, ITransientDependency
 {
-    public IEnumerable<AIFunction> ContributeTools(ChatToolContext ctx)
+    [AgentSkillScript("invoke")]
+    private async Task<string> InvokeAsync(IServiceProvider sp, ...)
     {
-        // 错误：直接把 AppService 方法包成 AIFunction
+        // 错误：直接把 AppService 方法的结果序列化返回
         // IInvoiceAppService 的 [Authorize(InvoicePermissions.Default)] 在反射调用时不生效
-        yield return AIFunctionFactory.Create(_invoiceAppService.GetListAsync,
-            name: "search_invoices", description: "...");
+        var appService = sp.GetRequiredService<IInvoiceAppService>();
+        var result = await appService.GetListAsync(...);
+        return JsonSerializer.Serialize(result);
     }
 }
 ```
@@ -165,15 +168,18 @@ return JsonSerializer.Serialize(matches);   // ← 命中 5000 条全返回
 
 **危害**：单次 tool 调用炸 LLM context window；攻击者可通过宽泛 keyword 制造内存压力或费用攻击。
 
-### ❌ 错误写法 4：把用户输入拼进工具描述
+### ❌ 错误写法 4：把用户输入拼进 skill description / instructions
 
 ```
-yield return AIFunctionFactory.Create(binding.SearchAsync,
-    name: "search_invoices",
-    description: $"Search invoices belonging to user {ctx.UserDisplayName}. ...");
+public override AgentSkillFrontmatter Frontmatter { get; } = new(
+    "search-invoices",
+    $"Search invoices belonging to user {someUserName}. ...");   // ← 禁止：构造器参数运行时拼
+
+// 或：
+protected override string Instructions => $"You serve user {dynamicValue}. ...";
 ```
 
-**危害**：description 文本是 LLM 决策上下文的一部分。如果 `UserDisplayName` 来自用户控制的字段（昵称、签名），可被用作 prompt injection 注入向量。description 必须是**编译期常量**或纯静态文本。
+**危害**：description / instructions 文本是 LLM 决策上下文的一部分。如果包含用户控制的字符串（昵称、签名、文档名），可被用作 prompt injection 注入向量。Frontmatter 描述和 instructions 都必须是**编译期常量**或纯静态文本——`AgentSkillFrontmatter` 字段 + `Instructions` getter 返回静态字符串字面量。
 
 ### ❌ 错误写法 5：裸跑 raw SQL
 
@@ -187,45 +193,63 @@ public async Task<string> ReportAsync(string whereClause)
 
 **危害**：SQL 注入面 + 绕过 ABP 权限/审计/软删除/租户过滤层。即便是 LLM 生成 SQL 看似可控，也在攻击面内（prompt injection 完全可以诱导 LLM 写 `WHERE 1=1` 或 `; DROP TABLE`）。
 
-### ✅ 正确实现要点
+### ✅ 正确实现要点（Issue #149 后：MAF Agent Skills）
+
+每个能力是一个 `AgentClassSkill<TSelf>` 子类（来自 `Microsoft.Agents.AI`）。ABP 自动注册为 `AgentSkill` 服务通过 `[ExposeServices(typeof(AgentSkill))]` + `ITransientDependency`。`ChatAppService` 通过 `IEnumerable<AgentSkill>` 聚合到 `AgentSkillsProvider`。
 
 ```
-public class InvoiceChatToolContributor : IChatToolContributor, ITransientDependency
+[ExposeServices(typeof(AgentSkill))]
+public sealed class SearchInvoicesSkill : AgentClassSkill<SearchInvoicesSkill>, ITransientDependency
 {
-    public IEnumerable<AIFunction> ContributeTools(ChatToolContext ctx)
-    {
-        var binding = new InvoiceToolBindings(_repo, _executer, ctx.TenantId, _authService);
-        yield return AIFunctionFactory.Create(binding.SearchAsync,
-            name: "search_invoices",
-            description: "Search invoices by ...");   // ← 静态常量
-    }
+    public override AgentSkillFrontmatter Frontmatter { get; } = new(
+        "search-invoices",
+        "Find invoices by structured filters: number, vendor, date range, amount range. ...");
 
-    private sealed class InvoiceToolBindings
-    {
-        private const int MaxResultRows = 20;
-        // 构造函数注入 _tenantId（来自 ChatToolContext.TenantId）
+    protected override string Instructions => "...static instructions...";   // ← 静态常量
 
-        public async Task<string> SearchAsync(/* [Description] params */)
+    [AgentSkillScript("invoke")]
+    [Description("Search invoices by structured criteria.")]
+    private static async Task<string> InvokeAsync(
+        string? vendorName,
+        /* other [Description] params */
+        IServiceProvider serviceProvider,
+        CancellationToken cancellationToken = default)
+    {
+        // 1. 显式权限断言 — fail closed
+        var authSvc = serviceProvider.GetRequiredService<IAuthorizationService>();
+        await authSvc.CheckAsync(InvoicePermissions.Default);
+
+        // 2. 显式租户谓词 — 不依赖 ambient DataFilter
+        var currentTenant = serviceProvider.GetRequiredService<ICurrentTenant>();
+        var tenantId = currentTenant.Id;
+        var repo = serviceProvider.GetRequiredService<IInvoiceRepository>();
+        var q = (await repo.GetQueryableAsync()).Where(i => i.TenantId == tenantId);
+
+        // 3. 业务过滤 + 强制 Take(N)
+        var executer = serviceProvider.GetRequiredService<IAsyncQueryableExecuter>();
+        var rows = await executer.ToListAsync(
+            q.Where(...).OrderBy(...).Take(MaxResultRows), cancellationToken);
+
+        // 4. 用户派生自由文本字段必须 PromptBoundary.WrapField(...) 包裹
+        return JsonSerializer.Serialize(new
         {
-            // 1. 显式权限断言 — fail closed
-            await _authService.CheckAsync(InvoicePermissions.Default);
-
-            // 2. 显式租户谓词 — 不依赖 ambient DataFilter
-            var q = (await _repo.GetQueryableAsync())
-                .Where(i => i.TenantId == _tenantId);
-
-            // 3. 业务过滤 + 强制 Take(N)
-            var rows = await _executer.ToListAsync(
-                q.Where(...).OrderBy(...).Take(MaxResultRows), ct);
-
-            return JsonSerializer.Serialize(new { rows });
-        }
+            rows = rows.Select(r => new
+            {
+                r.Id,
+                r.Amount,
+                vendorName = PromptBoundary.WrapField(r.VendorName),   // ← 包裹
+                description = PromptBoundary.WrapField(r.Description)  // ← 包裹
+            })
+        });
     }
 }
 ```
 
 **参照实现**：
-`modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/ContractChatToolContributor.cs`
+- `modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/SearchContractsSkill.cs`
+- `modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/GetContractDetailSkill.cs`
+- `modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/AggregateContractsSkill.cs`
+- 共享 helper：`modules/contracts/src/Dignite.Paperbase.Contracts.Application/Chat/ContractSkillHelpers.cs`
 
 ---
 
@@ -233,17 +257,19 @@ public class InvoiceChatToolContributor : IChatToolContributor, ITransientDepend
 
 **规则来源**：Issue #100 — 编排哲学声明（"细粒度工具自主编排" vs "agent-级编排"）
 
-**背景**：MAF `ChatClientAgent.AsAIFunction()` 可以把一个 agent 包成 `AIFunction` 给外层 agent 调用（即"agent-as-tools"模式）。在 Paperbase 当前规模（工具 ≤ 15 个、推理深度 ≤ 8 步）下，这种嵌套是 over-engineering——每次 sub-agent 调用都要再开一轮 LLM + 自己的 tool list，而权限/租户上下文需要二次穿透，会**稀释** `ChatToolContext` 的闭包注入模式。
+**背景**：MAF `ChatClientAgent.AsAIFunction()` 可以把一个 agent 包成 `AIFunction` 给外层 agent 调用（即"agent-as-tools"模式）。在 Paperbase 当前规模（工具 ≤ 15 个、推理深度 ≤ 8 步）下，这种嵌套是 over-engineering——每次 sub-agent 调用都要再开一轮 LLM + 自己的 tool list，而权限/租户上下文需要二次穿透，会**稀释**每个 skill script 通过 `IServiceProvider` 解析的 fail-closed 模式。
+
+**澄清**：MAF Agent Skills 不是 sub-agent 模式。Skills 通过 `AgentSkillsProvider` 暴露三个固定 meta-tool（`load_skill` / `read_skill_resource` / `run_skill_script`），LLM 调 `run_skill_script` 时 MAF **内部分派**到 C# 方法——没有第二轮 LLM 调用、没有第二个 agent 实例。skills 是允许的；sub-agents 不是。
 
 ### ❌ 错误写法
 
 ```
 // 错误：模块自己起一个 sub-agent 包成 tool 给主 chat
-public class InvoiceChatToolContributor : IChatToolContributor
+public sealed class InvoiceReconciliationSkill : AgentClassSkill<InvoiceReconciliationSkill>, ITransientDependency
 {
-    public IEnumerable<AIFunction> ContributeTools(
-        ChatToolContext ctx,
-        IChatToolFactory toolFactory)
+    // ...
+    [AgentSkillScript("reconcile")]
+    private async Task<string> ReconcileAsync(IServiceProvider sp, CancellationToken ct)
     {
         var subAgent = new ChatClientAgent(_chatClient, new ChatClientAgentOptions
         {
@@ -253,37 +279,34 @@ public class InvoiceChatToolContributor : IChatToolContributor
                 Tools = new List<AITool> { /* invoice-specific tools */ }
             }
         });
-        yield return subAgent.AsAIFunction(    // ← 禁止
-            name: "reconcile_invoices",
-            description: "Reconcile invoices against contracts.");
+        var run = await subAgent.RunAsync("Reconcile invoices...");   // ← 禁止
+        return run.Text;
     }
 }
 ```
 
 **危害**：
 - 主 agent 看到的是黑盒 string 结果，丢失中间工具调用的引文/审计
-- sub-agent 内部的工具如果没有重新闭包注入 `_tenantId / _userId / IAuthorizationService`，会有越权风险
+- sub-agent 内部的工具如果没有重新闭包注入 `IServiceProvider` 解析的权限/租户上下文，会有越权风险
 - token & 延迟成本翻倍（双层 LLM 调用），且 prompt-injection 表面扩大（sub-agent 的 system prompt 是字符串）
 - 安全审计面被打散到两个 agent，难以集中验证 fail-closed
 
 ### ✅ 正确写法
 
-把每个原子能力作为**独立的细粒度工具**贡献，让主 agent 直接编排：
+把每个原子能力作为**独立的 `AgentClassSkill<TSelf>` 子类**贡献，让主 agent 直接通过 `run_skill_script` 编排：
 
 ```
-public class InvoiceChatToolContributor : IChatToolContributor
-{
-    public IEnumerable<AIFunction> ContributeTools(
-        ChatToolContext ctx,
-        IChatToolFactory toolFactory)
-    {
-        var binding = new InvoiceToolBindings(_repo, _executer, ctx.TenantId!.Value, _authService);
-        yield return toolFactory.Create(ctx, binding.SearchAsync, "search_invoices",   "...");
-        yield return toolFactory.Create(ctx, binding.GetDetailAsync, "get_invoice_detail", "...");
-        yield return toolFactory.Create(ctx, binding.GetAggregateAsync, "get_invoice_aggregate", "...");
-    }
-}
+[ExposeServices(typeof(AgentSkill))]
+public sealed class SearchInvoicesSkill : AgentClassSkill<SearchInvoicesSkill>, ITransientDependency { ... }
+
+[ExposeServices(typeof(AgentSkill))]
+public sealed class GetInvoiceDetailSkill : AgentClassSkill<GetInvoiceDetailSkill>, ITransientDependency { ... }
+
+[ExposeServices(typeof(AgentSkill))]
+public sealed class AggregateInvoicesSkill : AgentClassSkill<AggregateInvoicesSkill>, ITransientDependency { ... }
 ```
+
+每个 skill 一个文件、一份 frontmatter、一个 `[AgentSkillScript("invoke")]` 方法；`ChatAppService` 通过 `IEnumerable<AgentSkill>` DI 自动聚合。
 
 **升级到 sub-agent / Magentic 的硬触发条件**（Issue #100 §决定 1）：生产 telemetry `ToolCallDepth > 8` 占比 > 20% 或工具总数 > 15。在此之前禁止引入。
 
