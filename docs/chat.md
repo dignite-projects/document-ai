@@ -48,6 +48,34 @@ Chat-related knobs live in `PaperbaseAIBehavior` alongside the other Application
 | `MaxCapturedCitations` | `50` | Hard upper bound on the number of distinct citations a single turn may accumulate across all `search_paperbase_documents` calls. When the cap is hit, additional results are dropped and `CitationsTrimmed = true` is recorded on the audit row. Defends against prompt-injection-driven citation bombs. |
 | `MaxToolsPerTurn` | `0` (unlimited) | Soft cap on the number of direct AIFunction tools exposed to the agent per turn. `0` means no cap. Note that MAF skills are not counted by this cap — they sit behind `AgentSkillsProvider`'s three meta-tools (`load_skill` / `read_skill_resource` / `run_skill_script`), so a business-module skill inventory growing 10× doesn't change the advertised tool count. Leave at `0` until direct-tool registrations (not skills) genuinely outgrow the model's tool-list comprehension. |
 
+### Conversation compaction
+
+`ChatCompaction` is a nested block under `PaperbaseAIBehavior`, disabled by default. When enabled, MAF runs up to four compaction stages against the most recent 50 messages loaded from the database before each LLM call, keeping prompt size under control. Compaction is **in-memory only** — original messages are always persisted in full; no summary is written back to the database.
+
+```json
+"PaperbaseAIBehavior": {
+  "ChatCompaction": {
+    "Enabled": false,
+    "CollapseToolResultsAtTokens": 512,
+    "SummarizeAtTokens": 1280,
+    "SlidingWindowTurns": 8,
+    "TruncateAtTokens": 32768,
+    "MinimumPreservedGroups": 4
+  }
+}
+```
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `Enabled` | `false` | Master toggle. When `false` the factory returns `null` and the entire pipeline is skipped with zero allocation overhead. |
+| `CollapseToolResultsAtTokens` | `512` | **Stage 1 (gentlest).** When the estimated token count of the message list exceeds this value, tool-call results are collapsed to a short placeholder while preserving the call structure. |
+| `SummarizeAtTokens` | `1280` | **Stage 2.** When token count exceeds this value, a summarizer LLM (`PaperbaseAIConsts.SummarizerChatClientKey` — can be configured to a smaller/cheaper model) condenses older turns into a single summary. The most recent `MinimumPreservedGroups` user/assistant pairs are protected from summarization. |
+| `SlidingWindowTurns` | `8` | **Stage 3.** Retains only the most recent N complete turns; earlier turns are dropped. |
+| `TruncateAtTokens` | `32768` | **Stage 4 (last resort).** If the message list still exceeds this token count after the previous stages, it is hard-truncated to the limit, preventing context-window overflow. |
+| `MinimumPreservedGroups` | `4` | Number of most-recent user/assistant pairs that stage 2 summarization will never touch, ensuring the model always sees the latest exchanges in full. |
+
+The four stages are chained by MAF's `PipelineCompactionStrategy` and trigger independently based on live token/turn estimates of the in-flight message list. The summarizer model is set via `PaperbaseAI:SummarizerModelId` in the host; when unset it falls back to `ChatModelId`. In production, pointing this at a lighter model is recommended to keep summarization call costs low.
+
 The agent uses `ChatToolMode.Auto` — the model picks when (and with what `documentIds` / `documentTypeCode` / `topK` / `minScore`) to invoke each tool. There is no operator switch for "always retrieve before answering" — see *When the answer is degraded* below for the honest-signal contract that replaced it.
 
 Every business-module skill (e.g. `search-contracts`) is advertised on every turn regardless of conversation anchor — there is no per-conversation filter. The chat agent picks which skill (if any) to load based on the user's question. Do not rely on the conversation anchor for authorization — each skill script body re-asserts the relevant feature permission (see *Adding a skill* below).
