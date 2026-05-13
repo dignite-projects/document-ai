@@ -7,8 +7,9 @@ using Dignite.Paperbase.Host.HealthChecks;
 using Dignite.Paperbase.Host.Localization;
 using Dignite.Paperbase.Localization;
 using Dignite.Paperbase.Ocr.PaddleOcr;
-using Dignite.Paperbase.KnowledgeIndex.Qdrant;
 using Dignite.Paperbase.TextExtraction;
+using Microsoft.SemanticKernel.Connectors.Qdrant;
+using Qdrant.Client;
 using Dignite.Paperbase.TextExtraction.ElBrunoMarkItDown;
 using Microsoft.Extensions.AI;
 using Microsoft.EntityFrameworkCore;
@@ -126,7 +127,6 @@ namespace Dignite.Paperbase.Host;
     typeof(PaperbaseTextExtractionElBrunoMarkItDownModule),
     typeof(PaperbasePaddleOcrModule),                  // 默认 OCR Provider（本地 sidecar，PP-StructureV3 走 CPU 即可，输出 Markdown）
     // typeof(PaperbaseAzureDocumentIntelligenceModule), // 云方案（高精度），切换时同步在 .csproj 注释 / 启用 ProjectReference
-    typeof(QdrantKnowledgeIndexModule),
 
     // Paperbase business modules
     typeof(ContractsHttpApiModule),
@@ -213,7 +213,30 @@ public class PaperbaseHostModule : AbpModule
         ConfigureVirtualFiles(hostingEnvironment);
         ConfigureEfCore(context);
         ConfigureAI(context, configuration);
+        ConfigureVectorStore(context, configuration);
         ConfigureOpenTelemetry(context, configuration);
+    }
+
+    // Register Microsoft.Extensions.VectorData's Qdrant connector. Connection params come
+    // from PaperbaseVectorStore:Qdrant:* (host-only — IChatClient and IEmbeddingGenerator are
+    // wired separately in ConfigureAI). Chat-side options like CollectionName /
+    // EmbeddingDimension / MinScore live on PaperbaseVectorStoreOptions and are bound in
+    // PaperbaseApplicationModule.
+    private void ConfigureVectorStore(ServiceConfigurationContext context, IConfiguration configuration)
+    {
+        context.Services.AddSingleton<QdrantClient>(_ =>
+        {
+            var endpoint = configuration["PaperbaseVectorStore:Qdrant:Endpoint"] ?? "http://localhost:6334";
+            var apiKey = configuration["PaperbaseVectorStore:Qdrant:ApiKey"];
+            var uri = new Uri(endpoint);
+            return new QdrantClient(
+                host: uri.Host,
+                port: uri.Port > 0 ? uri.Port : 6334,
+                https: string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase),
+                apiKey: string.IsNullOrWhiteSpace(apiKey) ? null : apiKey);
+        });
+
+        context.Services.AddQdrantVectorStore();
     }
     
 

@@ -1,6 +1,6 @@
 # Chat
 
-Paperbase exposes a conversational endpoint that lets users ask questions over their document corpus. The chat runs as a MAF `ChatClientAgent` with retrieval-augmented generation: each turn pulls relevant chunks from the [knowledge index](knowledge-index.md), feeds them into the prompt, and returns a grounded answer with citations.
+Paperbase exposes a conversational endpoint that lets users ask questions over their document corpus. The chat runs as a MAF `ChatClientAgent` with retrieval-augmented generation: each turn pulls relevant chunks from the [vector store](vectors.md), feeds them into the prompt, and returns a grounded answer with citations.
 
 This page covers the chat as a *feature* — what it does, how to tune it, and what knobs are safe to flip. For end-to-end HTTP request/response shapes (idempotency, retry, error handling), see [chat-client.md](chat-client.md).
 
@@ -42,9 +42,9 @@ Chat-related knobs live in `PaperbaseAIBehavior` alongside the other Application
 | Key | Default | Description |
 | --- | --- | --- |
 | `EnableLlmRerank` | `false` | When enabled, document chat retrieves an expanded candidate set, asks the chat model to rerank chunks by question relevance, and injects only the final `TopK` into the answer prompt. Off by default to conserve tokens; enable when retrieval quality is the bottleneck (often in mixed-language corpora). |
-| `RecallExpandFactor` | `4` | Multiplier applied to `ChatTopK` (or `PaperbaseKnowledgeIndex:DefaultTopK`) before LLM rerank. With the defaults `topK=5` × `4` = 20 candidates rescored. |
+| `RecallExpandFactor` | `4` | Multiplier applied to `ChatTopK` (or `PaperbaseVectorStore:DefaultTopK`) before LLM rerank. With the defaults `topK=5` × `4` = 20 candidates rescored. |
 | `ChatTopK` | `5` | Default top-K passed to `search_paperbase_documents` when the model does not specify it. The model can override per call (e.g. raise to 10–15 for cross-document reconciliation). |
-| `ChatMinScore` | `0.45` | Default normalized cosine threshold for document chat RAG searches when the model does not specify `minScore`. Intentionally lower than `PaperbaseKnowledgeIndex:MinScore` to improve recall for cross-language questions and proper-noun lookups. |
+| `ChatMinScore` | `0.45` | Default normalized cosine threshold for document chat RAG searches when the model does not specify `minScore`. Intentionally lower than `PaperbaseVectorStore:MinScore` to improve recall for cross-language questions and proper-noun lookups. |
 | `MaxCapturedCitations` | `50` | Hard upper bound on the number of distinct citations a single turn may accumulate across all `search_paperbase_documents` calls. When the cap is hit, additional results are dropped and `CitationsTrimmed = true` is recorded on the audit row. Defends against prompt-injection-driven citation bombs. |
 | `MaxToolsPerTurn` | `0` (unlimited) | Soft cap on the number of contributor tools exposed to the agent per turn. `0` means no cap. When the cap is exceeded, the dispatcher prefers tools whose contributor `DocumentTypeCode` matches the conversation anchor and trims the rest, recording `ToolsTrimmed = true`. Leave at `0` until business modules genuinely outgrow the model's tool-list comprehension. |
 
@@ -52,7 +52,7 @@ The agent uses `ChatToolMode.Auto` — the model picks when (and with what `docu
 
 Every business-module skill (e.g. `search-contracts`) is advertised on every turn regardless of conversation anchor — there is no per-conversation filter. The chat agent picks which skill (if any) to load based on the user's question. Do not rely on the conversation anchor for authorization — each skill script body re-asserts the relevant feature permission (see *Adding a skill* below).
 
-The hard cap on tool-call rounds within a single turn is configured at host wiring time via `PaperbaseAI:MaxToolIterations` (default `10`); see [ai-provider.md → Provider wiring](ai-provider.md#provider-wiring-paperbaseai). For prompt language behavior, see [ai-provider.md → Cross-cutting LLM behavior](ai-provider.md#cross-cutting-llm-behavior-paperbaseaibehavior). For retrieval `topK` / `minScore` defaults, see [knowledge-index.md](knowledge-index.md). For BM25-augmented hybrid retrieval, see [knowledge-qdrant.md](knowledge-qdrant.md).
+The hard cap on tool-call rounds within a single turn is configured at host wiring time via `PaperbaseAI:MaxToolIterations` (default `10`); see [ai-provider.md → Provider wiring](ai-provider.md#provider-wiring-paperbaseai). For prompt language behavior, see [ai-provider.md → Cross-cutting LLM behavior](ai-provider.md#cross-cutting-llm-behavior-paperbaseaibehavior). For retrieval `topK` / `minScore` defaults, see [vectors.md](vectors.md).
 
 ## Tools and skills
 
@@ -112,7 +112,7 @@ The streaming endpoint emits a `ToolCallStarted` delta when the model fires a to
 | --- | --- |
 | `documentId` | The source document to open. A citation click must navigate to this document even when the active conversation is scoped by `documentTypeCode` and the cited document is not currently displayed. |
 | `snippet` | Primary Markdown positioning key. Search the current document Markdown for this text and highlight the first matching range when possible. |
-| `chunkIndex` | Optional knowledge-index chunk ordinal for display/debug context only. It is not a stable Markdown anchor after re-embedding and must not drive positioning by itself. |
+| `chunkIndex` | Optional vector-store chunk ordinal for display/debug context only. It is not a stable Markdown anchor after re-embedding and must not drive positioning by itself. |
 | `sourceName` | Display label only. Do not parse it for routing or positioning. |
 
 Fallback order:
@@ -263,7 +263,6 @@ Reference implementations: `modules/contracts/src/Dignite.Paperbase.Contracts.Ap
 ## See also
 
 - [HTTP client guide](chat-client.md) — request/response shapes, idempotency, 409 retry pattern
-- [Knowledge index](knowledge-index.md) — what backs retrieval
-- [Qdrant provider details](knowledge-qdrant.md) — BM25 + dense recall fusion
+- [Vector store](vectors.md) — what backs retrieval
 - [Embedding pipeline](embedding.md) — where chunks come from
 - [Relation discovery](relation-discovery.md) — populates the `DocumentRelation` graph the chat agent reaches via `get_document_relations`

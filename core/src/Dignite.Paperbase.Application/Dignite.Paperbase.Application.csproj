@@ -15,6 +15,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Agents.AI" />
+    <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" />
+    <PackageReference Include="Microsoft.SemanticKernel.Connectors.Qdrant" />
     <PackageReference Include="Markdig" />
     <PackageReference Include="Volo.Abp.BackgroundJobs" />
     <PackageReference Include="Volo.Abp.BlobStoring" />
@@ -24,7 +26,6 @@
     <ProjectReference Include="..\Dignite.Paperbase.Abstractions\Dignite.Paperbase.Abstractions.csproj" />
     <ProjectReference Include="..\Dignite.Paperbase.Application.Contracts\Dignite.Paperbase.Application.Contracts.csproj" />
     <ProjectReference Include="..\Dignite.Paperbase.Domain\Dignite.Paperbase.Domain.csproj" />
-    <ProjectReference Include="..\Dignite.Paperbase.KnowledgeIndex\Dignite.Paperbase.KnowledgeIndex.csproj" />
   </ItemGroup>
 
 </Project>

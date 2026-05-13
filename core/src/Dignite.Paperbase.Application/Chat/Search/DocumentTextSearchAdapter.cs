@@ -7,51 +7,64 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.VectorData;
 using Volo.Abp.DependencyInjection;
 
 namespace Dignite.Paperbase.Chat.Search;
 
 /// <summary>
-/// Bridges <see cref="IDocumentKnowledgeIndex"/> to MAF tool calling, exposing
-/// vector search as an LLM-callable <see cref="AIFunction"/> via
-/// <see cref="CreateSearchFunction"/>. The adapter owns the work the framework can't
-/// do on its own:
+/// Bridges Microsoft.Extensions.VectorData's <c>VectorStoreCollection&lt;Guid,
+/// DocumentChunkRecord&gt;</c> to MAF tool calling, exposing pure dense vector
+/// search as an LLM-callable <see cref="AIFunction"/> via <see cref="CreateSearchFunction"/>.
+///
+/// <para>
+/// Keyword-precise queries (合同号 / 产品编号 / 人名) are handled by business-module
+/// MAF Agent Skills (e.g. <c>SearchContractsSkill</c>) that query SQL directly —
+/// the LLM routes structured-lookup intents to those skills before reaching this
+/// adapter. Vector retrieval therefore covers semantic similarity only; we
+/// intentionally do not enable MEVD's <c>IKeywordHybridSearchable</c> because its
+/// scoring is non-normalized (cosine threshold would silently drop valid hits)
+/// and its capability overlaps with business-module structured search.
+/// </para>
+///
+/// The adapter owns the work the framework can't do on its own:
 /// <list type="bullet">
-///   <item>Embed the query because the vector store search requires a vector.</item>
-///   <item>Carry an explicit <see cref="VectorSearchRequest.TenantId"/> so the search
-///         is safe under Hangfire / CLI scenarios where ABP ambient context is absent.</item>
+///   <item>Embed the query because the vector store search uses a pre-computed vector.</item>
+///   <item>Carry an explicit closure-captured TenantId so the search is safe under
+///         Hangfire / CLI scenarios where ABP ambient context is absent.</item>
+///   <item>Project MEVD's generic <c>VectorSearchResult&lt;DocumentChunkRecord&gt;</c>
+///         into <see cref="DocumentChunkSearchHit"/> so downstream Capture +
+///         ChatAppService stay free of vector-store-specific types.</item>
 ///   <item>Format result chunks into a prompt block with provenance metadata
 ///         (<c>&lt;document id chunk page&gt;</c> tags), the only payload the LLM sees.</item>
 /// </list>
-///
-/// This adapter is the shared document retrieval path used by document chat.
 /// </summary>
 public class DocumentTextSearchAdapter : ITransientDependency
 {
-    private readonly IDocumentKnowledgeIndex _vectorStore;
+    private readonly DocumentChunkCollectionProvider _collectionProvider;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly DocumentRerankWorkflow _rerankWorkflow;
     private readonly PaperbaseAIBehaviorOptions _aiOptions;
-    private readonly PaperbaseKnowledgeIndexOptions _ragOptions;
+    private readonly PaperbaseVectorStoreOptions _vectorStoreOptions;
     private readonly ILogger<DocumentTextSearchAdapter> _logger;
 
     public DocumentTextSearchAdapter(
-        IDocumentKnowledgeIndex vectorStore,
+        DocumentChunkCollectionProvider collectionProvider,
         IEmbeddingGenerator<string, Embedding<float>> embeddingGenerator,
         DocumentRerankWorkflow rerankWorkflow,
         IOptions<PaperbaseAIBehaviorOptions> aiOptions,
-        IOptions<PaperbaseKnowledgeIndexOptions> ragOptions,
+        IOptions<PaperbaseVectorStoreOptions> vectorStoreOptions,
         ILogger<DocumentTextSearchAdapter> logger)
     {
-        _vectorStore = vectorStore;
+        _collectionProvider = collectionProvider;
         _embeddingGenerator = embeddingGenerator;
         _rerankWorkflow = rerankWorkflow;
         _aiOptions = aiOptions.Value;
-        _ragOptions = ragOptions.Value;
+        _vectorStoreOptions = vectorStoreOptions.Value;
         _logger = logger;
     }
 
@@ -62,7 +75,7 @@ public class DocumentTextSearchAdapter : ITransientDependency
     /// escaped to <c>&amp;lt;</c> before injection, preventing tag-injection attacks.
     /// Override in a subclass to customize the prompt structure.
     /// </summary>
-    protected virtual string FormatSearchContext(IReadOnlyList<VectorSearchResult> vectorResults)
+    protected virtual string FormatSearchContext(IReadOnlyList<DocumentChunkSearchHit> vectorResults)
     {
         var sb = new StringBuilder();
         foreach (var vr in vectorResults)
@@ -75,13 +88,13 @@ public class DocumentTextSearchAdapter : ITransientDependency
         return sb.ToString();
     }
 
-    protected virtual async Task<IReadOnlyList<VectorSearchResult>> SearchVectorAsync(
+    protected virtual async Task<IReadOnlyList<DocumentChunkSearchHit>> SearchVectorAsync(
         Guid? tenantId,
         DocumentSearchScope? scope,
         string query,
         CancellationToken cancellationToken = default)
     {
-        var finalTopK = scope?.TopK ?? _ragOptions.DefaultTopK;
+        var finalTopK = scope?.TopK ?? _vectorStoreOptions.DefaultTopK;
         var rerank = _aiOptions.EnableLlmRerank && finalTopK > 0;
         var recallTopK = rerank
             ? finalTopK * Math.Max(1, _aiOptions.RecallExpandFactor)
@@ -89,28 +102,61 @@ public class DocumentTextSearchAdapter : ITransientDependency
 
         var embeddings = await _embeddingGenerator.GenerateAsync(
             [query], cancellationToken: cancellationToken);
+        var queryVector = embeddings[0].Vector;
 
-        // DocumentIds (multi) supersedes DocumentId (single) when provided.
-        var hasMultiIds = scope?.DocumentIds?.Count > 0;
-        var request = new VectorSearchRequest
-        {
-            TenantId = tenantId,
-            QueryVector = embeddings[0].Vector,
-            TopK = recallTopK,
-            DocumentId = hasMultiIds ? null : scope?.DocumentId,
-            DocumentIds = hasMultiIds ? scope!.DocumentIds : null,
-            DocumentTypeCode = scope?.DocumentTypeCode,
-            MinScore = scope?.MinScore ?? _ragOptions.MinScore,
-            QueryText = query
-        };
+        var tenantKey = DocumentChunkPayloadEncoding.EncodeTenantId(tenantId);
+        var hasMultiIds = scope?.DocumentIds is { Count: > 0 };
+        var docKeys = hasMultiIds
+            ? scope!.DocumentIds!.Select(DocumentChunkPayloadEncoding.EncodeDocumentId).ToArray()
+            : null;
+        var singleDocKey = (!hasMultiIds && scope?.DocumentId is { } single)
+            ? DocumentChunkPayloadEncoding.EncodeDocumentId(single)
+            : null;
+        var docTypeCode = scope?.DocumentTypeCode;
+        var minScore = scope?.MinScore ?? _vectorStoreOptions.MinScore;
 
-        var results = await _vectorStore.SearchAsync(request, cancellationToken);
-        if (!rerank || results.Count <= finalTopK)
+        // Filter built once with closure-captured values. Tenant is always required
+        // (the LLM cannot override it via tool arguments — that's the fail-closed
+        // boundary, the same one the old IDocumentKnowledgeIndex enforced).
+        System.Linq.Expressions.Expression<Func<DocumentChunkRecord, bool>> filter = r =>
+            r.TenantId == tenantKey
+            && (docKeys == null || docKeys.Contains(r.DocumentId))
+            && (singleDocKey == null || r.DocumentId == singleDocKey)
+            && (docTypeCode == null || r.DocumentTypeCode == docTypeCode);
+
+        var collection = await _collectionProvider.GetAsync(cancellationToken);
+
+        var results = collection.SearchAsync(
+            queryVector,
+            top: recallTopK,
+            new VectorSearchOptions<DocumentChunkRecord>
+            {
+                Filter = filter,
+                VectorProperty = r => r.Embedding,
+            },
+            cancellationToken);
+
+        var hits = new List<DocumentChunkSearchHit>();
+        await foreach (var result in results.WithCancellation(cancellationToken))
         {
-            return results.Take(finalTopK).ToList();
+            if (minScore.HasValue && result.Score is double s && s < minScore.Value)
+            {
+                continue;
+            }
+
+            var hit = MapToHit(result);
+            if (hit != null)
+            {
+                hits.Add(hit);
+            }
         }
 
-        var candidates = results
+        if (!rerank || hits.Count <= finalTopK)
+        {
+            return hits.Take(finalTopK).ToList();
+        }
+
+        var candidates = hits
             .Select(r => new RerankCandidate(r.Text, r.Score ?? 0.0, r))
             .ToList();
 
@@ -121,8 +167,31 @@ public class DocumentTextSearchAdapter : ITransientDependency
             cancellationToken);
 
         return reranked
-            .Select(r => (VectorSearchResult)r.Candidate.Tag!)
+            .Select(r => (DocumentChunkSearchHit)r.Candidate.Tag!)
             .ToList();
+    }
+
+    // DocumentChunkRecord stores DocumentId as a string (D-format Guid) for backwards
+    // compatibility with the previous Qdrant payload. We parse it once at the adapter
+    // boundary so downstream code (citations, rerank) sees a typed Guid.
+    private static DocumentChunkSearchHit? MapToHit(VectorSearchResult<DocumentChunkRecord> result)
+    {
+        var record = result.Record;
+        if (record == null || !Guid.TryParse(record.DocumentId, out var docId))
+        {
+            return null;
+        }
+
+        return new DocumentChunkSearchHit
+        {
+            Id = record.Id,
+            DocumentId = docId,
+            DocumentTypeCode = record.DocumentTypeCode,
+            ChunkIndex = record.ChunkIndex,
+            Text = record.Text,
+            PageNumber = record.PageNumber,
+            Score = result.Score,
+        };
     }
 
     /// <summary>
@@ -247,8 +316,8 @@ public class DocumentTextSearchAdapter : ITransientDependency
             // pins a DocumentId / DocumentTypeCode at the scope level, so the model is
             // free (and encouraged — see ChatInstructionsBuilder.MultiStepReasoningGuidance)
             // to widen / focus the search per turn. The real safety boundary is _tenantId
-            // (closure-captured from the conversation aggregate, threaded into
-            // VectorSearchRequest.TenantId by SearchVectorAsync) — that the LLM cannot
+            // (closure-captured from the conversation aggregate, threaded into the
+            // filter expression by SearchVectorAsync) — that the LLM cannot
             // override via tool arguments.
             var scope = new DocumentSearchScope
             {

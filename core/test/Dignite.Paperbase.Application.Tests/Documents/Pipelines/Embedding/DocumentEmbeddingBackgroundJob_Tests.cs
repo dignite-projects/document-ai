@@ -6,7 +6,8 @@ using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Documents.Pipelines.Embedding;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -24,7 +25,11 @@ public class DocumentEmbeddingJobTestModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
-        context.Services.AddSingleton(Substitute.For<IDocumentKnowledgeIndex>());
+
+        var fakeCollection = new FakeDocumentChunkCollection();
+        context.Services.AddSingleton(fakeCollection);
+        context.Services.AddSingleton<DocumentChunkCollectionProvider>(
+            new FakeDocumentChunkCollectionProvider(fakeCollection));
 
         // TextChunker is a real DI-resolved service; replace the workflow itself with a mock
         // so we can return any chunk shape we want without depending on chunker / embedder behavior.
@@ -36,18 +41,19 @@ public class DocumentEmbeddingJobTestModule : AbpModule
 }
 
 /// <summary>
-/// DocumentEmbeddingBackgroundJob 行为测试：守护 Slice G — 写入路径切换到
-/// <see cref="IDocumentKnowledgeIndex.UpsertDocumentAsync"/> 整文档替换语义。重点关注：
-    ///   - UpsertDocumentAsync 携带完整 DocumentId / TenantId / DocumentTypeCode / Chunks
+/// DocumentEmbeddingBackgroundJob 行为测试：守护 PR-4 Slice — 写入路径切换到
+/// MEVD <see cref="Microsoft.Extensions.VectorData.VectorStoreCollection{TKey, TRecord}"/>
+/// 上 UpsertAsync + GetAsync(filter) + DeleteAsync(keys) 三段语义。重点关注：
+///   - UpsertAsync 接收完整 DocumentChunkRecord（TenantId / DocumentId / DocumentTypeCode / Embedding）
 ///   - TenantId 来自 Document 显式拷贝，不依赖 ABP ambient ICurrentTenant
-///   - 空 chunks 时 UpsertDocumentAsync 仍被调用（传入空 Chunks，由实现清除旧索引）
+///   - 空 chunks 时仍执行 list+delete 清理路径（不需要 upsert）
 /// </summary>
 public class DocumentEmbeddingBackgroundJob_Tests
     : PaperbaseApplicationTestBase<DocumentEmbeddingJobTestModule>
 {
     private readonly DocumentEmbeddingBackgroundJob _job;
     private readonly IDocumentRepository _documentRepository;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly DocumentEmbeddingWorkflow _workflow;
     private readonly DocumentPipelineRunManager _pipelineRunManager;
     private readonly IUnitOfWorkManager _unitOfWorkManager;
@@ -56,10 +62,11 @@ public class DocumentEmbeddingBackgroundJob_Tests
     {
         _job = GetRequiredService<DocumentEmbeddingBackgroundJob>();
         _documentRepository = GetRequiredService<IDocumentRepository>();
-        _knowledgeIndex = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection = GetRequiredService<FakeDocumentChunkCollection>();
         _workflow = GetRequiredService<DocumentEmbeddingWorkflow>();
         _pipelineRunManager = GetRequiredService<DocumentPipelineRunManager>();
         _unitOfWorkManager = GetRequiredService<IUnitOfWorkManager>();
+        _collection.Reset();
     }
 
     [Fact]
@@ -72,17 +79,18 @@ public class DocumentEmbeddingBackgroundJob_Tests
 
         await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = doc.Id });
 
-        await _knowledgeIndex.DidNotReceive().UpsertDocumentAsync(
-            Arg.Any<DocumentVectorIndexUpdate>(), Arg.Any<CancellationToken>());
+        _collection.UpsertCalls.ShouldBe(0);
+        _collection.DeleteCalls.ShouldBe(0);
+        _collection.GetByFilterCalls.ShouldBe(0);
 
         doc.GetLatestRun(PaperbasePipelines.Embedding).ShouldBeNull();
     }
 
     [Fact]
-    public async Task Job_Calls_UpsertDocumentAsync_With_Chunks()
+    public async Task Job_Calls_UpsertAsync_With_Chunks()
     {
-        // UpsertDocumentAsync は 削除 + 挿入 + DocumentVector upsert を原子的に行う。
-        // job からは1回呼ぶだけでよい。
+        // PR-4: the new path is UpsertAsync(records) then GetAsync(filter) + DeleteAsync(stragglers).
+        // job からは1回ずつ呼ぶだけでよい。
         var doc = CreateDocument(extractedText: "契約書本文。");
         SetupDocumentRepository(doc);
         SetupWorkflowChunks([
@@ -91,12 +99,11 @@ public class DocumentEmbeddingBackgroundJob_Tests
 
         await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = doc.Id });
 
-        await _knowledgeIndex.Received(1).UpsertDocumentAsync(
-            Arg.Is<DocumentVectorIndexUpdate>(u =>
-                u.DocumentId == doc.Id &&
-                u.TenantId == doc.TenantId &&
-                u.Chunks.Count == 1),
-            Arg.Any<CancellationToken>());
+        _collection.UpsertCalls.ShouldBe(1);
+        var batch = _collection.UpsertBatches.Single();
+        batch.Count.ShouldBe(1);
+        batch[0].DocumentId.ShouldBe(DocumentChunkPayloadEncoding.EncodeDocumentId(doc.Id));
+        batch[0].TenantId.ShouldBe(DocumentChunkPayloadEncoding.EncodeTenantId(doc.TenantId));
     }
 
     [Fact]
@@ -116,21 +123,13 @@ public class DocumentEmbeddingBackgroundJob_Tests
                 _unitOfWorkManager.Current.ShouldBeNull();
                 return chunks;
             });
-        _knowledgeIndex
-            .UpsertDocumentAsync(
-                Arg.Any<DocumentVectorIndexUpdate>(),
-                Arg.Any<CancellationToken>())
-            .Returns(_ =>
-            {
-                _unitOfWorkManager.Current.ShouldBeNull();
-                return Task.CompletedTask;
-            });
+        _collection.OnUpsertInvoked = () => _unitOfWorkManager.Current.ShouldBeNull();
+        _collection.OnGetByFilterInvoked = () => _unitOfWorkManager.Current.ShouldBeNull();
 
         await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = doc.Id });
 
-        await _knowledgeIndex.Received(1).UpsertDocumentAsync(
-            Arg.Any<DocumentVectorIndexUpdate>(),
-            Arg.Any<CancellationToken>());
+        _collection.UpsertCalls.ShouldBe(1);
+        _collection.GetByFilterCalls.ShouldBe(1);
     }
 
     [Fact]
@@ -157,7 +156,7 @@ public class DocumentEmbeddingBackgroundJob_Tests
     [Fact]
     public async Task Job_Maps_Workflow_Output_To_VectorRecord_With_Document_Context()
     {
-        // DocumentVectorIndexUpdate の TenantId / DocumentId / DocumentTypeCode は Document から
+        // DocumentChunkRecord の TenantId / DocumentId / DocumentTypeCode は Document から
         // 明示的にコピーされ、ambient context に依存しない（Hangfire job 安全性）。
         var tenantId = Guid.NewGuid();
         var doc = CreateDocument(
@@ -170,53 +169,162 @@ public class DocumentEmbeddingBackgroundJob_Tests
         var chunk1 = new DocumentEmbeddingChunk { ChunkIndex = 1, ChunkText = "chunk-1", Vector = MakeVector(0.2f) };
         SetupWorkflowChunks([chunk0, chunk1]);
 
-        DocumentVectorIndexUpdate? capturedUpdate = null;
-        _knowledgeIndex
-            .UpsertDocumentAsync(
-                Arg.Do<DocumentVectorIndexUpdate>(u => capturedUpdate = u),
-                Arg.Any<CancellationToken>())
-            .Returns(Task.CompletedTask);
-
         await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = doc.Id });
 
-        capturedUpdate.ShouldNotBeNull();
-        capturedUpdate!.DocumentId.ShouldBe(doc.Id);
-        capturedUpdate.TenantId.ShouldBe(tenantId);
-        capturedUpdate.DocumentTypeCode.ShouldBe("contract.general");
-        capturedUpdate.Chunks.Count.ShouldBe(2);
+        _collection.UpsertCalls.ShouldBe(1);
+        var batch = _collection.UpsertBatches.Single();
+        batch.Count.ShouldBe(2);
 
-        var rec0 = capturedUpdate.Chunks[0];
+        var expectedTenantKey = DocumentChunkPayloadEncoding.EncodeTenantId(tenantId);
+        var expectedDocKey = DocumentChunkPayloadEncoding.EncodeDocumentId(doc.Id);
+        var rec0 = batch[0];
+        rec0.TenantId.ShouldBe(expectedTenantKey);
+        rec0.DocumentId.ShouldBe(expectedDocKey);
+        rec0.DocumentTypeCode.ShouldBe("contract.general");
         rec0.ChunkIndex.ShouldBe(0);
         rec0.Text.ShouldBe("chunk-0");
-        rec0.Vector.Span[0].ShouldBe(0.1f);
-        rec0.PageNumber.ShouldBeNull();
+        rec0.Embedding.Span[0].ShouldBe(0.1f);
 
-        var rec1 = capturedUpdate.Chunks[1];
+        var rec1 = batch[1];
         rec1.ChunkIndex.ShouldBe(1);
         rec1.Text.ShouldBe("chunk-1");
-        rec1.Vector.Span[0].ShouldBe(0.2f);
+        rec1.Embedding.Span[0].ShouldBe(0.2f);
+
+        // Deterministic key derivation: same (tenant, doc, chunk) tuple → same Guid.
+        rec0.Id.ShouldBe(DocumentChunkPointId.Create(tenantId, doc.Id, 0));
+        rec1.Id.ShouldBe(DocumentChunkPointId.Create(tenantId, doc.Id, 1));
     }
 
     [Fact]
-    public async Task Job_Calls_UpsertDocumentAsync_With_Empty_Chunks_When_Workflow_Returns_None()
+    public async Task Job_Performs_Stale_Cleanup_When_Workflow_Returns_None()
     {
-        // 分块器が0件を返しても UpsertDocumentAsync は呼ばれる（空 Chunks で呼ぶことで
-        // 実装側が旧インデックスを削除する）。
-        var doc = CreateDocument(extractedText: "短文本");
+        // 分块器が0件を返した場合、Upsert は呼ばれない（書く対象がない）が、
+        // 既存ストラグラー削除のために GetAsync(filter) + DeleteAsync は走る。
+        var tenantId = Guid.NewGuid();
+        var doc = CreateDocument(extractedText: "短文本", tenantId: tenantId);
         SetupDocumentRepository(doc);
+
+        // Seed a stale chunk under (tenant, document) — the job's cleanup pass must remove it.
+        var staleId = DocumentChunkPointId.Create(tenantId, doc.Id, 0);
+        _collection.Seed(new DocumentChunkRecord
+        {
+            Id = staleId,
+            TenantId = DocumentChunkPayloadEncoding.EncodeTenantId(tenantId),
+            DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(doc.Id),
+            ChunkIndex = 0,
+            Text = "stale",
+        });
+
         SetupWorkflowChunks([]);
 
         await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = doc.Id });
 
-        await _knowledgeIndex.Received(1).UpsertDocumentAsync(
-            Arg.Is<DocumentVectorIndexUpdate>(u =>
-                u.DocumentId == doc.Id &&
-                u.Chunks.Count == 0),
-            Arg.Any<CancellationToken>());
+        _collection.UpsertCalls.ShouldBe(0);
+        _collection.GetByFilterCalls.ShouldBe(1);
+        _collection.DeleteBatches.Single().ShouldContain(staleId);
 
         var run = doc.GetLatestRun(PaperbasePipelines.Embedding);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
+    }
+
+    [Fact]
+    public async Task TenantIsolation_Stale_Cleanup_Does_Not_Touch_Other_Tenant()
+    {
+        // End-to-end guard: seed two tenants' chunks under the SAME document id
+        // (degenerate but valid — Document.Id Guid does not enforce per-tenant
+        // uniqueness in this fake). Re-embed under tenant A with 0 chunks. The
+        // cleanup filter must scope to (tenant_id == A, document_id == docId);
+        // tenant B's chunk under the same docId must survive.
+        var tenantA = Guid.NewGuid();
+        var tenantB = Guid.NewGuid();
+        var doc = CreateDocument(extractedText: "irrelevant", tenantId: tenantA);
+        SetupDocumentRepository(doc);
+
+        var docKey = DocumentChunkPayloadEncoding.EncodeDocumentId(doc.Id);
+        var staleIdA = DocumentChunkPointId.Create(tenantA, doc.Id, 0);
+        var survivorIdB = DocumentChunkPointId.Create(tenantB, doc.Id, 0);
+
+        _collection.Seed(
+            new DocumentChunkRecord
+            {
+                Id = staleIdA,
+                TenantId = DocumentChunkPayloadEncoding.EncodeTenantId(tenantA),
+                DocumentId = docKey,
+                ChunkIndex = 0,
+                Text = "A-stale",
+            },
+            new DocumentChunkRecord
+            {
+                Id = survivorIdB,
+                TenantId = DocumentChunkPayloadEncoding.EncodeTenantId(tenantB),
+                DocumentId = docKey,
+                ChunkIndex = 0,
+                Text = "B-survivor",
+            });
+
+        SetupWorkflowChunks([]);
+
+        await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = doc.Id });
+
+        _collection.Store.ShouldNotContainKey(staleIdA);
+        _collection.Store.ShouldContainKey(survivorIdB);
+    }
+
+    [Fact]
+    public async Task Job_Paginates_Stale_Cleanup_When_Total_Exceeds_PageSize()
+    {
+        // PR-8 guard: stale cleanup must page through (GetAsync + DeleteAsync) until
+        // the page returns within bound. The dynamic page size is keysToKeep.Count +
+        // CleanupPageSize, so with 0 keepers it reduces to CleanupPageSize — we tune
+        // both small for the test and seed enough stragglers to force multiple loops.
+        const int pageSize = 3;
+        const int staleCount = 10;
+        var options = GetRequiredService<IOptions<PaperbaseVectorStoreOptions>>().Value;
+        var originalPage = options.CleanupPageSize;
+        var originalCap = options.CleanupMaxIterations;
+        options.CleanupPageSize = pageSize;
+        options.CleanupMaxIterations = 10;
+
+        try
+        {
+            var tenantId = Guid.NewGuid();
+            var doc = CreateDocument(extractedText: "stale-many", tenantId: tenantId);
+            SetupDocumentRepository(doc);
+
+            var tenantKey = DocumentChunkPayloadEncoding.EncodeTenantId(tenantId);
+            var docKey = DocumentChunkPayloadEncoding.EncodeDocumentId(doc.Id);
+            for (var i = 0; i < staleCount; i++)
+            {
+                _collection.Seed(new DocumentChunkRecord
+                {
+                    Id = DocumentChunkPointId.Create(tenantId, doc.Id, i),
+                    TenantId = tenantKey,
+                    DocumentId = docKey,
+                    ChunkIndex = i,
+                    Text = $"stale-{i}",
+                });
+            }
+
+            SetupWorkflowChunks([]);
+
+            await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = doc.Id });
+
+            // All stragglers removed.
+            _collection.Store.Values
+                .Where(r => r.TenantId == tenantKey && r.DocumentId == docKey)
+                .ShouldBeEmpty();
+            // Loop ran multiple times — at least ceil(10/3) = 4 GetAsync calls
+            // (the last one sees a partial page and exits).
+            _collection.GetByFilterCalls.ShouldBeGreaterThanOrEqualTo(3);
+            _collection.DeleteBatches.Count.ShouldBeGreaterThanOrEqualTo(3);
+            _collection.DeleteBatches.Sum(b => b.Count).ShouldBe(staleCount);
+        }
+        finally
+        {
+            options.CleanupPageSize = originalPage;
+            options.CleanupMaxIterations = originalCap;
+        }
     }
 
     [Fact]
@@ -228,11 +336,8 @@ public class DocumentEmbeddingBackgroundJob_Tests
             new DocumentEmbeddingChunk { ChunkIndex = 0, ChunkText = "chunk-0", Vector = MakeVector(0.1f) }
         ]);
 
-        _knowledgeIndex
-            .UpsertDocumentAsync(
-                Arg.Any<DocumentVectorIndexUpdate>(),
-                Arg.Any<CancellationToken>())
-            .Returns<Task>(_ => throw new InvalidOperationException("vector store down"));
+        _collection.ThrowOnUpsert = true;
+        _collection.SearchException = new InvalidOperationException("vector store down");
 
         await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = doc.Id });
 
@@ -245,20 +350,14 @@ public class DocumentEmbeddingBackgroundJob_Tests
     [Fact]
     public async Task Different_Tenants_Get_Different_TenantId_In_Update()
     {
-        // 多租户隔離：连续两份文档的 UpsertDocumentAsync.TenantId 必须严格匹配各自的 Document.TenantId。
+        // 多租户隔離：连续两份文档的 UpsertAsync 收到的 DocumentChunkRecord.TenantId
+        // 必须严格匹配各自的 Document.TenantId。
         var tenantA = Guid.NewGuid();
         var tenantB = Guid.NewGuid();
         var docA = CreateDocument(extractedText: "A", tenantId: tenantA);
         var docB = CreateDocument(extractedText: "B", tenantId: tenantB);
         _documentRepository.GetAsync(docA.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns(docA);
         _documentRepository.GetAsync(docB.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>()).Returns(docB);
-
-        var capturedUpdates = new List<DocumentVectorIndexUpdate>();
-        _knowledgeIndex
-            .UpsertDocumentAsync(
-                Arg.Do<DocumentVectorIndexUpdate>(u => capturedUpdates.Add(u)),
-                Arg.Any<CancellationToken>())
-            .Returns(Task.CompletedTask);
 
         SetupWorkflowChunks([
             new DocumentEmbeddingChunk { ChunkIndex = 0, ChunkText = "x", Vector = MakeVector(0.1f) }
@@ -267,9 +366,11 @@ public class DocumentEmbeddingBackgroundJob_Tests
         await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = docA.Id });
         await _job.ExecuteAsync(new DocumentEmbeddingJobArgs { DocumentId = docB.Id });
 
-        capturedUpdates.Count.ShouldBe(2);
-        capturedUpdates[0].TenantId.ShouldBe(tenantA);
-        capturedUpdates[1].TenantId.ShouldBe(tenantB);
+        _collection.UpsertCalls.ShouldBe(2);
+        _collection.UpsertBatches[0].Single().TenantId
+            .ShouldBe(DocumentChunkPayloadEncoding.EncodeTenantId(tenantA));
+        _collection.UpsertBatches[1].Single().TenantId
+            .ShouldBe(DocumentChunkPayloadEncoding.EncodeTenantId(tenantB));
     }
 
     // ── helpers ────────────────────────────────────────────────────────────
@@ -290,8 +391,8 @@ public class DocumentEmbeddingBackgroundJob_Tests
 
     private static float[] MakeVector(float firstValue)
     {
-        // Reflects PaperbaseKnowledgeIndexOptions default value, not runtime config.
-        var v = new float[new PaperbaseKnowledgeIndexOptions().EmbeddingDimension];
+        // Reflects PaperbaseVectorStoreOptions default value, not runtime config.
+        var v = new float[new PaperbaseVectorStoreOptions().EmbeddingDimension];
         v[0] = firstValue;
         return v;
     }

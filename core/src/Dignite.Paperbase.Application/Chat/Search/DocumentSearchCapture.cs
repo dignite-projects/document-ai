@@ -1,11 +1,11 @@
 using System.Collections.Generic;
 using System.Linq;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Vectors;
 
 namespace Dignite.Paperbase.Chat.Search;
 
 /// <summary>
-/// Accumulates <see cref="VectorSearchResult"/>s captured by every invocation of the
+/// Accumulates <see cref="DocumentChunkSearchHit"/>s captured by every invocation of the
 /// search AIFunction during one agent turn. Created fresh per turn and bound by
 /// closure into the search AIFunction — never shared between concurrent requests.
 /// </summary>
@@ -28,7 +28,7 @@ public sealed class DocumentSearchCapture
     /// </summary>
     public const int DefaultMaxResults = 50;
 
-    private readonly List<VectorSearchResult> _results = new();
+    private readonly List<DocumentChunkSearchHit> _results = new();
 
     public DocumentSearchCapture(int maxResults = DefaultMaxResults)
     {
@@ -52,7 +52,7 @@ public sealed class DocumentSearchCapture
     /// per turn (e.g. to chain a structured-tool result into a focused RAG pass), and
     /// citations must reflect the union of those calls — not just the last one.
     /// </summary>
-    public IReadOnlyList<VectorSearchResult> Results => _results;
+    public IReadOnlyList<DocumentChunkSearchHit> Results => _results;
 
     /// <summary>
     /// <c>true</c> after the search AIFunction is invoked at least once, even if that
@@ -71,7 +71,7 @@ public sealed class DocumentSearchCapture
     /// </summary>
     public bool WasTruncated { get; private set; }
 
-    internal void Append(IReadOnlyList<VectorSearchResult> results)
+    internal void Append(IReadOnlyList<DocumentChunkSearchHit> results)
     {
         HasSearches = true;
 
@@ -93,10 +93,10 @@ public sealed class DocumentSearchCapture
         }
     }
 
-    private static bool IsSameChunk(VectorSearchResult left, VectorSearchResult right)
+    private static bool IsSameChunk(DocumentChunkSearchHit left, DocumentChunkSearchHit right)
     {
-        if (left.RecordId != default && right.RecordId != default)
-            return left.RecordId == right.RecordId;
+        if (left.Id != default && right.Id != default)
+            return left.Id == right.Id;
 
         return left.DocumentId == right.DocumentId
             && left.ChunkIndex == right.ChunkIndex

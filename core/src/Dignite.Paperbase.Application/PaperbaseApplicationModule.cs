@@ -1,6 +1,6 @@
 using Dignite.Paperbase.Abstractions;
 using Dignite.Paperbase.Ai;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp.Application;
 using Volo.Abp.BackgroundJobs;
@@ -13,7 +13,6 @@ namespace Dignite.Paperbase;
     typeof(PaperbaseAbstractionsModule),
     typeof(PaperbaseDomainModule),
     typeof(PaperbaseApplicationContractsModule),
-    typeof(PaperbaseKnowledgeIndexModule),
     typeof(AbpDddApplicationModule),
     typeof(AbpBackgroundJobsModule),
     typeof(AbpMapperlyModule)
@@ -24,7 +23,8 @@ public class PaperbaseApplicationModule : AbpModule
     {
         context.Services.AddMapperlyObjectMapper<PaperbaseApplicationModule>();
 
-        Configure<PaperbaseAIBehaviorOptions>(
-            context.Services.GetConfiguration().GetSection("PaperbaseAIBehavior"));
+        var configuration = context.Services.GetConfiguration();
+        Configure<PaperbaseAIBehaviorOptions>(configuration.GetSection("PaperbaseAIBehavior"));
+        Configure<PaperbaseVectorStoreOptions>(configuration.GetSection("PaperbaseVectorStore"));
     }
 }

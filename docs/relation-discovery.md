@@ -168,4 +168,4 @@ Inside the chat panel, the LLM agent has direct access to the relation graph thr
 - [classification.md](classification.md) — publishes the `DocumentClassifiedEto` that triggers L2.
 - [pipeline-runs.md](pipeline-runs.md) — `DocumentPipelineRun` schema and `ExtraProperties` payload conventions.
 - [chat.md](chat.md) — how the chat agent consumes the relation graph via the `get_document_relations` tool.
-- [knowledge-index.md](knowledge-index.md) — the vector store L3 queries during semantic recall.
+- [vectors.md](vectors.md) — the vector store L3 queries during semantic recall.

@@ -4,10 +4,11 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.VectorData;
 using Volo.Abp.DependencyInjection;
 using Volo.Abp.Domain.Services;
 
@@ -47,7 +48,7 @@ public class SemanticRelationDiscoveryService : DomainService
 {
     private readonly IDocumentRepository _documentRepository;
     private readonly IDocumentRelationRepository _relationRepository;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly DocumentChunkCollectionProvider _collectionProvider;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly RelationInferenceAgent _inferenceAgent;
     private readonly RelationDiscoveryTelemetryRecorder _telemetry;
@@ -58,7 +59,7 @@ public class SemanticRelationDiscoveryService : DomainService
     public SemanticRelationDiscoveryService(
         IDocumentRepository documentRepository,
         IDocumentRelationRepository relationRepository,
-        IDocumentKnowledgeIndex knowledgeIndex,
+        DocumentChunkCollectionProvider collectionProvider,
         IEmbeddingGenerator<string, Embedding<float>> embeddingGenerator,
         RelationInferenceAgent inferenceAgent,
         RelationDiscoveryTelemetryRecorder telemetry,
@@ -66,7 +67,7 @@ public class SemanticRelationDiscoveryService : DomainService
     {
         _documentRepository = documentRepository;
         _relationRepository = relationRepository;
-        _knowledgeIndex = knowledgeIndex;
+        _collectionProvider = collectionProvider;
         _embeddingGenerator = embeddingGenerator;
         _inferenceAgent = inferenceAgent;
         _telemetry = telemetry;
@@ -162,16 +163,37 @@ public class SemanticRelationDiscoveryService : DomainService
             return Array.Empty<Guid>();
         }
 
-        IReadOnlyList<VectorSearchResult> results;
+        // MinScore lives on PaperbaseAIBehaviorOptions (not PaperbaseVectorStoreOptions) because
+        // L3 uses a higher threshold than ordinary RAG to bias toward strong matches. Applied
+        // client-side because MEVD's SearchAsync doesn't expose a server-side score threshold.
+        var tenantKey = DocumentChunkPayloadEncoding.EncodeTenantId(source.TenantId);
+        var sourceDocKey = DocumentChunkPayloadEncoding.EncodeDocumentId(source.Id);
+        var minScore = _aiOptions.SemanticRelationDiscoveryMinScore;
+
+        var collection = await _collectionProvider.GetAsync(ct);
+        var hitDocumentIds = new HashSet<Guid>();
         try
         {
-            results = await _knowledgeIndex.SearchAsync(new VectorSearchRequest
+            await foreach (var hit in collection.SearchAsync(
+                queryEmbedding.Vector,
+                top: _aiOptions.SemanticRelationDiscoveryTopK,
+                new VectorSearchOptions<DocumentChunkRecord>
+                {
+                    Filter = r => r.TenantId == tenantKey && r.DocumentId != sourceDocKey,
+                    VectorProperty = r => r.Embedding,
+                },
+                cancellationToken: ct))
             {
-                TenantId = source.TenantId,
-                QueryVector = queryEmbedding.Vector,
-                TopK = _aiOptions.SemanticRelationDiscoveryTopK,
-                MinScore = _aiOptions.SemanticRelationDiscoveryMinScore,
-            }, ct);
+                if (minScore > 0 && hit.Score is double score && score < minScore)
+                {
+                    continue;
+                }
+
+                if (Guid.TryParse(hit.Record.DocumentId, out var docId) && docId != Guid.Empty)
+                {
+                    hitDocumentIds.Add(docId);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -181,12 +203,7 @@ public class SemanticRelationDiscoveryService : DomainService
             return Array.Empty<Guid>();
         }
 
-        // Aggregate chunk hits by DocumentId; exclude self.
-        return results
-            .Select(r => r.DocumentId)
-            .Where(id => id != source.Id && id != Guid.Empty)
-            .Distinct()
-            .ToList();
+        return hitDocumentIds.ToList();
     }
 
     protected virtual async Task<DocumentRelation?> EvaluateAndCreateAsync(
@@ -229,8 +246,8 @@ public class SemanticRelationDiscoveryService : DomainService
             : inference.Description!.Trim();
 
         // TenantId from sourceSnapshot (Hangfire-safe — no ambient context dependency).
-        // Source and candidate must be in the same tenant: ABP IMultiTenant filter on the
-        // vector search guarantees that. We trust source.TenantId as the authoritative value.
+        // Source and candidate must be in the same tenant: the vector store filter on the
+        // recall step guarantees that. We trust source.TenantId as the authoritative value.
         var relation = new DocumentRelation(
             GuidGenerator.Create(),
             sourceSnapshot.TenantId,

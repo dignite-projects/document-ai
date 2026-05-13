@@ -6,7 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Chat.Telemetry;
 using Dignite.Paperbase.Documents;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using NSubstitute;
 using Shouldly;
@@ -36,7 +37,7 @@ public class ChatAnchor_Tests
 {
     private readonly IChatAppService _appService;
     private readonly IDocumentRepository _documentRepository;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly IChatClient _chatClient;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly ICurrentPrincipalAccessor _principalAccessor;
@@ -58,7 +59,7 @@ public class ChatAnchor_Tests
     {
         _appService = GetRequiredService<IChatAppService>();
         _documentRepository = GetRequiredService<IDocumentRepository>();
-        _knowledgeIndex = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection = GetRequiredService<FakeDocumentChunkCollection>();
         _chatClient = GetRequiredService<IChatClient>();
         _embeddingGenerator = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _principalAccessor = GetRequiredService<ICurrentPrincipalAccessor>();
@@ -324,9 +325,9 @@ public class ChatAnchor_Tests
 
     private void SetupDefaultKnowledgeIndex()
     {
-        _knowledgeIndex
-            .SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
+        // Default fake state already returns empty for both SearchAsync and HybridSearchAsync;
+        // no explicit setup needed. Reset() to clear any state leaked between tests.
+        _collection.Reset();
     }
 
     private void SetupDefaultChatClient()

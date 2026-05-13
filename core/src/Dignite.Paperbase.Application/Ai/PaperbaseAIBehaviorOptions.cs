@@ -59,8 +59,8 @@ public class PaperbaseAIBehaviorOptions
 
     /// <summary>
     /// 文档 Chat RAG 搜索默认最小相关度阈值。模型可在工具参数里显式覆盖（强对账场景拉高、
-    /// 跨语言/专有名词查询调低）。低于底层知识库默认值是为了改善跨语言查询和专有名词查询
-    /// 的召回。设为 null 时回落到 <c>PaperbaseKnowledgeIndex:MinScore</c>。
+    /// 跨语言/专有名词查询调低）。低于底层向量库默认值是为了改善跨语言查询和专有名词查询
+    /// 的召回。设为 null 时回落到 <c>PaperbaseVectorStore:MinScore</c>。
     /// </summary>
     public double? ChatMinScore { get; set; } = 0.45;
 

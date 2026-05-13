@@ -15,7 +15,7 @@ The relational database holds all Paperbase business entities. Qdrant holds chun
 
 ## Connection strings
 
-Only the relational database goes through ASP.NET Core connection strings. Qdrant is configured via [`QdrantKnowledgeIndex`](knowledge-index.md), and the OCR backend is configured per provider (see [text-extraction.md](text-extraction.md)).
+Only the relational database goes through ASP.NET Core connection strings. Qdrant is configured via [`PaperbaseVectorStore`](vectors.md), and the OCR backend is configured per provider (see [text-extraction.md](text-extraction.md)).
 
 ```json
 "ConnectionStrings": {
@@ -95,7 +95,7 @@ docker compose up paddleocr     # from the repository root
 
 ## Migration boundary between PostgreSQL and Qdrant
 
-PostgreSQL has standard EF Core migrations (under `host/src/Migrations/`). Qdrant has none — collections and payload indexes are reconciled at startup by `QdrantKnowledgeIndexModule.OnPostApplicationInitialization`.
+PostgreSQL has standard EF Core migrations (under `host/src/Migrations/`). Qdrant has none — the collection and its payload indexes are reconciled lazily by MEVD's `EnsureCollectionExistsAsync` the first time `DocumentChunkCollectionProvider.GetAsync` is called.
 
 Implications:
 
@@ -111,5 +111,5 @@ When deploying to a new environment, upgrading critical dependencies, or shippin
 
 - [Text extraction](text-extraction.md) — choosing and configuring an OCR provider
 - [AI provider](ai-provider.md) — wiring `IChatClient` and `IEmbeddingGenerator`
-- [Knowledge index](knowledge-index.md) — Qdrant schema, payload indexes, hybrid search toggle
+- [Vector store](vectors.md) — Qdrant schema, payload indexes, dense-only retrieval rationale
 - [Deployment checklist](deployment-checklist.md) — release smoke tests

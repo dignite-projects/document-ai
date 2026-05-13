@@ -5,7 +5,8 @@ using System.Runtime.CompilerServices;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using NSubstitute;
 using Shouldly;
@@ -28,7 +29,7 @@ public class ChatStreaming_Tests
     private readonly IChatAppService _appService;
     private readonly IChatConversationRepository _repository;
     private readonly IChatClient _chatClient;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly ICurrentPrincipalAccessor _principalAccessor;
 
@@ -40,7 +41,7 @@ public class ChatStreaming_Tests
         _appService         = GetRequiredService<IChatAppService>();
         _repository         = GetRequiredService<IChatConversationRepository>();
         _chatClient         = GetRequiredService<IChatClient>();
-        _knowledgeIndex     = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection         = GetRequiredService<FakeDocumentChunkCollection>();
         _embeddingGenerator = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _principalAccessor  = GetRequiredService<ICurrentPrincipalAccessor>();
 
@@ -319,9 +320,8 @@ public class ChatStreaming_Tests
 
     private void SetupDefaultKnowledgeIndex()
     {
-        _knowledgeIndex
-            .SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
+        // Default fake state already returns empty for both SearchAsync and HybridSearchAsync.
+        _collection.Reset();
     }
 
     private void SetupStreamingChatClient(string[] chunks)

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Dignite.Paperbase.Chat.Search;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Vectors;
 using Shouldly;
 using Xunit;
 
@@ -66,13 +66,13 @@ public class DocumentSearchCapture_Tests
 
         capture.Append(new[]
         {
-            new VectorSearchResult { RecordId = sharedRecordId, DocumentId = Guid.NewGuid(), ChunkIndex = 0 }
+            new DocumentChunkSearchHit { Id = sharedRecordId, DocumentId = Guid.NewGuid(), ChunkIndex = 0, Text = "a" }
         });
         capture.Append(new[]
         {
-            // Different DocumentId / ChunkIndex but same RecordId — dedup must use the
-            // record id when present (it's the strongest identity signal from the store).
-            new VectorSearchResult { RecordId = sharedRecordId, DocumentId = Guid.NewGuid(), ChunkIndex = 99 }
+            // Different DocumentId / ChunkIndex but same Id — dedup must use the record
+            // id when present (it's the strongest identity signal from the store).
+            new DocumentChunkSearchHit { Id = sharedRecordId, DocumentId = Guid.NewGuid(), ChunkIndex = 99, Text = "b" }
         });
 
         capture.Results.Count.ShouldBe(1);
@@ -88,7 +88,7 @@ public class DocumentSearchCapture_Tests
 
         for (var batch = 0; batch < 5; batch++)
         {
-            var hits = new List<VectorSearchResult>();
+            var hits = new List<DocumentChunkSearchHit>();
             for (var i = 0; i < 10; i++)
             {
                 hits.Add(BuildResult(
@@ -136,7 +136,7 @@ public class DocumentSearchCapture_Tests
         // and got zero" is HasSearches — must flip on first Append regardless of count.
         var capture = new DocumentSearchCapture();
 
-        capture.Append(Array.Empty<VectorSearchResult>());
+        capture.Append(Array.Empty<DocumentChunkSearchHit>());
 
         capture.HasSearches.ShouldBeTrue();
         capture.Results.ShouldBeEmpty();
@@ -158,9 +158,13 @@ public class DocumentSearchCapture_Tests
         capture.WasTruncated.ShouldBeFalse();
     }
 
-    private static VectorSearchResult BuildResult(string documentId, int chunkIndex, int? pageNumber = null)
+    // Leave Id = default so the dedup fallback (documentId + chunkIndex + pageNumber)
+    // is exercised — the dedup path Id != default kicks in only for tests that explicitly
+    // stamp a shared Id (e.g. Append_DedupsByRecordIdWhenAvailable).
+    private static DocumentChunkSearchHit BuildResult(string documentId, int chunkIndex, int? pageNumber = null)
         => new()
         {
+            Id = default,
             DocumentId = Guid.Parse(documentId),
             ChunkIndex = chunkIndex,
             PageNumber = pageNumber,

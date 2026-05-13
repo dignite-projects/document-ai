@@ -7,7 +7,7 @@ using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Documents.Pipelines;
 using Dignite.Paperbase.Documents.Pipelines.RelationDiscovery;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -39,10 +39,14 @@ public class RelationDiscoveryBackgroundJobTestModule : AbpModule
 
         // Same treatment for L3 — substitute so this test stays focused on the job's lifecycle
         // and L2 → L3 fallback chaining; L3's own logic is covered by SemanticRelationDiscoveryService_Tests.
+        // L3 ctor takes DocumentChunkCollectionProvider since PR-4; pass a fake provider
+        // wired to a no-op fake collection so the substitute can be constructed.
+        var fakeCollection = new Dignite.Paperbase.Tests.Vectors.FakeDocumentChunkCollection();
+        var fakeProvider = new Dignite.Paperbase.Tests.Vectors.FakeDocumentChunkCollectionProvider(fakeCollection);
         context.Services.AddSingleton(Substitute.For<SemanticRelationDiscoveryService>(
             Substitute.For<IDocumentRepository>(),
             Substitute.For<IDocumentRelationRepository>(),
-            Substitute.For<IDocumentKnowledgeIndex>(),
+            fakeProvider,
             Substitute.For<IEmbeddingGenerator<string, Embedding<float>>>(),
             Substitute.For<RelationInferenceAgent>(
                 Substitute.For<IChatClient>(),

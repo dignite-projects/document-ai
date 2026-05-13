@@ -7,11 +7,13 @@ using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Chat;
 using Dignite.Paperbase.Chat.Search;
 using Dignite.Paperbase.Chat.Telemetry;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.VectorData;
 using NSubstitute;
 using Shouldly;
 using Volo.Abp.Modularity;
@@ -24,9 +26,11 @@ public class DocumentTextSearchAdapterTestModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
-        // Adapter dependencies — replaced by NSubstitutes so the test can shape
-        // the search results and assert on the embedding call.
-        context.Services.AddSingleton(Substitute.For<IDocumentKnowledgeIndex>());
+        var fakeCollection = new FakeDocumentChunkCollection();
+        context.Services.AddSingleton(fakeCollection);
+        context.Services.AddSingleton<DocumentChunkCollectionProvider>(
+            new FakeDocumentChunkCollectionProvider(fakeCollection));
+
         context.Services.AddSingleton(Substitute.For<IEmbeddingGenerator<string, Embedding<float>>>());
         context.Services.AddSingleton<TestDocumentRerankWorkflow>();
         context.Services.AddSingleton<DocumentRerankWorkflow>(sp =>
@@ -44,25 +48,25 @@ public class DocumentTextSearchAdapterTestModule : AbpModule
 public class TestableDocumentTextSearchAdapter : DocumentTextSearchAdapter
 {
     public TestableDocumentTextSearchAdapter(
-        IDocumentKnowledgeIndex vectorStore,
+        DocumentChunkCollectionProvider collectionProvider,
         IEmbeddingGenerator<string, Embedding<float>> embeddingGenerator,
         DocumentRerankWorkflow rerankWorkflow,
         IOptions<PaperbaseAIBehaviorOptions> aiOptions,
-        IOptions<PaperbaseKnowledgeIndexOptions> ragOptions,
+        IOptions<PaperbaseVectorStoreOptions> vectorStoreOptions,
         ILogger<DocumentTextSearchAdapter> logger)
-        : base(vectorStore, embeddingGenerator, rerankWorkflow, aiOptions, ragOptions, logger)
+        : base(collectionProvider, embeddingGenerator, rerankWorkflow, aiOptions, vectorStoreOptions, logger)
     {
     }
 
     /// <summary>Exposes <c>FormatSearchContext</c> for direct assertion in tests.</summary>
-    public string InvokeFormatSearchContext(IReadOnlyList<VectorSearchResult> vectorResults)
+    public string InvokeFormatSearchContext(IReadOnlyList<DocumentChunkSearchHit> vectorResults)
         => FormatSearchContext(vectorResults);
 
     /// <summary>
     /// Exposes <c>SearchVectorAsync</c> so tests can assert on the embedding +
     /// vector-store request shape without going through the AIFunction binding.
     /// </summary>
-    public Task<IReadOnlyList<VectorSearchResult>> InvokeSearchVector(
+    public Task<IReadOnlyList<DocumentChunkSearchHit>> InvokeSearchVector(
         Guid? tenantId,
         DocumentSearchScope? scope,
         string query,
@@ -116,22 +120,25 @@ public class DocumentTextSearchAdapter_Tests
     : PaperbaseApplicationTestBase<DocumentTextSearchAdapterTestModule>
 {
     private readonly TestableDocumentTextSearchAdapter _adapter;
-    private readonly IDocumentKnowledgeIndex _vectorStore;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly TestDocumentRerankWorkflow _rerankWorkflow;
     private readonly PaperbaseAIBehaviorOptions _aiOptions;
+    private readonly PaperbaseVectorStoreOptions _vectorStoreOptions;
     private readonly ChatToolFactory _toolFactory;
 
     public DocumentTextSearchAdapter_Tests()
     {
         _adapter = (TestableDocumentTextSearchAdapter)GetRequiredService<DocumentTextSearchAdapter>();
-        _vectorStore = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection = GetRequiredService<FakeDocumentChunkCollection>();
         _embeddingGenerator = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _rerankWorkflow = GetRequiredService<TestDocumentRerankWorkflow>();
         _aiOptions = GetRequiredService<IOptions<PaperbaseAIBehaviorOptions>>().Value;
+        _vectorStoreOptions = GetRequiredService<IOptions<PaperbaseVectorStoreOptions>>().Value;
         _toolFactory = GetRequiredService<ChatToolFactory>();
         _aiOptions.EnableLlmRerank = false;
         _aiOptions.RecallExpandFactor = 4;
+        _collection.Reset();
 
         SetupDefaultEmbedding();
     }
@@ -150,24 +157,20 @@ public class DocumentTextSearchAdapter_Tests
     public async Task SearchVector_Forwards_TenantId_To_VectorStore()
     {
         var tenantId = Guid.NewGuid();
-        VectorSearchRequest? captured = null;
-        _vectorStore.SearchAsync(
-                Arg.Do<VectorSearchRequest>(r => captured = r),
-                Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
 
         await _adapter.InvokeSearchVector(tenantId, scope: null, query: "契約番号 ABC-001");
 
-        captured.ShouldNotBeNull();
-        captured!.TenantId.ShouldBe(tenantId);
+        _collection.LastSearchFilter.ShouldNotBeNull();
+        // The compiled filter accepts records under the matching tenant and rejects others.
+        var ours = MakeProbe(tenantId: tenantId);
+        var theirs = MakeProbe(tenantId: Guid.NewGuid());
+        _collection.LastSearchFilter!(ours).ShouldBeTrue();
+        _collection.LastSearchFilter(theirs).ShouldBeFalse();
     }
 
     [Fact]
     public async Task SearchVector_Generates_Embedding_For_Query()
     {
-        _vectorStore.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
-
         await _adapter.InvokeSearchVector(tenantId: null, scope: null, query: "ANYTHING");
 
         await _embeddingGenerator.Received(1).GenerateAsync(
@@ -177,7 +180,7 @@ public class DocumentTextSearchAdapter_Tests
     }
 
     [Fact]
-    public async Task Scope_Overrides_DefaultTopK_DocumentId_DocumentTypeCode_MinScore()
+    public async Task Scope_Overrides_DefaultTopK_DocumentId_DocumentTypeCode()
     {
         var documentId = Guid.NewGuid();
         var scope = new DocumentSearchScope
@@ -188,33 +191,30 @@ public class DocumentTextSearchAdapter_Tests
             MinScore = 0.42
         };
 
-        VectorSearchRequest? captured = null;
-        _vectorStore.SearchAsync(Arg.Do<VectorSearchRequest>(r => captured = r), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
-
         await _adapter.InvokeSearchVector(tenantId: null, scope, query: "Q");
 
-        captured.ShouldNotBeNull();
-        captured!.DocumentId.ShouldBe(documentId);
-        captured.DocumentTypeCode.ShouldBe("contract.general");
-        captured.TopK.ShouldBe(17);
-        captured.MinScore.ShouldBe(0.42);
+        _collection.LastSearchTop.ShouldBe(17);
+
+        var filter = _collection.LastSearchFilter;
+        filter.ShouldNotBeNull();
+        // The compiled filter accepts the pinned document + type and rejects others.
+        var match = MakeProbe(documentId: documentId, typeCode: "contract.general");
+        var wrongDoc = MakeProbe(documentId: Guid.NewGuid(), typeCode: "contract.general");
+        var wrongType = MakeProbe(documentId: documentId, typeCode: "other.type");
+        filter!(match).ShouldBeTrue();
+        filter(wrongDoc).ShouldBeFalse();
+        filter(wrongType).ShouldBeFalse();
     }
 
     [Fact]
     public async Task Rerank_Disabled_Uses_FinalTopK_Directly()
     {
-        VectorSearchRequest? captured = null;
-        _vectorStore.SearchAsync(Arg.Do<VectorSearchRequest>(r => captured = r), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
-
         await _adapter.InvokeSearchVector(
             tenantId: null,
             scope: new DocumentSearchScope { TopK = 3 },
             query: "Q");
 
-        captured.ShouldNotBeNull();
-        captured!.TopK.ShouldBe(3);
+        _collection.LastSearchTop.ShouldBe(3);
         _rerankWorkflow.LastCandidates.ShouldBeNull();
     }
 
@@ -223,22 +223,25 @@ public class DocumentTextSearchAdapter_Tests
     {
         _aiOptions.EnableLlmRerank = true;
         _aiOptions.RecallExpandFactor = 3;
+        _vectorStoreOptions.MinScore = null; // keep all 6 staged hits regardless of score
 
         var docId = Guid.NewGuid();
-        var results = Enumerable.Range(0, 6)
-            .Select(i => new VectorSearchResult
+        var stagedHits = Enumerable.Range(0, 6)
+            .Select(i =>
             {
-                RecordId = Guid.NewGuid(),
-                DocumentId = docId,
-                ChunkIndex = i,
-                Text = $"chunk-{i}",
-                Score = 0.9 - i * 0.1
+                var record = new DocumentChunkRecord
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = DocumentChunkPayloadEncoding.HostTenantId,
+                    DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(docId),
+                    ChunkIndex = i,
+                    Text = $"chunk-{i}",
+                };
+                return new VectorSearchResult<DocumentChunkRecord>(record, score: 0.9 - i * 0.1);
             })
             .ToList();
+        _collection.StagedSearchResults.Enqueue(stagedHits);
 
-        VectorSearchRequest? captured = null;
-        _vectorStore.SearchAsync(Arg.Do<VectorSearchRequest>(r => captured = r), Arg.Any<CancellationToken>())
-            .Returns(results);
         _rerankWorkflow.Handler = (candidates, topK) =>
             new List<RerankedChunk>
             {
@@ -251,8 +254,7 @@ public class DocumentTextSearchAdapter_Tests
             scope: new DocumentSearchScope { TopK = 2 },
             query: "Q");
 
-        captured.ShouldNotBeNull();
-        captured!.TopK.ShouldBe(6);
+        _collection.LastSearchTop.ShouldBe(6); // 2 * RecallExpandFactor(3)
         _rerankWorkflow.LastQuestion.ShouldBe("Q");
         _rerankWorkflow.LastCandidates!.Count.ShouldBe(6);
         _rerankWorkflow.LastTopK.ShouldBe(2);
@@ -264,19 +266,64 @@ public class DocumentTextSearchAdapter_Tests
     [Fact]
     public async Task Different_Tenants_Get_Different_TenantId_In_Search_Request()
     {
-        // 多租户隔离守护：连续搜两个不同租户，request.TenantId 必须严格匹配传入值。
+        // 多租户隔离守护：连续搜两个不同租户，filter 必须严格匹配各自的 tenant key。
         var tenantA = Guid.NewGuid();
         var tenantB = Guid.NewGuid();
-        var captured = new List<VectorSearchRequest>();
-        _vectorStore.SearchAsync(Arg.Do<VectorSearchRequest>(r => captured.Add(r)), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
 
         await _adapter.InvokeSearchVector(tenantA, scope: null, query: "A");
-        await _adapter.InvokeSearchVector(tenantB, scope: null, query: "B");
+        var filterA = _collection.LastSearchFilter;
 
-        captured.Count.ShouldBe(2);
-        captured[0].TenantId.ShouldBe(tenantA);
-        captured[1].TenantId.ShouldBe(tenantB);
+        await _adapter.InvokeSearchVector(tenantB, scope: null, query: "B");
+        var filterB = _collection.LastSearchFilter;
+
+        _collection.SearchCalls.ShouldBe(2);
+        filterA.ShouldNotBeNull();
+        filterB.ShouldNotBeNull();
+        filterA!(MakeProbe(tenantId: tenantA)).ShouldBeTrue();
+        filterA(MakeProbe(tenantId: tenantB)).ShouldBeFalse();
+        filterB!(MakeProbe(tenantId: tenantB)).ShouldBeTrue();
+        filterB(MakeProbe(tenantId: tenantA)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task TenantIsolation_Search_Returns_Only_Records_Of_Caller_Tenant()
+    {
+        // End-to-end isolation guard: stage cross-tenant hits in a single staged
+        // batch; the fake collection applies the production filter expression at
+        // dequeue time. If the adapter ever stops pinning TenantId in its filter,
+        // tenant B's record would slip through here.
+        var tenantA = Guid.NewGuid();
+        var tenantB = Guid.NewGuid();
+        var docA = Guid.NewGuid();
+        var docB = Guid.NewGuid();
+
+        _collection.StagedSearchResults.Enqueue(new[]
+        {
+            new VectorSearchResult<DocumentChunkRecord>(
+                new DocumentChunkRecord
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = DocumentChunkPayloadEncoding.EncodeTenantId(tenantA),
+                    DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(docA),
+                    ChunkIndex = 0,
+                    Text = "A-chunk",
+                }, score: 0.9),
+            new VectorSearchResult<DocumentChunkRecord>(
+                new DocumentChunkRecord
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = DocumentChunkPayloadEncoding.EncodeTenantId(tenantB),
+                    DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(docB),
+                    ChunkIndex = 0,
+                    Text = "B-chunk",
+                }, score: 0.85),
+        });
+
+        var hits = await _adapter.InvokeSearchVector(tenantA, scope: null, query: "Q");
+
+        hits.Count.ShouldBe(1);
+        hits.Single().DocumentId.ShouldBe(docA);
+        hits.Single().Text.ShouldNotContain("B-chunk");
     }
 
     // ── CreateSearchFunction (AIFunction binding) ─────────────────────────────
@@ -285,12 +332,7 @@ public class DocumentTextSearchAdapter_Tests
     public async Task SearchFunction_Capture_Records_Search_Results()
     {
         var documentId = Guid.NewGuid();
-        var fakeResults = new List<VectorSearchResult>
-        {
-            new() { RecordId = Guid.NewGuid(), DocumentId = documentId, ChunkIndex = 0, Text = "hello" }
-        };
-        _vectorStore.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(fakeResults);
+        StageSearchHit(documentId, chunkIndex: 0, text: "hello");
 
         var capture = new DocumentSearchCapture();
         capture.HasSearches.ShouldBeFalse();
@@ -316,16 +358,8 @@ public class DocumentTextSearchAdapter_Tests
         // Multi-search-per-turn safety: when the model calls search twice in one turn
         // (e.g. chaining a structured-tool result into a focused RAG pass), citations
         // must be the union of both invocations, not just the last.
-        _vectorStore.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(
-                new List<VectorSearchResult>
-                {
-                    new() { RecordId = Guid.NewGuid(), DocumentId = Guid.NewGuid(), ChunkIndex = 0, Text = "first call" }
-                },
-                new List<VectorSearchResult>
-                {
-                    new() { RecordId = Guid.NewGuid(), DocumentId = Guid.NewGuid(), ChunkIndex = 1, Text = "second call" }
-                });
+        StageSearchHit(Guid.NewGuid(), chunkIndex: 0, text: "first call");
+        StageSearchHit(Guid.NewGuid(), chunkIndex: 1, text: "second call");
 
         var capture = new DocumentSearchCapture();
         var fn = _adapter.CreateSearchFunction(
@@ -344,18 +378,35 @@ public class DocumentTextSearchAdapter_Tests
     public async Task SearchFunction_Capture_Deduplicates_Repeated_Chunks()
     {
         var docId = Guid.NewGuid();
-        var recordId = Guid.NewGuid();
-        _vectorStore.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(
-                new List<VectorSearchResult>
+        var sharedRecordId = Guid.NewGuid();
+        var sharedKey = DocumentChunkPayloadEncoding.EncodeDocumentId(docId);
+
+        var firstHit = new DocumentChunkRecord
+        {
+            Id = sharedRecordId,
+            TenantId = DocumentChunkPayloadEncoding.HostTenantId,
+            DocumentId = sharedKey,
+            ChunkIndex = 0,
+            Text = "first hit",
+        };
+        _collection.StagedSearchResults.Enqueue(new[]
+        {
+            new VectorSearchResult<DocumentChunkRecord>(firstHit, score: 0.9)
+        });
+        _collection.StagedSearchResults.Enqueue(new[]
+        {
+            new VectorSearchResult<DocumentChunkRecord>(firstHit, score: 0.85), // duplicate
+            new VectorSearchResult<DocumentChunkRecord>(
+                new DocumentChunkRecord
                 {
-                    new() { RecordId = recordId, DocumentId = docId, ChunkIndex = 0, Text = "first hit" }
+                    Id = Guid.NewGuid(),
+                    TenantId = DocumentChunkPayloadEncoding.HostTenantId,
+                    DocumentId = sharedKey,
+                    ChunkIndex = 1,
+                    Text = "new hit",
                 },
-                new List<VectorSearchResult>
-                {
-                    new() { RecordId = recordId, DocumentId = docId, ChunkIndex = 0, Text = "same hit again" },
-                    new() { RecordId = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 1, Text = "new hit" }
-                });
+                score: 0.8)
+        });
 
         var capture = new DocumentSearchCapture();
         var fn = _adapter.CreateSearchFunction(
@@ -373,9 +424,6 @@ public class DocumentTextSearchAdapter_Tests
     {
         // The model invoked search, but no chunks matched. HasSearches must still be true
         // so IsDegraded reads false — "honest empty" rather than "model never tried".
-        _vectorStore.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
-
         var capture = new DocumentSearchCapture();
         var fn = _adapter.CreateSearchFunction(
             tenantId: null, baseScope: null, capture, ToolContext(), _toolFactory, "fn", "desc");
@@ -405,52 +453,14 @@ public class DocumentTextSearchAdapter_Tests
     }
 
     [Fact]
-    public async Task SearchFunction_Concurrent_Captures_Do_Not_Cross_Contaminate()
-    {
-        // 10 concurrent AIFunction invocations (different tenants / queries) must each
-        // populate only their own capture, with the corresponding tenant's results.
-        const int count = 10;
-        var tenantIds = Enumerable.Range(0, count).Select(_ => Guid.NewGuid()).ToArray();
-
-        _vectorStore.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
-            {
-                var req = ci.Arg<VectorSearchRequest>();
-                var docId = req.TenantId ?? Guid.Empty;
-                return Task.FromResult<IReadOnlyList<VectorSearchResult>>(new List<VectorSearchResult>
-                {
-                    new() { RecordId = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 0, Text = $"t-{docId}" }
-                });
-            });
-
-        var captures = tenantIds.Select(_ => new DocumentSearchCapture()).ToArray();
-
-        await Task.WhenAll(tenantIds.Select((tid, i) =>
-        {
-            var fn = _adapter.CreateSearchFunction(tid, baseScope: null, captures[i], ToolContext(tid), _toolFactory, "fn", "desc");
-            return fn.InvokeAsync(new AIFunctionArguments { ["query"] = $"q-{i}" }).AsTask();
-        }));
-
-        for (var i = 0; i < count; i++)
-        {
-            captures[i].HasSearches.ShouldBeTrue();
-            captures[i].Results.Count.ShouldBe(1);
-            captures[i].Results[0].DocumentId.ShouldBe(tenantIds[i]);
-        }
-    }
-
-    [Fact]
     public async Task SearchFunction_Forwards_BaseScope_To_KnowledgeIndex()
     {
         // Replaces the deleted ChatAppService_Tests.Should_Pass_Scope_To_VectorSearchRequest;
         // scope propagation is an adapter concern, exercised through the AIFunction surface.
-        VectorSearchRequest? captured = null;
-        _vectorStore.SearchAsync(Arg.Do<VectorSearchRequest>(r => captured = r), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
-
+        var tenantId = Guid.NewGuid();
         var capture = new DocumentSearchCapture();
         var fn = _adapter.CreateSearchFunction(
-            tenantId: Guid.NewGuid(),
+            tenantId: tenantId,
             baseScope: new DocumentSearchScope
             {
                 DocumentTypeCode = "contract.general",
@@ -464,9 +474,11 @@ public class DocumentTextSearchAdapter_Tests
 
         await fn.InvokeAsync(new AIFunctionArguments { ["query"] = "payment terms?" });
 
-        captured.ShouldNotBeNull();
-        captured!.DocumentTypeCode.ShouldBe("contract.general");
-        captured.TopK.ShouldBe(7);
+        _collection.LastSearchTop.ShouldBe(7);
+        var filter = _collection.LastSearchFilter;
+        filter.ShouldNotBeNull();
+        filter!(MakeProbe(tenantId: tenantId, typeCode: "contract.general")).ShouldBeTrue();
+        filter(MakeProbe(tenantId: tenantId, typeCode: "other.type")).ShouldBeFalse();
     }
 
     // ── FormatSearchContext (prompt-boundary escaping) ────────────────────────
@@ -475,11 +487,11 @@ public class DocumentTextSearchAdapter_Tests
     public void ContextFormatter_Wraps_Each_Chunk_With_Document_Tag()
     {
         var docId = Guid.NewGuid();
-        var vectorResults = new List<VectorSearchResult>
+        var vectorResults = new List<DocumentChunkSearchHit>
         {
             new()
             {
-                RecordId = Guid.NewGuid(),
+                Id = Guid.NewGuid(),
                 DocumentId = docId,
                 ChunkIndex = 0,
                 PageNumber = 3,
@@ -487,7 +499,7 @@ public class DocumentTextSearchAdapter_Tests
             },
             new()
             {
-                RecordId = Guid.NewGuid(),
+                Id = Guid.NewGuid(),
                 DocumentId = docId,
                 ChunkIndex = 1,
                 PageNumber = null,
@@ -516,7 +528,7 @@ public class DocumentTextSearchAdapter_Tests
     [Fact]
     public void ContextFormatter_With_Empty_Results_Returns_Stable_String()
     {
-        var result = _adapter.InvokeFormatSearchContext(new List<VectorSearchResult>());
+        var result = _adapter.InvokeFormatSearchContext(new List<DocumentChunkSearchHit>());
         result.ShouldNotBeNull();
     }
 
@@ -535,4 +547,34 @@ public class DocumentTextSearchAdapter_Tests
                 Arg.Any<CancellationToken>())
             .Returns(embeddings);
     }
+
+    private void StageSearchHit(Guid documentId, int chunkIndex, string text)
+    {
+        var record = new DocumentChunkRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = DocumentChunkPayloadEncoding.HostTenantId,
+            DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(documentId),
+            ChunkIndex = chunkIndex,
+            Text = text,
+        };
+        _collection.StagedSearchResults.Enqueue(new[]
+        {
+            new VectorSearchResult<DocumentChunkRecord>(record, score: 0.9)
+        });
+    }
+
+    private static DocumentChunkRecord MakeProbe(
+        Guid? tenantId = null,
+        Guid? documentId = null,
+        string? typeCode = null)
+        => new()
+        {
+            Id = Guid.NewGuid(),
+            TenantId = DocumentChunkPayloadEncoding.EncodeTenantId(tenantId),
+            DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(documentId ?? Guid.NewGuid()),
+            DocumentTypeCode = typeCode,
+            ChunkIndex = 0,
+            Text = "probe",
+        };
 }

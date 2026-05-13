@@ -6,7 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.EntityFrameworkCore;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using NSubstitute;
 using Shouldly;
@@ -38,7 +39,7 @@ public class Chat_E2E_Tests
     private readonly IChatConversationRepository _conversationRepository;
     private readonly IDocumentRepository _documentRepository;
     private readonly IChatClient _chatClient;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly ICurrentPrincipalAccessor _principalAccessor;
     private readonly ICurrentTenant _currentTenant;
@@ -53,7 +54,7 @@ public class Chat_E2E_Tests
         _conversationRepository = GetRequiredService<IChatConversationRepository>();
         _documentRepository     = GetRequiredService<IDocumentRepository>();
         _chatClient             = GetRequiredService<IChatClient>();
-        _knowledgeIndex         = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection             = GetRequiredService<FakeDocumentChunkCollection>();
         _embeddingGenerator     = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _principalAccessor      = GetRequiredService<ICurrentPrincipalAccessor>();
         _currentTenant          = GetRequiredService<ICurrentTenant>();
@@ -563,8 +564,7 @@ public class Chat_E2E_Tests
 
     private void SetupDefaultKnowledgeIndex()
     {
-        _knowledgeIndex
-            .SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
+        // Default fake state already returns empty for both SearchAsync and HybridSearchAsync.
+        _collection.Reset();
     }
 }

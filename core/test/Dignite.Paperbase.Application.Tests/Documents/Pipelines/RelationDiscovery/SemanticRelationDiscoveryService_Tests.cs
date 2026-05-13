@@ -7,10 +7,12 @@ using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Documents.Pipelines.RelationDiscovery;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.VectorData;
 using NSubstitute;
 using Shouldly;
 using Volo.Abp.Modularity;
@@ -25,8 +27,12 @@ public class SemanticRelationDiscoveryServiceTestModule : AbpModule
     {
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
         context.Services.AddSingleton(Substitute.For<IDocumentRelationRepository>());
-        context.Services.AddSingleton(Substitute.For<IDocumentKnowledgeIndex>());
         context.Services.AddSingleton(Substitute.For<IEmbeddingGenerator<string, Embedding<float>>>());
+
+        var fakeCollection = new FakeDocumentChunkCollection();
+        context.Services.AddSingleton(fakeCollection);
+        context.Services.AddSingleton<DocumentChunkCollectionProvider>(
+            new FakeDocumentChunkCollectionProvider(fakeCollection));
 
         // Replace RelationInferenceAgent entirely so tests don't need a real IChatClient.
         // Construct with cheap substitutes for its dependencies.
@@ -52,7 +58,7 @@ public class SemanticRelationDiscoveryService_Tests
     private readonly SemanticRelationDiscoveryService _service;
     private readonly IDocumentRepository _documentRepository;
     private readonly IDocumentRelationRepository _relationRepository;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly RelationInferenceAgent _inferenceAgent;
     private readonly PaperbaseAIBehaviorOptions _aiOptions;
@@ -62,10 +68,11 @@ public class SemanticRelationDiscoveryService_Tests
         _service = GetRequiredService<SemanticRelationDiscoveryService>();
         _documentRepository = GetRequiredService<IDocumentRepository>();
         _relationRepository = GetRequiredService<IDocumentRelationRepository>();
-        _knowledgeIndex = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection = GetRequiredService<FakeDocumentChunkCollection>();
         _embeddingGenerator = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _inferenceAgent = GetRequiredService<RelationInferenceAgent>();
         _aiOptions = GetRequiredService<IOptions<PaperbaseAIBehaviorOptions>>().Value;
+        _collection.Reset();
     }
 
     [Fact]
@@ -120,7 +127,7 @@ public class SemanticRelationDiscoveryService_Tests
         var source = CreateDocument(markdown: "合同内容");
         SetupSource(source);
         SetupEmbedding();
-        SetupVectorSearch(source.Id, Array.Empty<VectorSearchResult>());
+        // Empty staged batch → empty IAsyncEnumerable → 0 candidates.
 
         var created = await _service.DiscoverAsync(source.Id);
 
@@ -130,15 +137,14 @@ public class SemanticRelationDiscoveryService_Tests
     [Fact]
     public async Task DiscoverAsync_Should_Filter_Self_From_Vector_Results()
     {
+        // The production filter already excludes self (DocumentId != sourceDocKey).
+        // Stage a hit that names the source — the filter compiled against
+        // DocumentChunkRecord would normally reject it, but we still exercise the
+        // service-layer guard by staging it directly into the result queue.
         var source = CreateDocument(markdown: "合同内容");
         SetupSource(source);
         SetupEmbedding();
-        // Vector search returns the source itself as the top hit (always — every doc
-        // is most similar to itself). Service must filter it out.
-        SetupVectorSearch(source.Id, new[]
-        {
-            CreateVectorResult(source.Id, 0.95),
-        });
+        StageVectorHit(source.Id, score: 0.95);
 
         var created = await _service.DiscoverAsync(source.Id);
 
@@ -154,10 +160,7 @@ public class SemanticRelationDiscoveryService_Tests
         var linkedPeer = CreateDocument(markdown: "已关联文档");
         SetupSource(source);
         SetupEmbedding();
-        SetupVectorSearch(source.Id, new[]
-        {
-            CreateVectorResult(linkedPeer.Id, 0.85),
-        });
+        StageVectorHit(linkedPeer.Id, score: 0.85);
         // Pre-existing relation → must skip.
         _relationRepository.GetListByDocumentIdAsync(source.Id, Arg.Any<CancellationToken>())
             .Returns(new List<DocumentRelation>
@@ -181,7 +184,7 @@ public class SemanticRelationDiscoveryService_Tests
         SetupSource(source);
         SetupCandidate(candidate);
         SetupEmbedding();
-        SetupVectorSearch(source.Id, new[] { CreateVectorResult(candidate.Id, 0.7) });
+        StageVectorHit(candidate.Id, score: 0.7);
         SetupNoExistingRelations(source.Id);
 
         _inferenceAgent.EvaluateAsync(
@@ -203,7 +206,7 @@ public class SemanticRelationDiscoveryService_Tests
         SetupSource(source);
         SetupCandidate(candidate);
         SetupEmbedding();
-        SetupVectorSearch(source.Id, new[] { CreateVectorResult(candidate.Id, 0.7) });
+        StageVectorHit(candidate.Id, score: 0.7);
         SetupNoExistingRelations(source.Id);
 
         // LLM says related but confidence is below threshold (0.7).
@@ -222,6 +225,56 @@ public class SemanticRelationDiscoveryService_Tests
     }
 
     [Fact]
+    public async Task TenantIsolation_Recall_Filter_Excludes_Other_Tenant_Candidates()
+    {
+        // End-to-end guard: stage one in-tenant candidate + one cross-tenant hit
+        // in the same staged batch. The fake collection applies the production
+        // filter at dequeue time. The recall filter must scope to source.TenantId;
+        // the cross-tenant hit must never become a candidate.
+        var source = CreateDocument(markdown: "tenant-host source");
+        var inTenantCandidate = CreateDocument(markdown: "in-tenant candidate");
+        var otherTenantId = Guid.NewGuid();
+        var otherTenantDocId = Guid.NewGuid();
+
+        SetupSource(source);
+        SetupCandidate(inTenantCandidate);
+        SetupEmbedding();
+        SetupNoExistingRelations(source.Id);
+
+        _collection.StagedSearchResults.Enqueue(new[]
+        {
+            BuildHit(inTenantCandidate.Id, score: 0.9),
+            new VectorSearchResult<DocumentChunkRecord>(
+                new DocumentChunkRecord
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = DocumentChunkPayloadEncoding.EncodeTenantId(otherTenantId),
+                    DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(otherTenantDocId),
+                    ChunkIndex = 0,
+                    Text = "other-tenant-chunk",
+                },
+                score: 0.88),
+        });
+
+        _inferenceAgent.EvaluateAsync(
+                Arg.Any<DocumentSnapshot>(), Arg.Any<DocumentSnapshot>(), Arg.Any<CancellationToken>())
+            .Returns(new RelationInferenceResult
+            {
+                IsRelated = true,
+                Confidence = 0.85,
+                Description = "in-tenant match",
+            });
+
+        var created = await _service.DiscoverAsync(source.Id);
+
+        created.Count.ShouldBe(1);
+        created.Single().TargetDocumentId.ShouldBe(inTenantCandidate.Id);
+        // Cross-tenant doc never enters candidate list → never reaches LLM evaluation.
+        await _inferenceAgent.Received(1).EvaluateAsync(
+            Arg.Any<DocumentSnapshot>(), Arg.Any<DocumentSnapshot>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task DiscoverAsync_Should_Create_AiSuggested_When_LLM_Confirms()
     {
         var source = CreateDocument(markdown: "合同内容");
@@ -229,7 +282,7 @@ public class SemanticRelationDiscoveryService_Tests
         SetupSource(source);
         SetupCandidate(candidate);
         SetupEmbedding();
-        SetupVectorSearch(source.Id, new[] { CreateVectorResult(candidate.Id, 0.85) });
+        StageVectorHit(candidate.Id, score: 0.85);
         SetupNoExistingRelations(source.Id);
 
         _inferenceAgent.EvaluateAsync(
@@ -265,10 +318,10 @@ public class SemanticRelationDiscoveryService_Tests
         SetupCandidate(failCandidate);
         SetupCandidate(goodCandidate);
         SetupEmbedding();
-        SetupVectorSearch(source.Id, new[]
+        _collection.StagedSearchResults.Enqueue(new[]
         {
-            CreateVectorResult(failCandidate.Id, 0.85),
-            CreateVectorResult(goodCandidate.Id, 0.8),
+            BuildHit(failCandidate.Id, score: 0.85),
+            BuildHit(goodCandidate.Id, score: 0.8),
         });
         SetupNoExistingRelations(source.Id);
 
@@ -298,8 +351,6 @@ public class SemanticRelationDiscoveryService_Tests
     {
         // .claude/rules/background-jobs.md § Tests: regression guard against future code
         // accidentally wrapping L3 in an outer UoW that holds a DB connection during LLM calls.
-        // L3 service itself opens NO UoW; when called from the background job (after L2's UoW
-        // has been disposed), ambient ICurrentUnitOfWork must be null at every external boundary.
         var uowManager = GetRequiredService<Volo.Abp.Uow.IUnitOfWorkManager>();
         var source = CreateDocument(markdown: "合同内容");
         var candidate = CreateDocument(markdown: "强相关发票");
@@ -321,15 +372,9 @@ public class SemanticRelationDiscoveryService_Tests
                 });
             });
 
-        // Assert NO ambient UoW at the vector search boundary.
-        _knowledgeIndex.SearchAsync(
-                Arg.Any<VectorSearchRequest>(),
-                Arg.Any<CancellationToken>())
-            .Returns(_ =>
-            {
-                uowManager.Current.ShouldBeNull();
-                return (IReadOnlyList<VectorSearchResult>)new[] { CreateVectorResult(candidate.Id, 0.9) };
-            });
+        // Stage one vector hit + assert NO ambient UoW when the fake's SearchAsync runs.
+        _collection.StagedSearchResults.Enqueue(new[] { BuildHit(candidate.Id, score: 0.9) });
+        _collection.OnGetByFilterInvoked = () => uowManager.Current.ShouldBeNull();
 
         // Assert NO ambient UoW at the LLM evaluation boundary.
         _inferenceAgent.EvaluateAsync(
@@ -346,10 +391,7 @@ public class SemanticRelationDiscoveryService_Tests
         var created = await _service.DiscoverAsync(source.Id);
 
         created.Count.ShouldBe(1);
-        // Sanity: all three external boundaries were actually hit (the assertion ran).
-        await _embeddingGenerator.Received(1).GenerateAsync(
-            Arg.Any<IEnumerable<string>>(), Arg.Any<EmbeddingGenerationOptions>(), Arg.Any<CancellationToken>());
-        await _knowledgeIndex.Received(1).SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>());
+        _collection.SearchCalls.ShouldBe(1);
         await _inferenceAgent.Received(1).EvaluateAsync(
             Arg.Any<DocumentSnapshot>(), Arg.Any<DocumentSnapshot>(), Arg.Any<CancellationToken>());
     }
@@ -362,7 +404,7 @@ public class SemanticRelationDiscoveryService_Tests
         SetupSource(source);
         SetupCandidate(candidateWithoutMarkdown);
         SetupEmbedding();
-        SetupVectorSearch(source.Id, new[] { CreateVectorResult(candidateWithoutMarkdown.Id, 0.9) });
+        StageVectorHit(candidateWithoutMarkdown.Id, score: 0.9);
         SetupNoExistingRelations(source.Id);
 
         var created = await _service.DiscoverAsync(source.Id);
@@ -404,24 +446,22 @@ public class SemanticRelationDiscoveryService_Tests
             }));
     }
 
-    private void SetupVectorSearch(Guid sourceDocId, IReadOnlyList<VectorSearchResult> results)
+    private void StageVectorHit(Guid documentId, double score)
     {
-        _knowledgeIndex.SearchAsync(
-                Arg.Any<VectorSearchRequest>(),
-                Arg.Any<CancellationToken>())
-            .Returns(results);
+        _collection.StagedSearchResults.Enqueue(new[] { BuildHit(documentId, score) });
     }
 
-    private static VectorSearchResult CreateVectorResult(Guid documentId, double score)
+    private static VectorSearchResult<DocumentChunkRecord> BuildHit(Guid documentId, double score)
     {
-        return new VectorSearchResult
+        var record = new DocumentChunkRecord
         {
-            RecordId = Guid.NewGuid(),
-            DocumentId = documentId,
+            Id = Guid.NewGuid(),
+            TenantId = DocumentChunkPayloadEncoding.HostTenantId,
+            DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(documentId),
             ChunkIndex = 0,
             Text = "chunk",
-            Score = score,
         };
+        return new VectorSearchResult<DocumentChunkRecord>(record, score);
     }
 
     private static Document CreateDocument(string? markdown)

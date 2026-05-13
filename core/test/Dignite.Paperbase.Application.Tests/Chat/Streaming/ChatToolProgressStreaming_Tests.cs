@@ -5,7 +5,8 @@ using System.Runtime.CompilerServices;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using NSubstitute;
 using Shouldly;
@@ -27,7 +28,7 @@ public class ChatToolProgressStreaming_Tests
 {
     private readonly IChatAppService _appService;
     private readonly IChatClient _chatClient;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly ICurrentPrincipalAccessor _principalAccessor;
 
@@ -37,13 +38,12 @@ public class ChatToolProgressStreaming_Tests
     {
         _appService = GetRequiredService<IChatAppService>();
         _chatClient = GetRequiredService<IChatClient>();
-        _knowledgeIndex = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection = GetRequiredService<FakeDocumentChunkCollection>();
         _embeddingGenerator = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _principalAccessor = GetRequiredService<ICurrentPrincipalAccessor>();
 
         SetupDefaultEmbedding();
-        _knowledgeIndex.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
+        _collection.Reset();
     }
 
     [Fact]

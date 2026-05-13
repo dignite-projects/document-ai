@@ -16,7 +16,7 @@ using Dignite.Paperbase.Chat.Telemetry;
 using Dignite.Paperbase.Chat.Tools;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Permissions;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Agents.AI;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.AI;
@@ -372,7 +372,7 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
     /// Security invariant: <c>conversation.TenantId</c> is read from the aggregate
     /// (loaded and authorized in <see cref="LoadAndAuthorizeAsync"/>), never from
     /// <c>ICurrentTenant</c>. The closure inside <see cref="DocumentTextSearchAdapter"/>
-    /// captures it and pins <see cref="VectorSearchRequest.TenantId"/> on every search —
+    /// captures it and pins the tenant filter on every search —
     /// the LLM cannot widen the tenant boundary via tool arguments.
     /// </para>
     /// <para>
@@ -734,7 +734,7 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
     /// Applies a soft upper-bound (<see cref="ChatConsts.MaxCitationsJsonLength"/>):
     /// if the serialized string is too long, trailing citations are dropped and a warning is logged.
     /// </summary>
-    protected virtual string? SerializeCitations(IReadOnlyList<VectorSearchResult>? results)
+    protected virtual string? SerializeCitations(IReadOnlyList<DocumentChunkSearchHit>? results)
     {
         if (results == null || results.Count == 0)
             return null;
@@ -761,7 +761,7 @@ public class ChatAppService : PaperbaseAppService, IChatAppService
     // internal static so Application.Tests can verify the citation field-mapping
     // + multibyte-safe snippet truncation without standing up the full chat path.
     // The method is a pure function over its input — no instance state is used.
-    internal static List<ChatCitationDto> BuildCitationDtos(IReadOnlyList<VectorSearchResult>? results)
+    internal static List<ChatCitationDto> BuildCitationDtos(IReadOnlyList<DocumentChunkSearchHit>? results)
     {
         if (results == null)
             return new List<ChatCitationDto>();

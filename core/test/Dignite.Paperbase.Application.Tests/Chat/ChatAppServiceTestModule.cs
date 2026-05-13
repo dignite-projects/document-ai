@@ -2,7 +2,8 @@ using System;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.EntityFrameworkCore;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -44,12 +45,19 @@ public class ChatAppServiceTestModule : AbpModule
 
         // Substituted external dependencies — substitute IDocumentRepository so
         // CreateConversationAsync can validate "document exists" without seeding.
-        // IChatClient / IDocumentKnowledgeIndex / IEmbeddingGenerator stay substituted
-        // so CI never reaches a real LLM or vector store.
+        // IChatClient / IEmbeddingGenerator stay substituted so CI never reaches a
+        // real LLM. The vector store is replaced by FakeDocumentChunkCollection +
+        // FakeDocumentChunkCollectionProvider, which keeps Application code's actual
+        // VectorStoreCollection.GetAsync / UpsertAsync / SearchAsync paths exercised
+        // against an in-memory store instead of a mocked interface.
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
-        context.Services.AddSingleton(Substitute.For<IDocumentKnowledgeIndex>());
         context.Services.AddSingleton(Substitute.For<IChatClient>());
         context.Services.AddSingleton(Substitute.For<IEmbeddingGenerator<string, Embedding<float>>>());
+
+        var fakeCollection = new FakeDocumentChunkCollection();
+        context.Services.AddSingleton(fakeCollection);
+        context.Services.AddSingleton<DocumentChunkCollectionProvider>(
+            new FakeDocumentChunkCollectionProvider(fakeCollection));
 
         // Summarizer client for ChatCompactionStrategyFactory. ChatCompactionOptions
         // defaults to disabled, so no test reaches the summarizer — registration just

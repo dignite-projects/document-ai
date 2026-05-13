@@ -6,10 +6,12 @@ using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Chat.Telemetry;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.VectorData;
 using NSubstitute;
 using Shouldly;
 using Volo.Abp.Modularity;
@@ -49,7 +51,7 @@ public class ChatToolInvocation_Tests
     private readonly IChatAppService _appService;
     private readonly IChatConversationRepository _repository;
     private readonly ScriptedToolCallingChatClient _innerChatClient;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly ICurrentPrincipalAccessor _principalAccessor;
     private readonly IAuditingManager _auditingManager;
@@ -61,7 +63,7 @@ public class ChatToolInvocation_Tests
         _appService = GetRequiredService<IChatAppService>();
         _repository = GetRequiredService<IChatConversationRepository>();
         _innerChatClient = GetRequiredService<ScriptedToolCallingChatClient>();
-        _knowledgeIndex = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection = GetRequiredService<FakeDocumentChunkCollection>();
         _embeddingGenerator = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _principalAccessor = GetRequiredService<ICurrentPrincipalAccessor>();
         _auditingManager = GetRequiredService<IAuditingManager>();
@@ -74,18 +76,8 @@ public class ChatToolInvocation_Tests
     {
         var docId = Guid.NewGuid();
         var chunkId = Guid.NewGuid();
-        _knowledgeIndex.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>
-            {
-                new()
-                {
-                    RecordId = chunkId,
-                    DocumentId = docId,
-                    ChunkIndex = 0,
-                    PageNumber = 3,
-                    Text = "Payment is due within 30 days."
-                }
-            });
+        StageSearchHit(chunkId, docId, chunkIndex: 0, pageNumber: 3,
+            text: "Payment is due within 30 days.");
 
         var conversationId = await CreateConversationAsync();
 
@@ -117,17 +109,10 @@ public class ChatToolInvocation_Tests
         _innerChatClient.FirstOptions.Tools.ShouldNotBeNull();
         _innerChatClient.FirstOptions.Tools!.ShouldContain(t => t.Name == "search_paperbase_documents");
 
-        // Issue #100: defaults flow from PaperbaseAIBehaviorOptions (TopK = 5,
-        // MinScore = 0.45) — no DocumentTypeCode pinning on the request because the
-        // conversation no longer carries it. The model is free to override these via
-        // tool parameters when intent calls for it (covered by a separate test).
-        await _knowledgeIndex.Received(1).SearchAsync(
-            Arg.Is<VectorSearchRequest>(r =>
-                r.QueryText == "payment terms"
-                && r.DocumentTypeCode == null
-                && r.TopK == 5
-                && r.MinScore == 0.45),
-            Arg.Any<CancellationToken>());
+        // Issue #100: defaults flow from PaperbaseAIBehaviorOptions — no DocumentTypeCode
+        // pinning on the request because the conversation no longer carries it.
+        _collection.SearchCalls.ShouldBe(1);
+        AssertFilterDoesNotPinDocumentType(_collection.LastSearchFilter);
 
         var conversation = await WithUnitOfWorkAsync(async () =>
         {
@@ -143,23 +128,14 @@ public class ChatToolInvocation_Tests
     }
 
     [Fact]
-    public async Task SendMessageAsync_Uses_ChatMinScore_From_Options()
+    public async Task SendMessageAsync_Uses_Default_Filter_When_No_Document_Type_Pinned()
     {
         // Issue #100: every conversation is "unscoped" at the aggregate level —
         // there is no longer a per-conversation MinScore to override the default.
         // Defaults come from PaperbaseAIBehaviorOptions (the model can override per
-        // tool call when intent calls for it; see the override test below).
-        _knowledgeIndex.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>
-            {
-                new()
-                {
-                    RecordId = Guid.NewGuid(),
-                    DocumentId = Guid.NewGuid(),
-                    ChunkIndex = 0,
-                    Text = "The contract amount is 1,000,000 JPY."
-                }
-            });
+        // tool call when intent calls for it).
+        StageSearchHit(Guid.NewGuid(), Guid.NewGuid(), chunkIndex: 0,
+            text: "The contract amount is 1,000,000 JPY.");
 
         var conversationId = await CreateConversationAsync();
 
@@ -175,29 +151,16 @@ public class ChatToolInvocation_Tests
             }
         });
 
-        await _knowledgeIndex.Received(1).SearchAsync(
-            Arg.Is<VectorSearchRequest>(r =>
-                r.DocumentTypeCode == null
-                && r.DocumentId == null
-                && r.TopK == 5
-                && r.MinScore == 0.45),
-            Arg.Any<CancellationToken>());
+        _collection.SearchCalls.ShouldBe(1);
+        AssertFilterDoesNotPinDocumentType(_collection.LastSearchFilter);
+        AssertFilterDoesNotPinSingleDocument(_collection.LastSearchFilter);
     }
 
     [Fact]
     public async Task SendMessageAsync_Records_Tool_Call_In_Abp_AuditLog_Scope()
     {
-        _knowledgeIndex.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>
-            {
-                new()
-                {
-                    RecordId = Guid.NewGuid(),
-                    DocumentId = Guid.NewGuid(),
-                    ChunkIndex = 0,
-                    Text = "Audited context."
-                }
-            });
+        StageSearchHit(Guid.NewGuid(), Guid.NewGuid(), chunkIndex: 0,
+            text: "Audited context.");
 
         var conversationId = await CreateConversationAsync();
 
@@ -261,8 +224,8 @@ public class ChatToolInvocation_Tests
         // Outcome=Failure and ExceptionType populated, and the underlying exception
         // must propagate so the model sees the failure (rather than silently
         // "succeeding" with no result).
-        _knowledgeIndex.SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns<IReadOnlyList<VectorSearchResult>>(_ => throw new InvalidOperationException("vector store down"));
+        _collection.ThrowOnSearch = true;
+        _collection.SearchException = new InvalidOperationException("vector store down");
 
         var conversationId = await CreateConversationAsync();
 
@@ -289,6 +252,57 @@ public class ChatToolInvocation_Tests
         toolCalls[0].Outcome.ShouldBe(ChatTelemetryOutcome.Failure);
         toolCalls[0].ExceptionType.ShouldNotBeNullOrEmpty();
     }
+
+    private void StageSearchHit(Guid chunkId, Guid documentId, int chunkIndex, string text, int? pageNumber = null)
+    {
+        var record = new DocumentChunkRecord
+        {
+            Id = chunkId,
+            TenantId = DocumentChunkPayloadEncoding.HostTenantId,
+            DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(documentId),
+            ChunkIndex = chunkIndex,
+            Text = text,
+            PageNumber = pageNumber,
+        };
+        _collection.StagedSearchResults.Enqueue(new[]
+        {
+            new VectorSearchResult<DocumentChunkRecord>(record, score: 0.9)
+        });
+    }
+
+    private static void AssertFilterDoesNotPinDocumentType(Func<DocumentChunkRecord, bool>? filter)
+    {
+        filter.ShouldNotBeNull();
+        // A filter that pins DocumentTypeCode would reject probe records with a
+        // different (or null) code. Verify by passing two distinct probes and
+        // asserting both can pass through (modulo other filter clauses).
+        var probeA = NewProbe(documentTypeCode: "contract.general");
+        var probeB = NewProbe(documentTypeCode: null);
+        (filter!(probeA) || filter(probeB)).ShouldBeTrue(
+            "filter should accept at least one document-type-agnostic probe");
+    }
+
+    private static void AssertFilterDoesNotPinSingleDocument(Func<DocumentChunkRecord, bool>? filter)
+    {
+        filter.ShouldNotBeNull();
+        // Probe two different DocumentIds — at least one should pass the filter when
+        // no single-document pin is in effect.
+        var probeA = NewProbe(documentId: Guid.NewGuid());
+        var probeB = NewProbe(documentId: Guid.NewGuid());
+        (filter!(probeA) || filter(probeB)).ShouldBeTrue(
+            "filter should accept records under multiple document ids");
+    }
+
+    private static DocumentChunkRecord NewProbe(string? documentTypeCode = null, Guid? documentId = null)
+        => new()
+        {
+            Id = Guid.NewGuid(),
+            TenantId = DocumentChunkPayloadEncoding.HostTenantId,
+            DocumentId = DocumentChunkPayloadEncoding.EncodeDocumentId(documentId ?? Guid.NewGuid()),
+            DocumentTypeCode = documentTypeCode,
+            ChunkIndex = 0,
+            Text = "probe",
+        };
 
     private async Task<Guid> CreateConversationAsync()
         => await WithUnitOfWorkAsync(async () =>

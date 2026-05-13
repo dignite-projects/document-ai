@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Vectors;
 using Shouldly;
 using Xunit;
 
@@ -33,11 +33,11 @@ public class ChatAppServiceCitations_Tests
     public void BuildCitationDtos_Maps_DocumentId_ChunkIndex_PageNumber_Snippet_For_Each_Chunk()
     {
         var docId = Guid.NewGuid();
-        var results = new List<VectorSearchResult>
+        var results = new List<DocumentChunkSearchHit>
         {
-            new() { RecordId = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 0, PageNumber = 1, Text = "chunk 0 text" },
-            new() { RecordId = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 1, PageNumber = 2, Text = "chunk 1 text" },
-            new() { RecordId = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 2, PageNumber = null, Text = "chunk 2 text" }
+            new() { Id = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 0, PageNumber = 1, Text = "chunk 0 text" },
+            new() { Id = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 1, PageNumber = 2, Text = "chunk 1 text" },
+            new() { Id = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 2, PageNumber = null, Text = "chunk 2 text" }
         };
 
         var dtos = ChatAppService.BuildCitationDtos(results);
@@ -58,9 +58,9 @@ public class ChatAppServiceCitations_Tests
     public void BuildCitationDtos_Source_Name_Uses_Chunk_Format_Regardless_Of_Page(int? pageNumber)
     {
         var docId = Guid.NewGuid();
-        var dto = ChatAppService.BuildCitationDtos(new List<VectorSearchResult>
+        var dto = ChatAppService.BuildCitationDtos(new List<DocumentChunkSearchHit>
         {
-            new() { RecordId = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 5, PageNumber = pageNumber, Text = "..." }
+            new() { Id = Guid.NewGuid(), DocumentId = docId, ChunkIndex = 5, PageNumber = pageNumber, Text = "..." }
         }).Single();
 
         dto.SourceName.ShouldBe($"Document {docId} (chunk #5)");
@@ -75,9 +75,9 @@ public class ChatAppServiceCitations_Tests
         // intact.
         var longText = string.Concat(Enumerable.Repeat("日本語テスト🚀", 30)); // ~240 graphemes
 
-        var dto = ChatAppService.BuildCitationDtos(new List<VectorSearchResult>
+        var dto = ChatAppService.BuildCitationDtos(new List<DocumentChunkSearchHit>
         {
-            new() { RecordId = Guid.NewGuid(), DocumentId = Guid.NewGuid(), ChunkIndex = 0, Text = longText }
+            new() { Id = Guid.NewGuid(), DocumentId = Guid.NewGuid(), ChunkIndex = 0, Text = longText }
         }).Single();
 
         var graphemeCount = new StringInfo(dto.Snippet).LengthInTextElements;

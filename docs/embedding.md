@@ -1,6 +1,6 @@
 # Embedding Pipeline
 
-After a document is classified, Paperbase splits its Markdown into chunks, vectorizes each chunk, and writes the vectors to the [knowledge index](knowledge-index.md). This is what makes the document retrievable from [document chat](chat.md) and from any other RAG-style query.
+After a document is classified, Paperbase splits its Markdown into chunks, vectorizes each chunk, and writes the vectors to the [vector store](vectors.md). This is what makes the document retrievable from [document chat](chat.md) and from any other RAG-style query.
 
 This page is the *what and why*. For chunker source, see `core/src/Dignite.Paperbase.Application/Documents/Pipelines/Embedding/TextChunker.cs`.
 
@@ -47,16 +47,14 @@ The chunker only falls back to character-level splitting when a single Markdown 
 Embedding dimension is part of the storage schema, so changing models touches three configuration surfaces and requires re-embedding existing documents. Walk through the steps in order:
 
 1. Update `PaperbaseAI:EmbeddingModelId` in [`ai-provider.md`](ai-provider.md) (e.g. `text-embedding-3-small` → `text-embedding-3-large`).
-2. Update `PaperbaseKnowledgeIndex:EmbeddingDimension` to the new model's dimension (e.g. `1536` → `3072`).
-3. Update `QdrantKnowledgeIndex:VectorDimension` to the same value. `QdrantKnowledgeIndexModule` validates the two match at startup; mismatched values fail fast.
-4. Either pick a fresh `QdrantKnowledgeIndex:CollectionName` or delete the existing collection — Qdrant collections are dimension-locked.
-5. Re-run the embedding job for every document (e.g. via the host's pipeline-rerun mechanism). Until a document is re-embedded, it is invisible to chat retrieval.
+2. Update `PaperbaseVectorStore:EmbeddingDimension` to the new model's dimension (e.g. `1536` → `3072`).
+3. Either pick a fresh `PaperbaseVectorStore:CollectionName` or delete the existing Qdrant collection — collections are dimension-locked.
+4. Re-run the embedding job for every document (e.g. via the host's pipeline-rerun mechanism). Until a document is re-embedded, it is invisible to chat retrieval.
 
 There is no "rolling re-embed" mode. Plan downtime around step 4–5 or run two collections in parallel and cut over once the second is fully populated.
 
 ## See also
 
 - [AI provider](ai-provider.md) — where the embedding model id is configured
-- [Knowledge index](knowledge-index.md) — where the vectors are stored, plus payload-index schema
-- [Qdrant provider details](knowledge-qdrant.md) — how the chunk text feeds BM25 sparse recall in addition to dense recall
+- [Vector store](vectors.md) — where the vectors are stored, plus payload-index schema
 - [Pipeline runs](pipeline-runs.md) — embedding-job state and history

@@ -4,7 +4,8 @@ using System.Runtime.CompilerServices;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
-using Dignite.Paperbase.KnowledgeIndex;
+using Dignite.Paperbase.Tests.Vectors;
+using Dignite.Paperbase.Vectors;
 using Microsoft.Extensions.AI;
 using NSubstitute;
 using Shouldly;
@@ -27,7 +28,7 @@ public class ChatDegradedSignal_Tests
 {
     private readonly IChatAppService _appService;
     private readonly IChatClient _chatClient;
-    private readonly IDocumentKnowledgeIndex _knowledgeIndex;
+    private readonly FakeDocumentChunkCollection _collection;
     private readonly IEmbeddingGenerator<string, Embedding<float>> _embeddingGenerator;
     private readonly ICurrentPrincipalAccessor _principalAccessor;
 
@@ -37,7 +38,7 @@ public class ChatDegradedSignal_Tests
     {
         _appService         = GetRequiredService<IChatAppService>();
         _chatClient         = GetRequiredService<IChatClient>();
-        _knowledgeIndex     = GetRequiredService<IDocumentKnowledgeIndex>();
+        _collection         = GetRequiredService<FakeDocumentChunkCollection>();
         _embeddingGenerator = GetRequiredService<IEmbeddingGenerator<string, Embedding<float>>>();
         _principalAccessor  = GetRequiredService<ICurrentPrincipalAccessor>();
 
@@ -89,11 +90,10 @@ public class ChatDegradedSignal_Tests
             }
         });
 
-        // The search AIFunction is the only path to IDocumentKnowledgeIndex.SearchAsync;
-        // when the model never invokes it, the knowledge index must never be queried.
-        await _knowledgeIndex.DidNotReceive().SearchAsync(
-            Arg.Any<VectorSearchRequest>(),
-            Arg.Any<CancellationToken>());
+        // The search AIFunction is the only path to the vector collection's SearchAsync /
+        // HybridSearchAsync; when the model never invokes it, the collection must never
+        // be queried.
+        _collection.SearchCalls.ShouldBe(0);
     }
 
     [Fact]
@@ -180,9 +180,7 @@ public class ChatDegradedSignal_Tests
             }
         });
 
-        await _knowledgeIndex.DidNotReceive().SearchAsync(
-            Arg.Any<VectorSearchRequest>(),
-            Arg.Any<CancellationToken>());
+        _collection.SearchCalls.ShouldBe(0);
     }
 
     [Fact]
@@ -267,9 +265,8 @@ public class ChatDegradedSignal_Tests
 
     private void SetupDefaultKnowledgeIndex()
     {
-        _knowledgeIndex
-            .SearchAsync(Arg.Any<VectorSearchRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new List<VectorSearchResult>());
+        // Default fake state already returns empty for both SearchAsync and HybridSearchAsync.
+        _collection.Reset();
     }
 
     private void SetupDefaultSyncChatClient()

@@ -121,15 +121,13 @@ Feature docs (start here for any specific topic):
 * [Text extraction](./docs/text-extraction.md) — Markdown-first contract, PaddleOCR / Azure DI configuration
 * [Classification](./docs/classification.md) — document-type pipeline and prompt tuning
 * [Embedding](./docs/embedding.md) — Markdown-aware chunking, switching the embedding model
-* [Knowledge index](./docs/knowledge-index.md) — Qdrant schema, payload indexes, retrieval defaults
-* [Qdrant provider details](./docs/knowledge-qdrant.md) — dense + BM25 RRF hybrid search and other Qdrant-specific behavior
+* [Vector store](./docs/vectors.md) — Qdrant + Microsoft.Extensions.VectorData configuration, dense-only retrieval, swapping the backing store
 * [Document chat](./docs/chat.md) — feature overview, rerank, tool contributors → [HTTP client guide](./docs/chat-client.md)
 * [AI provider](./docs/ai-provider.md) — wiring `IChatClient` and `IEmbeddingGenerator`
 * [Structured extraction](./docs/structured-extraction.md) — `IExtractionValidator<T>` + MAF Agent Middleware for LLM field extraction with retry
 * [Observability](./docs/observability.md) — OpenTelemetry pipeline, aspire-dashboard for local dev, switching OTLP backends
 * [Pipeline runs](./docs/pipeline-runs.md) — run history and review-UI payloads
 * [Deployment](./docs/deployment.md) — DB, Qdrant, certificate, Docker
-* [Knowledge-index provider authoring](./docs/knowledge-index-provider.md) — adding a non-Qdrant backend
 
 External references:
 

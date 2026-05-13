@@ -46,10 +46,6 @@
       "path": "test/Dignite.Paperbase.Application.Tests/Dignite.Paperbase.Application.Tests.abppkg",
       "folder": "test"
     },
-    "Dignite.Paperbase.KnowledgeIndex.Tests": {
-      "path": "test/Dignite.Paperbase.KnowledgeIndex.Tests/Dignite.Paperbase.KnowledgeIndex.Tests.abppkg",
-      "folder": "test"
-    },
     "Dignite.Paperbase.Domain.Shared": {
       "path": "src/Dignite.Paperbase.Domain.Shared/Dignite.Paperbase.Domain.Shared.abppkg",
       "folder": "src"
