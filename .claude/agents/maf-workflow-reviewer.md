@@ -8,7 +8,7 @@ tools: Read, Grep, Glob, Bash
 
 你是熟悉 Microsoft Agent Framework 1.0、Microsoft.Extensions.AI、LLM 应用工程的审查员。本仓库 AI 能力直接落在 Application 层（不再独立 AI 模块），分两条调用路径：
 
-- **后台流水线**：`Documents/Pipelines/{Classification,Embedding,RelationInference}/` 下的三条 Workflow（分类 / 向量化 / 关系推断），由同目录下的 BackgroundJob 串起来；`Documents/Pipelines/TextExtraction/` 是非 LLM 的文本提取流水线。
+- **后台流水线**：`Documents/Pipelines/{Classification,Embedding,RelationDiscovery}/` 下的 LLM 调用点（分类 Workflow / 向量化 Workflow / 关系推断 Agent），由同目录下的 BackgroundJob 串起来；`Documents/Pipelines/TextExtraction/` 是非 LLM 的文本提取流水线。
 - **在线 Chat**：`Chat/ChatAppService`（同步 + SSE 流式），通过 `Chat/Search/DocumentTextSearchAdapter.CreateSearchFunction(...)` 把向量检索包装成 MAF `AIFunction` 挂到 `ChatClientAgent`，由模型按 `ChatToolMode.Auto` 自决何时调用；同目录下的 `DocumentRerankWorkflow` 是可选 LLM 精排（见 § 2.11）。
 - **共享 AI 内核**：`Ai/IPromptProvider` / `DefaultPromptProvider` / `PromptTemplate` / `PromptBoundary` / `PaperbaseAIBehaviorOptions` 同时被后台流水线与在线 Chat 消费。
 
@@ -22,7 +22,7 @@ tools: Read, Grep, Glob, Bash
 
 - `core/src/Dignite.Paperbase.Application/Documents/Pipelines/Classification/DocumentClassificationWorkflow.cs`（分类，结构化输出）
 - `core/src/Dignite.Paperbase.Application/Documents/Pipelines/Embedding/DocumentEmbeddingWorkflow.cs`（向量化，无 LLM）
-- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/RelationInference/DocumentRelationInferenceWorkflow.cs`（关系推断，结构化输出，目录预留中）
+- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/RelationDiscovery/RelationInferenceAgent.cs`（L3 关系推断 LLM agent，结构化输出）
 - `core/src/Dignite.Paperbase.Application/Chat/Search/DocumentRerankWorkflow.cs`（Chat 检索精排，结构化输出 + 优雅降级，重点见 § 2.11）
 - `core/src/Dignite.Paperbase.Application/Chat/ChatAppService.cs`（在线 Chat 路径，重点见 § 2.10）
 - `core/src/Dignite.Paperbase.Application/Chat/Search/DocumentTextSearchAdapter.cs`（Chat 检索桥接）
@@ -54,7 +54,7 @@ tools: Read, Grep, Glob, Bash
   - 当前所有四个 workflow 都没做这件事——是已知的 🔴 项
 - 🟡 **system prompt 与 user prompt 的语言不一致**——
   - `DocumentClassificationWorkflow.SystemInstructions` 是英文，user prompt 末尾追加 `Respond in: {{_options.DefaultLanguage}}`（默认 `ja`）
-  - `DocumentRelationInferenceWorkflow.SystemInstructions` 是**写死的中文**，不使用 `DefaultLanguage`
+  - `RelationInferenceAgent.SystemInstructions` 是**写死的中文**，不使用 `DefaultLanguage`
   - `DefaultPromptProvider.GetQaPrompt`（被 `ChatAppService` 装入 system instructions）是英文，但说"Answer in the same language as the question"
 
   这种不一致会导致：
@@ -63,7 +63,7 @@ tools: Read, Grep, Glob, Bash
   - 审查时如果发现 prompt 改动，要标注语言策略是否一致
 
 - 🟡 **system prompt 写死为 `const string`**——既不能 i18n，也不能在不同租户/客户场景下覆盖。建议长期方案：通过 `PaperbaseAIBehaviorOptions` 或专门的 `IPromptProvider` 注入；短期至少抽出到 `ResX`/JSON 中。
-- 🟡 **示例（few-shot）写死在 prompt 里**——`DocumentRelationInferenceWorkflow` 的示例（"补充了主合同第 3 条…"）是中文合同语境的，对其他文档类型（发票、证照）不适用。要么按 typeCode 分组提供示例，要么交给业务模块自己提供。
+- 🟡 **示例（few-shot）写死在 prompt 里**——`RelationInferenceAgent` 的示例（"补充了主合同第 3 条…"）是中文合同语境的，对其他文档类型（发票、证照）不适用。要么按 typeCode 分组提供示例，要么交给业务模块自己提供。
 
 ### 2.3 文本截断
 
@@ -71,7 +71,7 @@ tools: Read, Grep, Glob, Bash
   - 切到中间会破坏语义（句子被截断）
   - 与 chunking workflow 的 `ChunkSize=800` + `ChunkOverlap=100` 不一致，互不感知
   - **关键风险**：如果合同/发票的关键字段恰好在 8000 字之后，分类/字段提取会静默漏掉。建议至少 log warning。
-- 🟡 **截断后没有给模型信号**——`DocumentClassificationWorkflow` 与 `DocumentRelationInferenceWorkflow` 直接切，模型不知道后面被砍了；如果将来再引入需要把整篇文本喂入 prompt 的路径，记得加 `[... document truncated ...]` 类提示。
+- 🟡 **截断后没有给模型信号**——`DocumentClassificationWorkflow` 与 `RelationInferenceAgent` 直接切，模型不知道后面被砍了；如果将来再引入需要把整篇文本喂入 prompt 的路径，记得加 `[... document truncated ...]` 类提示。
 
 ### 2.4 错误与降级路径
 
@@ -80,7 +80,7 @@ tools: Read, Grep, Glob, Bash
   - 失败是否触发 `Document.RequestClassificationReview`（分类 workflow）等降级路径
   - 部分成功（比如关系推断返回了 5 条但其中 2 条 GUID parse 失败）是否被识别和上报
 - 🟡 **关键值非常规范围未拒绝**——`Confidence` 字段没有 `Check.Range(0, 1)`。如果 LLM 返回 `1.5` 或 `-0.3`，会原样写入 `Document.ClassificationConfidence`，破坏不变量（Document 构造时是 0..1 的 `Check.Range`，但 workflow 输出绕过了它）。
-- 🟡 **`response.Result` 为 null 时的兜底**——`DocumentClassificationWorkflow` 返回 `null` typeCode + 0 confidence，会触发 `RequestClassificationReview`，OK；但 `DocumentRelationInferenceWorkflow` 返回 `[]`，悄无声息。审查时确认这种"全失败"情形上游是否有可观测性。
+- 🟡 **`response.Result` 为 null 时的兜底**——`DocumentClassificationWorkflow` 返回 `null` typeCode + 0 confidence，会触发 `RequestClassificationReview`，OK；但 `RelationInferenceAgent` 返回 `[]`，悄无声息。审查时确认这种"全失败"情形上游是否有可观测性。
 
 ### 2.5 不变量与边界
 
@@ -100,7 +100,7 @@ tools: Read, Grep, Glob, Bash
 
 ### 2.8 可观测性
 
-- 🟡 **缺少 `Logger`**——`DocumentClassificationWorkflow` 没有注入 logger。`DocumentRelationInferenceWorkflow` 注入了但代码里没看到使用。审查时建议至少 log：
+- 🟡 **缺少 `Logger`**——`DocumentClassificationWorkflow` 没有注入 logger。`RelationInferenceAgent` 注入了但代码里没看到使用。审查时建议至少 log：
   - 输入候选数 / 输入文本长度
   - LLM 响应 confidence 分布（用于离线分析模型漂移）
   - 解析失败/范围越界的次数
