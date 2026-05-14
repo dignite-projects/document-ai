@@ -37,8 +37,7 @@ using Volo.Abp.AuditLogging.EntityFrameworkCore;
 using Volo.Abp.Autofac;
 using Volo.Abp.BackgroundJobs.EntityFrameworkCore;
 using Volo.Abp.BlobStoring;
-using Volo.Abp.BlobStoring.Database;
-using Volo.Abp.BlobStoring.Database.EntityFrameworkCore;
+using Volo.Abp.BlobStoring.FileSystem;
 using Volo.Abp.Caching;
 using Volo.Abp.Emailing;
 using Volo.Abp.EntityFrameworkCore;
@@ -114,7 +113,7 @@ namespace Dignite.Paperbase.Host;
     typeof(AbpPermissionManagementEntityFrameworkCoreModule),
     typeof(AbpSettingManagementEntityFrameworkCoreModule),
     typeof(AbpBackgroundJobsEntityFrameworkCoreModule),
-    typeof(BlobStoringDatabaseEntityFrameworkCoreModule),
+    typeof(AbpBlobStoringFileSystemModule),
     typeof(AbpEntityFrameworkCoreSqlServerModule),
 
     // Paperbase core modules
@@ -129,9 +128,9 @@ namespace Dignite.Paperbase.Host;
     // typeof(PaperbaseAzureDocumentIntelligenceModule), // 云方案（高精度），切换时同步在 .csproj 注释 / 启用 ProjectReference
 
     // Paperbase business modules
-    typeof(ContractsHttpApiModule),
-    typeof(ContractsApplicationModule),
-    typeof(ContractsEntityFrameworkCoreModule)
+    typeof(PaperbaseContractsHttpApiModule),
+    typeof(PaperbaseContractsApplicationModule),
+    typeof(PaperbaseContractsEntityFrameworkCoreModule)
 )]
 public class PaperbaseHostModule : AbpModule
 {
@@ -409,11 +408,16 @@ public class PaperbaseHostModule : AbpModule
             });
         });
 
+        var hostingEnvironment = context.Services.GetHostingEnvironment();
         Configure<AbpBlobStoringOptions>(options =>
         {
             options.Containers.ConfigureDefault(container =>
             {
-                container.UseDatabase();
+                container.UseFileSystem(fileSystem =>
+                {
+                    fileSystem.BasePath = Path.Combine(
+                        hostingEnvironment.ContentRootPath, "App_Data", "blobs");
+                });
             });
         });
     }

@@ -4,8 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Dignite.Paperbase.Contracts.Contracts;
+using Dignite.Paperbase.Contracts;
 using Dignite.Paperbase.Contracts.Dtos;
+using Dignite.Paperbase.Contracts.Extraction;
 using Dignite.Paperbase.Contracts.Permissions;
 using Microsoft.AspNetCore.Authorization;
 using Volo.Abp.Application.Dtos;
@@ -13,7 +14,7 @@ using Volo.Abp.Content;
 
 namespace Dignite.Paperbase.Contracts;
 
-public class ContractAppService : ContractsAppService, IContractAppService
+public class ContractAppService : PaperbaseContractsAppService, IContractAppService
 {
     private readonly IContractRepository _contractRepository;
     private readonly ContractToContractDtoMapper _mapper;
@@ -52,7 +53,7 @@ public class ContractAppService : ContractsAppService, IContractAppService
             contracts.Select(_mapper.Map).ToList());
     }
 
-    [Authorize(ContractsPermissions.Contracts.Update)]
+    [Authorize(PaperbaseContractsPermissions.Contracts.Update)]
     public virtual async Task<ContractDto> UpdateAsync(Guid id, UpdateContractDto input)
     {
         var contract = await _contractRepository.GetAsync(id);
@@ -81,7 +82,7 @@ public class ContractAppService : ContractsAppService, IContractAppService
         return _mapper.Map(contract);
     }
 
-    [Authorize(ContractsPermissions.Contracts.Confirm)]
+    [Authorize(PaperbaseContractsPermissions.Contracts.Confirm)]
     public virtual async Task ConfirmAsync(Guid id)
     {
         var contract = await _contractRepository.GetAsync(id);
@@ -96,13 +97,6 @@ public class ContractAppService : ContractsAppService, IContractAppService
         if (input.DocumentId.HasValue)
         {
             query = query.Where(x => x.DocumentId == input.DocumentId.Value);
-        }
-
-        if (!input.CounterpartyKeyword.IsNullOrWhiteSpace())
-        {
-            query = query.Where(x =>
-                x.CounterpartyName != null &&
-                x.CounterpartyName.Contains(input.CounterpartyKeyword!));
         }
 
         if (input.ExpirationDateFrom.HasValue)
@@ -154,7 +148,6 @@ public class ContractAppService : ContractsAppService, IContractAppService
             ContractNumber = contract.ContractNumber,
             PartyAName = contract.PartyAName,
             PartyBName = contract.PartyBName,
-            CounterpartyName = contract.CounterpartyName,
             SignedDate = contract.SignedDate,
             EffectiveDate = contract.EffectiveDate,
             ExpirationDate = contract.ExpirationDate,
@@ -176,7 +169,6 @@ public class ContractAppService : ContractsAppService, IContractAppService
             ContractNumber = input.ContractNumber,
             PartyAName = input.PartyAName,
             PartyBName = input.PartyBName,
-            CounterpartyName = input.CounterpartyName,
             SignedDate = input.SignedDate,
             EffectiveDate = input.EffectiveDate,
             ExpirationDate = input.ExpirationDate,
@@ -189,7 +181,7 @@ public class ContractAppService : ContractsAppService, IContractAppService
         };
     }
 
-    [Authorize(ContractsPermissions.Contracts.Export)]
+    [Authorize(PaperbaseContractsPermissions.Contracts.Export)]
     public virtual async Task<IRemoteStreamContent> ExportAsync(GetContractListInput input)
     {
         var query = await _contractRepository.GetQueryableAsync();
@@ -211,8 +203,6 @@ public class ContractAppService : ContractsAppService, IContractAppService
         {
             "expirationDate" => query.OrderBy(x => x.ExpirationDate),
             "expirationDate desc" => query.OrderByDescending(x => x.ExpirationDate),
-            "counterpartyName" => query.OrderBy(x => x.CounterpartyName),
-            "counterpartyName desc" => query.OrderByDescending(x => x.CounterpartyName),
             "signedDate" => query.OrderBy(x => x.SignedDate),
             "signedDate desc" => query.OrderByDescending(x => x.SignedDate),
             _ => query.OrderByDescending(x => x.CreationTime)
@@ -222,7 +212,7 @@ public class ContractAppService : ContractsAppService, IContractAppService
     private static string BuildContractCsv(List<Contract> contracts)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Id,DocumentId,DocumentTypeCode,Title,ContractNumber,PartyAName,PartyBName,CounterpartyName,SignedDate,EffectiveDate,ExpirationDate,TotalAmount,Currency,Status");
+        sb.AppendLine("Id,DocumentId,DocumentTypeCode,Title,ContractNumber,PartyAName,PartyBName,SignedDate,EffectiveDate,ExpirationDate,TotalAmount,Currency,Status");
 
         foreach (var c in contracts)
         {
@@ -234,7 +224,6 @@ public class ContractAppService : ContractsAppService, IContractAppService
                 EscapeCsv(c.ContractNumber),
                 EscapeCsv(c.PartyAName),
                 EscapeCsv(c.PartyBName),
-                EscapeCsv(c.CounterpartyName),
                 c.SignedDate?.ToString("yyyy-MM-dd") ?? string.Empty,
                 c.EffectiveDate?.ToString("yyyy-MM-dd") ?? string.Empty,
                 c.ExpirationDate?.ToString("yyyy-MM-dd") ?? string.Empty,

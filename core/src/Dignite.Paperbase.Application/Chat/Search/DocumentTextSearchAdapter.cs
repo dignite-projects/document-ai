@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,7 +24,7 @@ namespace Dignite.Paperbase.Chat.Search;
 ///
 /// <para>
 /// Keyword-precise queries (合同号 / 产品编号 / 人名) are handled by business-module
-/// MAF Agent Skills (e.g. <c>ContractsSkill</c>'s <c>search</c> script) that query
+/// MAF Agent Skills (e.g. <c>PaperbaseContractsSkill</c>'s <c>search</c> script) that query
 /// SQL directly — the LLM routes structured-lookup intents to those skills before
 /// reaching this adapter. Vector retrieval therefore covers semantic similarity only; we
 /// intentionally do not enable MEVD's <c>IKeywordHybridSearchable</c> because its
@@ -118,11 +119,12 @@ public class DocumentTextSearchAdapter : ITransientDependency
         // Filter built once with closure-captured values. Tenant is always required
         // (the LLM cannot override it via tool arguments — that's the fail-closed
         // boundary, the same one the old IDocumentKnowledgeIndex enforced).
-        System.Linq.Expressions.Expression<Func<DocumentChunkRecord, bool>> filter = r =>
-            r.TenantId == tenantKey
-            && (docKeys == null || docKeys.Contains(r.DocumentId))
-            && (singleDocKey == null || r.DocumentId == singleDocKey)
-            && (docTypeCode == null || r.DocumentTypeCode == docTypeCode);
+        //
+        // Multi-document ID filtering uses a hand-built OR chain
+        // (r.DocumentId == key0 || r.DocumentId == key1 || ...)
+        // because Qdrant's LINQ translator supports individual == comparisons and
+        // OrElse nodes but does NOT support string[].Contains() (MethodCallExpression).
+        var filter = BuildFilter(tenantKey, docKeys, singleDocKey, docTypeCode);
 
         var collection = await _collectionProvider.GetAsync(cancellationToken);
 
@@ -169,6 +171,51 @@ public class DocumentTextSearchAdapter : ITransientDependency
         return reranked
             .Select(r => (DocumentChunkSearchHit)r.Candidate.Tag!)
             .ToList();
+    }
+
+    // Qdrant's LINQ translator supports individual equality (==) and OrElse/AndAlso
+    // but not string[].Contains() (MethodCallExpression). When docKeys is present we
+    // build an OR chain so the filter executes inside Qdrant rather than in-memory.
+    private static Expression<Func<DocumentChunkRecord, bool>> BuildFilter(
+        string tenantKey,
+        string[]? docKeys,
+        string? singleDocKey,
+        string? docTypeCode)
+    {
+        var param = Expression.Parameter(typeof(DocumentChunkRecord), "r");
+
+        Expression body = Expression.Equal(
+            Expression.Property(param, nameof(DocumentChunkRecord.TenantId)),
+            Expression.Constant(tenantKey));
+
+        if (docKeys is { Length: > 0 })
+        {
+            var docIdProp = Expression.Property(param, nameof(DocumentChunkRecord.DocumentId));
+            Expression orChain = Expression.Equal(docIdProp, Expression.Constant(docKeys[0]));
+            for (var i = 1; i < docKeys.Length; i++)
+            {
+                orChain = Expression.OrElse(orChain,
+                    Expression.Equal(docIdProp, Expression.Constant(docKeys[i])));
+            }
+            body = Expression.AndAlso(body, orChain);
+        }
+        else if (singleDocKey != null)
+        {
+            body = Expression.AndAlso(body,
+                Expression.Equal(
+                    Expression.Property(param, nameof(DocumentChunkRecord.DocumentId)),
+                    Expression.Constant(singleDocKey)));
+        }
+
+        if (docTypeCode != null)
+        {
+            body = Expression.AndAlso(body,
+                Expression.Equal(
+                    Expression.Property(param, nameof(DocumentChunkRecord.DocumentTypeCode)),
+                    Expression.Constant(docTypeCode)));
+        }
+
+        return Expression.Lambda<Func<DocumentChunkRecord, bool>>(body, param);
     }
 
     // DocumentChunkRecord stores DocumentId as a string (D-format Guid) for backwards

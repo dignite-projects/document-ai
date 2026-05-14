@@ -5,7 +5,6 @@ using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.EntityFrameworkCore.Modeling;
 using Volo.Abp.AuditLogging.EntityFrameworkCore;
 using Volo.Abp.BackgroundJobs.EntityFrameworkCore;
-using Volo.Abp.BlobStoring.Database.EntityFrameworkCore;
 using Volo.Abp.FeatureManagement.EntityFrameworkCore;
 using Volo.Abp.Identity.EntityFrameworkCore;
 using Volo.Abp.OpenIddict.EntityFrameworkCore;
@@ -36,7 +35,6 @@ public class PaperbaseHostDbContext : AbpDbContext<PaperbaseHostDbContext>
         builder.ConfigureAuditLogging();
         builder.ConfigureFeatureManagement();
         builder.ConfigurePermissionManagement();
-        builder.ConfigureBlobStoring();
         builder.ConfigureIdentity();
         builder.ConfigureOpenIddict();
 

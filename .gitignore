@@ -3,6 +3,9 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# FileSystem blob storage (test host runtime data)
+host/src/App_Data/
+
 # User-specific files
 *.rsuser
 *.suo

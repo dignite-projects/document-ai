@@ -1,4 +1,4 @@
-using Dignite.Paperbase.Contracts.Contracts;
+using Dignite.Paperbase.Contracts;
 using Dignite.Paperbase.Contracts.Dtos;
 using Riok.Mapperly.Abstractions;
 using Volo.Abp.Mapperly;
