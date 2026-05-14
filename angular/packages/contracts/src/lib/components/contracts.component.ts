@@ -25,11 +25,11 @@ import {
   template: `
     <div class="container-fluid py-3">
       <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-        <h1 class="h3 mb-0">{{ '::DocumentType:Contract' | abpLocalization }}</h1>
+        <h1 class="h3 mb-0">{{ 'Contracts::DocumentType:Contract' | abpLocalization }}</h1>
         <div class="d-flex gap-2">
           <button type="button" class="btn btn-outline-success" (click)="exportCsv()">
             <i class="fas fa-download me-1"></i>
-            {{ '::Contract:ExportCsv' | abpLocalization }}
+            {{ 'Contracts::Contract:ExportCsv' | abpLocalization }}
           </button>
           <button type="button" class="btn btn-outline-primary" (click)="load()" [disabled]="loading()">
             <i class="fas fa-refresh me-1"></i>
@@ -41,7 +41,7 @@ import {
       <div class="row g-2 align-items-end mb-3">
         <div class="col-12 col-md-5 col-lg-4">
           <label class="form-label" for="counterpartyKeyword">
-            {{ '::CounterpartyName' | abpLocalization }}
+            {{ 'Contracts::CounterpartyName' | abpLocalization }}
           </label>
           <input
             id="counterpartyKeyword"
@@ -55,7 +55,7 @@ import {
         </div>
         <div class="col-6 col-md-2">
           <label class="form-label" for="expirationDateFrom">
-            {{ '::ExpirationDateFrom' | abpLocalization }}
+            {{ 'Contracts::ExpirationDateFrom' | abpLocalization }}
           </label>
           <input
             id="expirationDateFrom"
@@ -68,7 +68,7 @@ import {
         </div>
         <div class="col-6 col-md-2">
           <label class="form-label" for="expirationDateTo">
-            {{ '::ExpirationDateTo' | abpLocalization }}
+            {{ 'Contracts::ExpirationDateTo' | abpLocalization }}
           </label>
           <input
             id="expirationDateTo"
@@ -81,7 +81,7 @@ import {
         </div>
         <div class="col-6 col-md-2">
           <label class="form-label" for="amountMin">
-            {{ '::TotalAmountMin' | abpLocalization }}
+            {{ 'Contracts::TotalAmountMin' | abpLocalization }}
           </label>
           <input
             id="amountMin"
@@ -95,7 +95,7 @@ import {
         </div>
         <div class="col-6 col-md-2">
           <label class="form-label" for="amountMax">
-            {{ '::TotalAmountMax' | abpLocalization }}
+            {{ 'Contracts::TotalAmountMax' | abpLocalization }}
           </label>
           <input
             id="amountMax"
@@ -109,7 +109,7 @@ import {
         </div>
         <div class="col-12 col-md-2">
           <label class="form-label" for="reviewStatus">
-            {{ '::ReviewStatus' | abpLocalization }}
+            {{ 'Contracts::ReviewStatus' | abpLocalization }}
           </label>
           <select
             id="reviewStatus"
@@ -121,13 +121,13 @@ import {
           >
             <option [ngValue]="undefined">{{ 'AbpUi::All' | abpLocalization }}</option>
             <option [ngValue]="ContractReviewStatus.Pending">
-              {{ '::ContractReviewStatus:Pending' | abpLocalization }}
+              {{ 'Contracts::ContractReviewStatus:Pending' | abpLocalization }}
             </option>
             <option [ngValue]="ContractReviewStatus.Confirmed">
-              {{ '::ContractReviewStatus:Confirmed' | abpLocalization }}
+              {{ 'Contracts::ContractReviewStatus:Confirmed' | abpLocalization }}
             </option>
             <option [ngValue]="ContractReviewStatus.Corrected">
-              {{ '::ContractReviewStatus:Corrected' | abpLocalization }}
+              {{ 'Contracts::ContractReviewStatus:Corrected' | abpLocalization }}
             </option>
           </select>
         </div>
@@ -143,14 +143,14 @@ import {
         <table class="table table-hover align-middle mb-0">
           <thead>
             <tr>
-              <th>{{ '::Title' | abpLocalization }}</th>
-              <th>{{ '::CounterpartyName' | abpLocalization }}</th>
-              <th>{{ '::SignedDate' | abpLocalization }}</th>
-              <th>{{ '::ExpirationDate' | abpLocalization }}</th>
-              <th class="text-end">{{ '::TotalAmount' | abpLocalization }}</th>
-              <th>{{ '::Status' | abpLocalization }}</th>
-              <th>{{ '::ReviewStatus' | abpLocalization }}</th>
-              <th class="text-end">{{ '::Confidence' | abpLocalization }}</th>
+              <th>{{ 'Contracts::Title' | abpLocalization }}</th>
+              <th>{{ 'Contracts::CounterpartyName' | abpLocalization }}</th>
+              <th>{{ 'Contracts::SignedDate' | abpLocalization }}</th>
+              <th>{{ 'Contracts::ExpirationDate' | abpLocalization }}</th>
+              <th class="text-end">{{ 'Contracts::TotalAmount' | abpLocalization }}</th>
+              <th>{{ 'Contracts::Status' | abpLocalization }}</th>
+              <th>{{ 'Contracts::ReviewStatus' | abpLocalization }}</th>
+              <th class="text-end">{{ 'Contracts::Confidence' | abpLocalization }}</th>
             </tr>
           </thead>
           <tbody>
@@ -273,7 +273,7 @@ export class ContractsComponent implements OnInit {
   }
 
   protected reviewStatusLocalizationKey(status: ContractReviewStatus): string {
-    return `::ContractReviewStatus:${ContractReviewStatus[status] ?? 'Pending'}`;
+    return `Contracts::ContractReviewStatus:${ContractReviewStatus[status] ?? 'Pending'}`;
   }
 
   protected statusClass(contract: ContractDto): string {

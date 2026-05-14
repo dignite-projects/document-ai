@@ -14,7 +14,7 @@ export function provideContracts(): EnvironmentProviders {
       routes.add([
         {
           path: '/contracts',
-          name: '::Menu:Contracts',
+          name: 'Contracts::Menu:Contracts',
           iconClass: 'fas fa-file-contract',
           requiredPolicy: CONTRACTS_PERMISSIONS.Contracts.Default,
           order: 4,

@@ -63,7 +63,7 @@ export class ContractDetailComponent implements OnInit {
   ngOnInit(): void {
     const id = this.route.snapshot.paramMap.get('id');
     if (!id) {
-      this.toaster.error('::Contract:NotFound', '::Error');
+      this.toaster.error('Contracts::Contract:NotFound', 'AbpUi::Error');
       this.router.navigate(['..'], { relativeTo: this.route });
       return;
     }
@@ -89,9 +89,9 @@ export class ContractDetailComponent implements OnInit {
       .subscribe({
         next: updated => {
           this.applyContract(updated);
-          this.toaster.success('::Contract:UpdateSuccess', '::Success');
+          this.toaster.success('Contracts::Contract:UpdateSuccess', 'AbpUi::Success');
         },
-        error: () => this.toaster.error('::Contract:UpdateFailed', '::Error'),
+        error: () => this.toaster.error('Contracts::Contract:UpdateFailed', 'AbpUi::Error'),
       });
   }
 
@@ -100,7 +100,7 @@ export class ContractDetailComponent implements OnInit {
     if (!c?.id || this.confirming()) return;
 
     this.confirmation
-      .info('::Contract:ConfirmExtraction', '::AreYouSure')
+      .info('Contracts::Contract:ConfirmExtraction', '::AreYouSure')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
@@ -116,9 +116,9 @@ export class ContractDetailComponent implements OnInit {
             next: () => {
               // Re-fetch to get updated NeedsReview / ReviewStatus / Status from server.
               this.load(c.id);
-              this.toaster.success('::Contract:ConfirmSuccess', '::Success');
+              this.toaster.success('Contracts::Contract:ConfirmSuccess', 'AbpUi::Success');
             },
-            error: () => this.toaster.error('::Contract:ConfirmFailed', '::Error'),
+            error: () => this.toaster.error('Contracts::Contract:ConfirmFailed', 'AbpUi::Error'),
           });
       });
   }
@@ -139,11 +139,11 @@ export class ContractDetailComponent implements OnInit {
   reviewStatusLabel(status: ContractReviewStatus): string {
     switch (status) {
       case ContractReviewStatus.Pending:
-        return '::ContractReviewStatus:Pending';
+        return 'Contracts::ContractReviewStatus:Pending';
       case ContractReviewStatus.Confirmed:
-        return '::ContractReviewStatus:Confirmed';
+        return 'Contracts::ContractReviewStatus:Confirmed';
       case ContractReviewStatus.Corrected:
-        return '::ContractReviewStatus:Corrected';
+        return 'Contracts::ContractReviewStatus:Corrected';
       default:
         return '-';
     }
@@ -164,7 +164,7 @@ export class ContractDetailComponent implements OnInit {
       .subscribe({
         next: dto => this.applyContract(dto),
         error: () => {
-          this.toaster.error('::Contract:LoadFailed', '::Error');
+          this.toaster.error('Contracts::Contract:LoadFailed', 'AbpUi::Error');
           this.router.navigate(['..'], { relativeTo: this.route });
         },
       });

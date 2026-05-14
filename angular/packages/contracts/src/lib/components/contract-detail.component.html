@@ -4,16 +4,16 @@
       <i class="fas fa-arrow-left me-1"></i>
       {{ '::Back' | abpLocalization }}
     </button>
-    <h1 class="h4 mb-0 ms-2">{{ '::Contract:Detail' | abpLocalization }}</h1>
+    <h1 class="h4 mb-0 ms-2">{{ 'Contracts::Contract:Detail' | abpLocalization }}</h1>
 
     @if (contract(); as c) {
       <a
         class="btn btn-outline-secondary btn-sm ms-auto"
         [routerLink]="['/documents', c.documentId]"
-        title="{{ '::Contract:OpenSourceDocument' | abpLocalization }}"
+        title="{{ 'Contracts::Contract:OpenSourceDocument' | abpLocalization }}"
       >
         <i class="fas fa-file-alt me-1"></i>
-        {{ '::Contract:OpenSourceDocument' | abpLocalization }}
+        {{ 'Contracts::Contract:OpenSourceDocument' | abpLocalization }}
       </a>
       <span [ngClass]="reviewStatusBadgeClass(c.reviewStatus)">
         {{ reviewStatusLabel(c.reviewStatus) | abpLocalization }}
@@ -32,19 +32,19 @@
     @if (c.needsReview) {
       <div class="alert alert-warning d-flex align-items-center mb-3" role="alert">
         <i class="fas fa-exclamation-triangle me-2"></i>
-        <span>{{ '::Contract:NeedsReviewMessage' | abpLocalization }}</span>
+        <span>{{ 'Contracts::Contract:NeedsReviewMessage' | abpLocalization }}</span>
       </div>
     }
 
     <div class="card shadow-sm mb-3">
       <div class="card-body">
         <dl class="row mb-0 small">
-          <dt class="col-sm-3 text-muted">{{ '::Contract:DocumentType' | abpLocalization }}</dt>
+          <dt class="col-sm-3 text-muted">{{ 'Contracts::Contract:DocumentType' | abpLocalization }}</dt>
           <dd class="col-sm-9">
             <span class="badge bg-info text-dark">{{ c.documentTypeCode }}</span>
           </dd>
 
-          <dt class="col-sm-3 text-muted">{{ '::Contract:ExtractionConfidence' | abpLocalization }}</dt>
+          <dt class="col-sm-3 text-muted">{{ 'Contracts::Contract:ExtractionConfidence' | abpLocalization }}</dt>
           <dd class="col-sm-9">
             @if (c.extractionConfidence !== null) {
               {{ c.extractionConfidence | percent: '1.0-0' }}
@@ -59,12 +59,12 @@
     <form (ngSubmit)="save()">
       <div class="card shadow-sm mb-3">
         <div class="card-header">
-          <h6 class="mb-0">{{ '::Contract:Fields' | abpLocalization }}</h6>
+          <h6 class="mb-0">{{ 'Contracts::Contract:Fields' | abpLocalization }}</h6>
         </div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-6">
-              <label class="form-label">{{ '::Title' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::Title' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="text"
@@ -75,7 +75,7 @@
               />
             </div>
             <div class="col-md-6">
-              <label class="form-label">{{ '::ContractNumber' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::ContractNumber' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="text"
@@ -87,7 +87,7 @@
             </div>
 
             <div class="col-md-4">
-              <label class="form-label">{{ '::PartyAName' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::PartyAName' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="text"
@@ -98,7 +98,7 @@
               />
             </div>
             <div class="col-md-4">
-              <label class="form-label">{{ '::PartyBName' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::PartyBName' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="text"
@@ -109,7 +109,7 @@
               />
             </div>
             <div class="col-md-4">
-              <label class="form-label">{{ '::CounterpartyName' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::CounterpartyName' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="text"
@@ -121,7 +121,7 @@
             </div>
 
             <div class="col-md-4">
-              <label class="form-label">{{ '::SignedDate' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::SignedDate' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="date"
@@ -131,7 +131,7 @@
               />
             </div>
             <div class="col-md-4">
-              <label class="form-label">{{ '::EffectiveDate' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::EffectiveDate' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="date"
@@ -141,7 +141,7 @@
               />
             </div>
             <div class="col-md-4">
-              <label class="form-label">{{ '::ExpirationDate' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::ExpirationDate' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="date"
@@ -152,7 +152,7 @@
             </div>
 
             <div class="col-md-4">
-              <label class="form-label">{{ '::TotalAmount' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::TotalAmount' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="number"
@@ -164,7 +164,7 @@
               />
             </div>
             <div class="col-md-2">
-              <label class="form-label">{{ '::Currency' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::Currency' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="text"
@@ -175,7 +175,7 @@
               />
             </div>
             <div class="col-md-3">
-              <label class="form-label">{{ '::AutoRenewal' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::AutoRenewal' | abpLocalization }}</label>
               <select
                 class="form-select"
                 name="autoRenewal"
@@ -188,7 +188,7 @@
               </select>
             </div>
             <div class="col-md-3">
-              <label class="form-label">{{ '::TerminationNoticeDays' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::TerminationNoticeDays' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="number"
@@ -200,7 +200,7 @@
             </div>
 
             <div class="col-md-6">
-              <label class="form-label">{{ '::GoverningLaw' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::GoverningLaw' | abpLocalization }}</label>
               <input
                 class="form-control"
                 type="text"
@@ -211,7 +211,7 @@
               />
             </div>
             <div class="col-md-12">
-              <label class="form-label">{{ '::Summary' | abpLocalization }}</label>
+              <label class="form-label">{{ 'Contracts::Summary' | abpLocalization }}</label>
               <textarea
                 class="form-control"
                 rows="3"
@@ -235,7 +235,7 @@
                 <span class="spinner-border spinner-border-sm me-1"></span>
               }
               <i class="fas fa-check me-1"></i>
-              {{ '::Contract:ConfirmExtraction' | abpLocalization }}
+              {{ 'Contracts::Contract:ConfirmExtraction' | abpLocalization }}
             </button>
           }
           <button
