@@ -97,7 +97,6 @@ export interface DocumentRelationNodeDto {
   documentTypeCode?: string | null;
   lifecycleStatus?: DocumentLifecycleStatus;
   reviewStatus?: DocumentReviewStatus;
-  summary?: string | null;
   distance?: number;
 }
 

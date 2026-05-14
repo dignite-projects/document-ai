@@ -13,8 +13,6 @@ namespace Dignite.Paperbase.Documents;
 public class DocumentRelationAppService : PaperbaseAppService, IDocumentRelationAppService
 {
     private const int MaxGraphDepth = 3;
-    private const int SummaryLength = 300;
-
     private readonly IDocumentRepository _documentRepository;
     private readonly IDocumentRelationRepository _relationRepository;
     private readonly RelationDiscoveryTelemetryRecorder _telemetry;
@@ -192,7 +190,6 @@ public class DocumentRelationAppService : PaperbaseAppService, IDocumentRelation
             DocumentTypeCode = document?.DocumentTypeCode,
             LifecycleStatus = document?.LifecycleStatus ?? default,
             ReviewStatus = document?.ReviewStatus ?? default,
-            Summary = CreateSummary(document?.Markdown),
             Distance = distance
         };
     }
@@ -210,22 +207,4 @@ public class DocumentRelationAppService : PaperbaseAppService, IDocumentRelation
         };
     }
 
-    private static string? CreateSummary(string? markdown)
-    {
-        if (string.IsNullOrWhiteSpace(markdown))
-        {
-            return null;
-        }
-
-        // 摘要面向纯文本预览（节点 tooltip / 卡片），剥离 Markdown 标记后再截断。
-        var plainText = MarkdownStripper.Strip(markdown);
-        if (string.IsNullOrEmpty(plainText))
-        {
-            return null;
-        }
-
-        return plainText.Length <= SummaryLength
-            ? plainText
-            : plainText[..SummaryLength];
-    }
 }

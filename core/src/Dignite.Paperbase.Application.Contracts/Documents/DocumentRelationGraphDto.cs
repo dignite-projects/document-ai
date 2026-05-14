@@ -24,8 +24,6 @@ public class DocumentRelationNodeDto
 
     public DocumentReviewStatus ReviewStatus { get; set; }
 
-    public string? Summary { get; set; }
-
     public int Distance { get; set; }
 }
 
