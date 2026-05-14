@@ -4,11 +4,19 @@ Every document uploaded to Paperbase passes through a text-extraction stage that
 
 ## Markdown-first contract
 
-Paperbase is an AI-native platform. Headings, tables and lists are not formatting decoration — they are semantic signals that LLMs and chunkers rely on. Therefore:
+Paperbase is an AI-native platform. Markdown is the **single text payload** of the pipeline. But what Markdown contributes depends on whether the source document has structure — be honest about both cases:
+
+**With structure — real signal.** For contracts, reports, CSV, DOCX with headings, layout-aware OCR output (PP-StructureV3, Azure DI `prebuilt-document`): headings, tables and lists are not formatting decoration — they are semantic signals that vector chunkers (header-path injection) and LLMs (system prompt: "input is Markdown") rely on. Use them in full.
+
+**Without structure — container, not signal.** For OCR loose paragraphs, plain `.txt`, PP-OCRv4 line dumps, single-line notes: the Markdown wrapper is a **container name**, not a signal upgrade — `string.Join("\n\n", paragraphs)` and the plain text it wraps are byte-for-byte indistinguishable. We still route this through the Markdown contract so downstream chunkers / prompts / chat / business-module extractors stay on one shape. The wrapper buys uniformity, not LLM comprehension.
+
+Contract obligations regardless of structure:
 
 - Every text-extraction provider — built-in or third-party — **must** populate `TextExtractionResult.Markdown`. Plain-text fallbacks are a design violation.
-- Even when the source has no structure (e.g. a low-quality scan of a printed page), the provider must still emit flat Markdown paragraphs rather than raw text.
+- Even when the source has no structure, the provider must still emit flat Markdown paragraphs rather than expose a parallel raw-text channel — wrapping happens **inside the provider**, never bubbled up to the orchestrator.
 - `Document.Markdown` is the **only** text field on the `Document` aggregate. Consumers that need plain text strip on demand via `Dignite.Paperbase.Documents.MarkdownStripper.Strip(...)`; nothing is persisted in stripped form.
+
+**Markdown-first is an engineering default, not a creed.** Out-of-band signals (coordinates, confidence, page metadata, form key-value structure, stamp positions) are **orthogonal** to Markdown. When future needs arise — citation highlighting on the source PDF, stamp localization, form key-value extraction, page-aware QA — they belong as **named, optional, strongly-typed** fields on `TextExtractionResult` (e.g. `IReadOnlyList<PageBlock>? PageBlocks`) or as a separate extractor interface orthogonal to `ITextExtractor`. **Forbidden**: stuffing such signals back into the Markdown string, or adding a `Dictionary<string, object>` extension slot. Each new out-of-band signal needs its own Issue — it's an architecture decision, not a quiet field addition.
 
 Source contract: [`ITextExtractor`](../core/src/Dignite.Paperbase.Abstractions/TextExtraction/ITextExtractor.cs), [`IMarkdownTextProvider`](../core/src/Dignite.Paperbase.TextExtraction/IMarkdownTextProvider.cs).
 
@@ -105,6 +113,10 @@ Recommended for production workloads where data is allowed to leave the network 
 Implement `IOcrProvider` (for image/scan input) or `IMarkdownTextProvider` (for files with a digital text layer). Both contracts are documented in their source files; both demand Markdown output.
 
 The provider lives in its own module project (`Dignite.Paperbase.Ocr.<Vendor>` or `Dignite.Paperbase.TextExtraction.<Vendor>`) and is enabled by the host through `[DependsOn(...)]`.
+
+**Markdown-first responsibility is on the provider, not the orchestrator.** The `OcrResult` and `TextExtractionResult` types expose only a `Markdown` field — there is no parallel `RawText` channel. If the underlying OCR engine returns plain text only (e.g. PaddleOCR PP-OCRv4), the provider itself must wrap paragraphs into flat Markdown (typically `string.Join("\n\n", paragraphs)`). Returning empty Markdown when the engine produced text is a contract violation.
+
+Custom OCR provider projects only need to reference `Dignite.Paperbase.Ocr` — they do not need (and should not pull in) `Dignite.Paperbase.TextExtraction` or `Dignite.Paperbase.Abstractions`.
 
 ## See also
 

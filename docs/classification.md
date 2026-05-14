@@ -21,7 +21,7 @@ Document.Markdown ──► DocumentClassificationBackgroundJob ──► Docume
 
 Two design properties matter:
 
-- **The LLM consumes Markdown directly.** Headings, tables and lists in `Document.Markdown` are kept as semantic signals. The system prompt explicitly tells the model "input is Markdown".
+- **The LLM consumes Markdown directly.** For structured documents (contracts, reports, layout-aware OCR output), headings, tables and lists in `Document.Markdown` are kept as **real semantic signals** the LLM exploits. The system prompt explicitly tells the model "input is Markdown". For unstructured content (loose OCR paragraphs, plain text), the Markdown wrapper is a container name — it keeps the classifier on one prompt template, but no extra signal is being conveyed beyond what plain paragraphs would carry.
 - **Keyword fallback only fires on transient provider failures** (HTTP errors, timeouts). Schema deserialization failures route straight to `PendingReview` — keyword-matching cannot patch a broken semantic decision.
 
 ## Registering document types
