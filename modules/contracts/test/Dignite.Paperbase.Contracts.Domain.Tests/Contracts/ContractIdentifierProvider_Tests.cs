@@ -43,10 +43,10 @@ public class ContractIdentifierProvider_Tests
         // Codex review fix [high]: PartyName is INTENTIONALLY excluded — using common
         // counterparty / vendor names as L2 structural identifiers creates false high-confidence
         // graphs. Party-based relations are L3's responsibility (LLM judgment with context).
-        _provider.SupportedIdentifierTypes.ShouldContain(DocumentIdentifierTypes.ContractNumber);
-        _provider.SupportedIdentifierTypes.ShouldNotContain(DocumentIdentifierTypes.PartyName);
-        _provider.SupportedIdentifierTypes.ShouldNotContain(DocumentIdentifierTypes.InvoiceNumber);
-        _provider.SupportedIdentifierTypes.ShouldNotContain(DocumentIdentifierTypes.PoNumber);
+        _provider.SupportedIdentifierTypes.ShouldContain(ContractIdentifierProvider.ContractNumberTypeId);
+        _provider.SupportedIdentifierTypes.ShouldNotContain("PartyName");
+        _provider.SupportedIdentifierTypes.ShouldNotContain("InvoiceNumber");
+        _provider.SupportedIdentifierTypes.ShouldNotContain("PoNumber");
         _provider.SupportedIdentifierTypes.Count.ShouldBe(1);
     }
 
@@ -78,13 +78,13 @@ public class ContractIdentifierProvider_Tests
 
         entries.Count.ShouldBe(1);
         var entry = entries.Single();
-        entry.Type.ShouldBe(DocumentIdentifierTypes.ContractNumber);
+        entry.Type.ShouldBe(ContractIdentifierProvider.ContractNumberTypeId);
         entry.Value.ShouldBe("HT-2026-001");
         // Open contract reform (Issue #159): provider computes normalized form as part of emit.
         entry.NormalizedValue.ShouldBe("HT2026001");
         // Explicitly assert PartyName values are NOT in the output, even though they're
         // present on the Contract aggregate.
-        entries.ShouldNotContain(e => e.Type == DocumentIdentifierTypes.PartyName);
+        entries.ShouldNotContain(e => e.Type == "PartyName");
     }
 
     [Fact]
@@ -122,7 +122,7 @@ public class ContractIdentifierProvider_Tests
 
         entries.Count.ShouldBe(1);
         var entry = entries.Single();
-        entry.Type.ShouldBe(DocumentIdentifierTypes.ContractNumber);
+        entry.Type.ShouldBe(ContractIdentifierProvider.ContractNumberTypeId);
         entry.Value.ShouldBe("HT-2026-002");                              // trimmed raw
         entry.NormalizedValue.ShouldBe("HT2026002");                      // comparison key
     }
@@ -130,7 +130,7 @@ public class ContractIdentifierProvider_Tests
     [Fact]
     public async Task FindDocumentsAsync_Should_Return_Empty_For_Whitespace_Value()
     {
-        var result = await _provider.FindDocumentsAsync(DocumentIdentifierTypes.ContractNumber, "  ");
+        var result = await _provider.FindDocumentsAsync(ContractIdentifierProvider.ContractNumberTypeId, "  ");
         result.ShouldBeEmpty();
 
         await _contractRepository.DidNotReceive().FindByContractNumberAsync(
@@ -140,7 +140,7 @@ public class ContractIdentifierProvider_Tests
     [Fact]
     public async Task FindDocumentsAsync_Should_Return_Empty_For_Unsupported_Type()
     {
-        var result = await _provider.FindDocumentsAsync(DocumentIdentifierTypes.InvoiceNumber, "INV-001");
+        var result = await _provider.FindDocumentsAsync("InvoiceNumber", "INV-001");
         result.ShouldBeEmpty();
 
         // Defensive: unsupported types short-circuit before any repository call.
@@ -154,7 +154,7 @@ public class ContractIdentifierProvider_Tests
         // Codex review fix [high]: PartyName is no longer a supported L2 identifier.
         // Even if a caller (defensively or from a test) passes it in, the provider must
         // return empty without hitting the repository.
-        var result = await _provider.FindDocumentsAsync(DocumentIdentifierTypes.PartyName, "甲方公司");
+        var result = await _provider.FindDocumentsAsync("PartyName", "甲方公司");
         result.ShouldBeEmpty();
     }
 
@@ -172,7 +172,7 @@ public class ContractIdentifierProvider_Tests
             .Returns(new List<Contract> { matchingContract });
 
         var result = await _provider.FindDocumentsAsync(
-            DocumentIdentifierTypes.ContractNumber,
+            ContractIdentifierProvider.ContractNumberTypeId,
             "HT2026003");                                                 // already-normalized
 
         result.ShouldContain(matchingDocId);
@@ -193,7 +193,7 @@ public class ContractIdentifierProvider_Tests
             });
 
         var result = await _provider.FindDocumentsAsync(
-            DocumentIdentifierTypes.ContractNumber,
+            ContractIdentifierProvider.ContractNumberTypeId,
             "HT2026004");                                                 // already-normalized
 
         result.Count.ShouldBe(1);

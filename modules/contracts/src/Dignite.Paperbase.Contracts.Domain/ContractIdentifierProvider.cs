@@ -9,39 +9,56 @@ using Volo.Abp.DependencyInjection;
 namespace Dignite.Paperbase.Contracts;
 
 /// <summary>
-/// Issue #115 L2: 合同模块对核心 <see cref="IDocumentIdentifierProvider"/> 契约的实现。
+/// L2 RelationDiscovery contributor for the contracts module — emits and looks up
+/// contract numbers so two documents sharing the same contract number get connected
+/// in the document graph.
 ///
 /// <para>
-/// <strong>映射关系</strong>：
-/// <list type="bullet">
-/// <item><see cref="DocumentIdentifierTypes.ContractNumber"/> ↔ <see cref="Contract.ContractNumber"/></item>
-/// <item><see cref="DocumentIdentifierTypes.PartyName"/> ↔ <see cref="Contract.PartyAName"/> / <see cref="Contract.PartyBName"/>
-///       （任意一个字段命中即视为持有该 PartyName）</item>
-/// </list>
+/// <strong>The "contract number" type identifier is owned by THIS module</strong> — see
+/// <see cref="ContractNumberTypeId"/>. Other business modules that want to interoperate
+/// with contracts (e.g. an invoice module emitting "this invoice references contract
+/// HT-2024-001") should NuGet-reference this module's Domain assembly and use that
+/// constant. The Paperbase core layer carries no vocabulary of identifier type strings —
+/// see <c>docs/relation-discovery-module-integration.md</c> for the full integration
+/// contract.
 /// </para>
 ///
 /// <para>
-/// <strong>无独立索引</strong>：本 provider 直接查 <c>Contract</c> 聚合根字段，是当前合同数据的唯一来源——
-/// 用户通过合同详情页修正 AI 抽取错误时，本 provider 自动反映新值，无同步腐烂问题。
-/// 这是 L2 设计选择 fan-out provider 而非中心化索引表的核心原因（见 <c>doc-chat-anti-patterns.md</c>
-/// 反例 D 同源思想：模块自治优于核心代理）。
+/// <strong>Single source of truth</strong>: this provider reads <c>Contract</c> aggregate
+/// fields directly. When a user corrects an AI-extracted value in the contract detail
+/// page, the next L2 run picks up the new value immediately — no separate identifier
+/// index to keep in sync.
 /// </para>
 ///
 /// <para>
-/// <strong>多租户</strong>：仓储查询走 ABP <c>IMultiTenant</c> ambient filter，自动按 <c>CurrentTenant.Id</c> 过滤。
-/// 本路径不接 LLM、不在 Chat 工具体内被调用，无 prompt-injection 攻击面，不需要显式权限断言三件套。
+/// <strong>Multi-tenancy</strong>: repository queries flow through ABP's <c>IMultiTenant</c>
+/// ambient filter; the RelationDiscovery background job sets
+/// <c>CurrentTenant.Change(args.TenantId)</c> before invoking us, so tenant scoping
+/// is automatic.
 /// </para>
 /// </summary>
 public class ContractIdentifierProvider : IDocumentIdentifierProvider, ITransientDependency
 {
     /// <summary>
-    /// 合同模块支持的标识符类型。仅 <see cref="DocumentIdentifierTypes.ContractNumber"/>——
-    /// PartyName 故意不暴露（codex review fix [high]：作为 L2 强标识符会形成
-    /// 高置信度假关系图，留给 L3 LLM 评判）。
+    /// Cross-module convention string for "this document holds (or references) a
+    /// contract number". Other modules wishing to interoperate with the contracts
+    /// module — emit/lookup the same type — should reference this constant via a
+    /// NuGet PackageReference rather than hard-coding the literal <c>"ContractNumber"</c>.
+    /// See <c>docs/relation-discovery-module-integration.md</c>.
+    /// </summary>
+    public const string ContractNumberTypeId = "ContractNumber";
+
+    /// <summary>
+    /// The contracts module exposes only <see cref="ContractNumberTypeId"/> on the
+    /// single-field identifier path. Party names are intentionally absent here — a
+    /// single vendor commonly owns hundreds of contracts, so PartyName as a standalone
+    /// matcher generates a noise graph. Party-based matching is delivered via
+    /// <see cref="ContractEntitySignatureProvider"/>'s multi-field
+    /// <c>Contracts.PartiesAndYear</c> signature instead.
     /// </summary>
     public IReadOnlyCollection<string> SupportedIdentifierTypes { get; } = new[]
     {
-        DocumentIdentifierTypes.ContractNumber,
+        ContractNumberTypeId,
     };
 
     private readonly IContractRepository _contractRepository;
@@ -66,7 +83,7 @@ public class ContractIdentifierProvider : IDocumentIdentifierProvider, ITransien
         var entries = new List<DocumentIdentifierEntry>();
         // ContractNumber: emit raw display form + provider-computed normalized comparison key
         // (Issue #159 open contract — normalization is the provider's responsibility, not L2's).
-        AddIfPresent(entries, DocumentIdentifierTypes.ContractNumber, contract.ContractNumber);
+        AddIfPresent(entries, ContractNumberTypeId, contract.ContractNumber);
         // PartyName intentionally NOT emitted (codex review fix [high]).
         // 一家供应商可能有上百份合同；以 PartyName 为 L2 强标识符会形成高置信度假关系图，
         // 污染 chat 路径的 cross-document 推理。Party 关系判断留给 L3 LLM /
@@ -92,7 +109,7 @@ public class ContractIdentifierProvider : IDocumentIdentifierProvider, ITransien
 
         return identifierType switch
         {
-            DocumentIdentifierTypes.ContractNumber => await FindByContractNumberAsync(normalizedIdentifierValue, cancellationToken),
+            ContractNumberTypeId => await FindByContractNumberAsync(normalizedIdentifierValue, cancellationToken),
             // PartyName intentionally absent — return-empty for any unsupported type
             // (codex review fix [high]).
             _ => Array.Empty<Guid>()

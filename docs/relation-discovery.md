@@ -2,7 +2,9 @@
 
 When a user uploads a contract, that contract may be related to an earlier framework agreement, several supporting invoices, and a few signed amendments — none of which are obvious from the document itself. Paperbase's **Relation Discovery** pipeline turns those scattered files into a navigable graph automatically: AI proposes the links, the user confirms them, and downstream features (the in-app graph view, the chat agent's `get_document_relations` tool) treat the resulting `DocumentRelation` aggregate as a first-class navigation surface.
 
-This page covers relation discovery as a *feature*: how the two-layer architecture works, how a business module plugs in, what knobs operators can turn, and the operational pitfalls. For low-level orchestration code see `core/src/Dignite.Paperbase.Application/Documents/Pipelines/RelationDiscovery/`. The design rationale (why this shape, what was rejected) lives in [Issue #115](https://github.com/dignite-projects/dignite-paperbase/issues/115); this doc is the operating manual.
+This page is the **operator's manual**: how the two-layer architecture works, what knobs to turn, and the operational pitfalls. If you're a **module developer** trying to wire your business module into the relation graph, read [relation-discovery-module-integration.md](relation-discovery-module-integration.md) instead — it covers the provider contracts, naming conventions, normalization rules, and verification checklist.
+
+For low-level orchestration code see `core/src/Dignite.Paperbase.Application/Documents/Pipelines/RelationDiscovery/`. The design rationale (why this shape, what was rejected) lives in [Issue #115](https://github.com/dignite-projects/dignite-paperbase/issues/115).
 
 ## How it works
 

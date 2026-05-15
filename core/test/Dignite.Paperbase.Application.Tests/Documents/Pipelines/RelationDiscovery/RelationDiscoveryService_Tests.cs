@@ -157,9 +157,9 @@ public class RelationDiscoveryService_Tests
 
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-TENANT")
+            CodeEntry("ContractNumber", "HT-TENANT")
         };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "HT-TENANT")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("ContractNumber", "HT-TENANT")] = new[] { peerDocId };
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new List<Guid>());
@@ -190,9 +190,9 @@ public class RelationDiscoveryService_Tests
 
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-UOW-CHECK")
+            CodeEntry("ContractNumber", "HT-UOW-CHECK")
         };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "HT-UOW-CHECK")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("ContractNumber", "HT-UOW-CHECK")] = new[] { peerDocId };
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new List<Guid>());
@@ -212,10 +212,10 @@ public class RelationDiscoveryService_Tests
         // Source is a contract holding ContractNumber=HT-001.
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-001")
+            CodeEntry("ContractNumber", "HT-001")
         };
         // Invoice peer also holds ContractNumber=HT-001 → cross-module match expected.
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "HT-001")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("ContractNumber", "HT-001")] = new[] { peerDocId };
 
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -242,9 +242,9 @@ public class RelationDiscoveryService_Tests
 
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-002")
+            CodeEntry("ContractNumber", "HT-002")
         };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "HT-002")] = new[] { alreadyLinkedPeerId, freshPeerId };
+        _invoiceProvider.Lookup[("ContractNumber", "HT-002")] = new[] { alreadyLinkedPeerId, freshPeerId };
 
         // alreadyLinkedPeerId is already related (Manual — user-confirmed) — must NOT be re-suggested.
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
@@ -266,11 +266,11 @@ public class RelationDiscoveryService_Tests
         // Source has two identifiers; both happen to point to the same peer document.
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-003"),
-            NameEntry(DocumentIdentifierTypes.PartyName, "上海某某有限公司"),
+            CodeEntry("ContractNumber", "HT-003"),
+            NameEntry("PartyName", "上海某某有限公司"),
         };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "HT-003")] = new[] { peerDocId };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.PartyName, "上海某某有限公司")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("ContractNumber", "HT-003")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("PartyName", "上海某某有限公司")] = new[] { peerDocId };
 
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -289,11 +289,11 @@ public class RelationDiscoveryService_Tests
         var sourceDocId = Guid.NewGuid();
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            NameEntry(DocumentIdentifierTypes.PartyName, "甲方公司")
+            NameEntry("PartyName", "甲方公司")
         };
         // Defensive: provider FindDocumentsAsync echoes source itself (because contract module
         // also holds the source document). Service must filter self.
-        _contractProvider.Lookup[(DocumentIdentifierTypes.PartyName, "甲方公司")] = new[] { sourceDocId };
+        _contractProvider.Lookup[("PartyName", "甲方公司")] = new[] { sourceDocId };
 
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -314,9 +314,9 @@ public class RelationDiscoveryService_Tests
 
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-IDEMPOTENT")
+            CodeEntry("ContractNumber", "HT-IDEMPOTENT")
         };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "HT-IDEMPOTENT")]
+        _invoiceProvider.Lookup[("ContractNumber", "HT-IDEMPOTENT")]
             = new[] { alreadyAiLinkedPeer };
 
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
@@ -339,9 +339,9 @@ public class RelationDiscoveryService_Tests
         _contractProvider.GetIdentifiersThrowsFor.Add(sourceDocId);
         _invoiceProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.InvoiceNumber, "INV-RESILIENT")
+            CodeEntry("InvoiceNumber", "INV-RESILIENT")
         };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.InvoiceNumber, "INV-RESILIENT")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("InvoiceNumber", "INV-RESILIENT")] = new[] { peerDocId };
 
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -362,11 +362,11 @@ public class RelationDiscoveryService_Tests
 
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-RESILIENT")
+            CodeEntry("ContractNumber", "HT-RESILIENT")
         };
-        _contractProvider.FindDocumentsThrowsFor.Add((DocumentIdentifierTypes.ContractNumber, "HT-RESILIENT"));
+        _contractProvider.FindDocumentsThrowsFor.Add(("ContractNumber", "HT-RESILIENT"));
         // Invoice provider succeeds for the same identifier — peer should still surface.
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "HT-RESILIENT")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("ContractNumber", "HT-RESILIENT")] = new[] { peerDocId };
 
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -389,9 +389,9 @@ public class RelationDiscoveryService_Tests
         // must not be called for this type.
         _invoiceProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.InvoiceNumber, "INV-001")
+            CodeEntry("InvoiceNumber", "INV-001")
         };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.InvoiceNumber, "INV-001")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("InvoiceNumber", "INV-001")] = new[] { peerDocId };
 
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -401,7 +401,7 @@ public class RelationDiscoveryService_Tests
 
         created.Count.ShouldBe(1);
         // Verify contract provider's FindDocumentsAsync was NOT called for InvoiceNumber.
-        _contractProvider.FindCalls.ShouldNotContain(c => c.Type == DocumentIdentifierTypes.InvoiceNumber);
+        _contractProvider.FindCalls.ShouldNotContain(c => c.Type == "InvoiceNumber");
     }
 
     [Fact]
@@ -429,7 +429,7 @@ public class RelationDiscoveryService_Tests
         SetupSource(sourceDocId);
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-2024-007"),
+            CodeEntry("ContractNumber", "HT-2024-007"),
         };
         // Invoice provider not given anything → should report 0 contribution.
 
@@ -489,9 +489,9 @@ public class RelationDiscoveryService_Tests
 
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "HT-2024-009"),
+            CodeEntry("ContractNumber", "HT-2024-009"),
         };
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "HT-2024-009")] = new[] { peerDocId };
+        _invoiceProvider.Lookup[("ContractNumber", "HT-2024-009")] = new[] { peerDocId };
 
         // Same peer also matches a signature.
         var signature = new DocumentEntitySignature(
@@ -556,12 +556,12 @@ public class RelationDiscoveryService_Tests
         SetupSource(sourceDocId);
         _contractProvider.Identifiers[sourceDocId] = new[]
         {
-            CodeEntry(DocumentIdentifierTypes.ContractNumber, "noise-value"),
+            CodeEntry("ContractNumber", "noise-value"),
         };
         var noisyPeers = Enumerable.Range(0, RelationDiscoveryTelemetryRecorder.HighAmbiguityPeerThreshold + 2)
             .Select(_ => Guid.NewGuid())
             .ToArray();
-        _invoiceProvider.Lookup[(DocumentIdentifierTypes.ContractNumber, "noise-value")] = noisyPeers;
+        _invoiceProvider.Lookup[("ContractNumber", "noise-value")] = noisyPeers;
 
         _relationRepository.GetLinkedPeerDocumentIdsAsync(
                 sourceDocId, Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -570,7 +570,7 @@ public class RelationDiscoveryService_Tests
         await _service.DiscoverAsync(sourceDocId);
 
         _telemetry.Received(1).RecordHighAmbiguityIdentifier(
-            DocumentIdentifierTypes.ContractNumber,
+            "ContractNumber",
             Arg.Any<string>(),                 // normalized value — doesn't matter for the assertion
             Arg.Is<int>(n => n >= RelationDiscoveryTelemetryRecorder.HighAmbiguityPeerThreshold));
     }
@@ -650,8 +650,8 @@ internal sealed class FakeContractProvider : IDocumentIdentifierProvider
 {
     public IReadOnlyCollection<string> SupportedIdentifierTypes { get; } = new[]
     {
-        DocumentIdentifierTypes.ContractNumber,
-        DocumentIdentifierTypes.PartyName,
+        "ContractNumber",
+        "PartyName",
     };
 
     public Dictionary<Guid, IReadOnlyList<DocumentIdentifierEntry>> Identifiers { get; } = new();
@@ -686,9 +686,9 @@ internal sealed class FakeInvoiceProvider : IDocumentIdentifierProvider
 {
     public IReadOnlyCollection<string> SupportedIdentifierTypes { get; } = new[]
     {
-        DocumentIdentifierTypes.ContractNumber,
-        DocumentIdentifierTypes.PartyName,
-        DocumentIdentifierTypes.InvoiceNumber,
+        "ContractNumber",
+        "PartyName",
+        "InvoiceNumber",
     };
 
     public Dictionary<Guid, IReadOnlyList<DocumentIdentifierEntry>> Identifiers { get; } = new();
