@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Dignite.Paperbase.Documents;
 using Volo.Abp;
 using Volo.Abp.Domain.Entities.Auditing;
@@ -69,13 +70,28 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     /// </summary>
     public virtual string? ClassificationReason { get; private set; }
 
+    // === 字段架构 v2：系统通用字段（顶层 typed columns，由 pipeline 各阶段填充） ===
+
+    /// <summary>文档语言（ISO 639-1 / IETF tag）。OCR / 抽取阶段检测；影响下游 prompt 语言选择。</summary>
+    public virtual string? Language { get; private set; }
+
+    /// <summary>OCR 平均置信度（0..1）。OCR 完成后填充；CLAUDE.md "OCR 置信度门槛"依赖此值决定 <c>DocumentReadyEto</c> 是否发布。</summary>
+    public virtual double? OcrConfidence { get; private set; }
+
     /// <summary>
-    /// 系统通用字段 + Host 字段抽取结果（JSON 序列化）。
-    /// 由 <c>HostFieldExtractionWorkflow</c> 在分类完成后写入；schema 由 Host 注册的
-    /// <see cref="Dignite.Paperbase.Abstractions.Documents.DocumentTypeDefinition.Fields"/> 决定。
-    /// 租户字段（#169 B 机制）走独立的 <c>DocumentTenantField</c> 实体，不混入此 JSON。
+    /// 类型绑定字段抽取结果（字段架构 v2）。键 = FieldName（与 LLM 输出 JSON 键同形）。
+    /// <para>
+    /// 来源由 <see cref="TenantId"/> 决定：
+    /// <list type="bullet">
+    ///   <item><c>TenantId IS NULL</c>（Host 文档）→ <c>FieldDefinition.TenantId IS NULL</c> 的字段定义</item>
+    ///   <item><c>TenantId != null</c>（租户文档）→ <c>FieldDefinition.TenantId = Document.TenantId</c> 的字段定义</item>
+    /// </list>
+    /// 两层 mutually exclusive——同一 Document 只跑一层字段抽取，不存在分桶 / 命名冲突。
+    /// </para>
+    /// EF Core 10 SQL Server provider 不直接支持 <c>Dictionary&lt;string, JsonElement&gt;</c> ↔ <c>json</c> 列映射，
+    /// 必须 ValueConverter 中转；底层 storage 仍为 SQL Server 2025 原生 <c>json</c> 列。
     /// </summary>
-    public virtual string? SystemFieldsJson { get; private set; }
+    public virtual Dictionary<string, JsonElement>? ExtractedFields { get; private set; }
 
     // --- 聚合内的 PipelineRun 集合 ---
 
@@ -144,13 +160,22 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
         SourceType = sourceType;
     }
 
-    /// <summary>
-    /// 写入系统通用 + Host 字段抽取的 JSON 结果。<see cref="HostFieldExtractionWorkflow"/> 完成后调用。
-    /// 同一文档允许覆写（重分类后可重跑抽取）。
-    /// </summary>
-    public void SetSystemFieldsJson(string? json)
+    internal void SetOcrConfidence(double? confidence)
     {
-        SystemFieldsJson = string.IsNullOrWhiteSpace(json) ? null : json;
+        OcrConfidence = confidence.HasValue
+            ? Check.Range(confidence.Value, nameof(confidence), 0d, 1d)
+            : null;
+    }
+
+    /// <summary>
+    /// 写入字段抽取结果到 <see cref="ExtractedFields"/>。
+    /// <see cref="FieldExtractionEventHandler"/> 在分类完成后调用；重分类时可覆写；null 或空字典清空。
+    /// </summary>
+    public void SetExtractedFields(IReadOnlyDictionary<string, JsonElement>? fields)
+    {
+        ExtractedFields = fields == null || fields.Count == 0
+            ? null
+            : new Dictionary<string, JsonElement>(fields);
     }
 
     // 高置信度路径：ClassificationReason 必须为 null，与 RequestClassificationReview 路径区分。

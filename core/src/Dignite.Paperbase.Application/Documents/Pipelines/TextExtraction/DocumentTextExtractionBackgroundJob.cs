@@ -14,7 +14,9 @@ using Microsoft.Extensions.Options;
 using Volo.Abp.BackgroundJobs;
 using Volo.Abp.BlobStoring;
 using Volo.Abp.DependencyInjection;
+using Volo.Abp.EventBus.Distributed;
 using Volo.Abp.Settings;
+using Volo.Abp.Timing;
 using Volo.Abp.Uow;
 
 namespace Dignite.Paperbase.Documents.Pipelines.TextExtraction;
@@ -30,7 +32,8 @@ public class DocumentTextExtractionBackgroundJob
     private readonly ITextExtractor _textExtractor;
     private readonly IBlobContainer<PaperbaseDocumentContainer> _blobContainer;
     private readonly IUnitOfWorkManager _unitOfWorkManager;
-    private readonly OutboxEventManager _outboxEventManager;
+    private readonly IDistributedEventBus _distributedEventBus;
+    private readonly IClock _clock;
     private readonly PaperbaseOcrOptions _ocrOptions;
     private readonly ISettingProvider _settingProvider;
     /// <summary>
@@ -51,7 +54,8 @@ public class DocumentTextExtractionBackgroundJob
         ITextExtractor textExtractor,
         IBlobContainer<PaperbaseDocumentContainer> blobContainer,
         IUnitOfWorkManager unitOfWorkManager,
-        OutboxEventManager outboxEventManager,
+        IDistributedEventBus distributedEventBus,
+        IClock clock,
         IOptions<PaperbaseOcrOptions> ocrOptions,
         ISettingProvider settingProvider,
         [FromKeyedServices(PaperbaseAIConsts.TitleGeneratorChatClientKey)] IChatClient titleGeneratorChatClient,
@@ -65,7 +69,8 @@ public class DocumentTextExtractionBackgroundJob
         _textExtractor = textExtractor;
         _blobContainer = blobContainer;
         _unitOfWorkManager = unitOfWorkManager;
-        _outboxEventManager = outboxEventManager;
+        _distributedEventBus = distributedEventBus;
+        _clock = clock;
         _ocrOptions = ocrOptions.Value;
         _settingProvider = settingProvider;
         _titleGeneratorChatClient = titleGeneratorChatClient;
@@ -134,31 +139,31 @@ public class DocumentTextExtractionBackgroundJob
                 document, runId, PaperbasePipelines.TextExtraction);
 
         await _pipelineRunManager.CompleteTextExtractionAsync(
-            document, run, result.Markdown, title, actualSourceType);
+            document, run, result.Markdown, title, result.Confidence, actualSourceType);
 
         // 发布 OCRCompletedEto——薄载荷，下游通过 REST 回拉 Markdown。
-        await _outboxEventManager.PublishAsync(
-            document.TenantId,
-            document.Id,
+        await _distributedEventBus.PublishAsync(
             new OCRCompletedEto
             {
                 DocumentId = document.Id,
                 TenantId = document.TenantId,
+                EventTime = _clock.Now,
                 OcrConfidence = result.Confidence,
                 UsedOcr = result.UsedOcr
             });
 
-        // OCR 置信度门槛检查（只对 UsedOcr=true 路径有意义；数字版抽取置信度默认 1.0 不会触发）
+        // OCR 置信度门槛检查（只对 UsedOcr=true 且有 confidence 值的路径有意义；
+        // 数字版抽取 Confidence 为 null，不会触发）。
         var threshold = await ResolveOcrThresholdAsync(document.TenantId);
-        if (result.UsedOcr && result.Confidence < threshold)
+        if (result.UsedOcr && result.Confidence is { } confidence && confidence < threshold)
         {
-            var reason = $"OCR confidence {result.Confidence:0.00} below threshold {threshold:0.00}";
+            var reason = $"OCR confidence {confidence:0.00} below threshold {threshold:0.00}";
             document.MarkPendingOcrReview(reason);
             await _documentRepository.UpdateAsync(document, autoSave: true);
 
             Logger.LogInformation(
                 "Document {DocumentId} OCR confidence {Confidence:0.00} below threshold {Threshold:0.00}; routed to PendingReview.",
-                document.Id, result.Confidence, threshold);
+                document.Id, confidence, threshold);
         }
         else
         {

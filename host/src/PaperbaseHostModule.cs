@@ -39,7 +39,9 @@ using Volo.Abp.BlobStoring.FileSystem;
 using Volo.Abp.Caching;
 using Volo.Abp.Emailing;
 using Volo.Abp.EntityFrameworkCore;
+using Volo.Abp.EntityFrameworkCore.DistributedEvents;
 using Volo.Abp.EntityFrameworkCore.SqlServer;
+using Volo.Abp.EventBus.Distributed;
 using Volo.Abp.FeatureManagement;
 using Volo.Abp.FeatureManagement.EntityFrameworkCore;
 using Volo.Abp.Identity;
@@ -203,9 +205,30 @@ public class PaperbaseHostModule : AbpModule
         ConfigureDataProtection(context);
         ConfigureVirtualFiles(hostingEnvironment);
         ConfigureEfCore(context);
+        ConfigureDistributedEventBus();
         ConfigureAI(context, configuration);
         ConfigureDocumentTypes();
         ConfigureOpenTelemetry(context, configuration);
+    }
+
+    // 启用 ABP transactional outbox + inbox（issue #188）：
+    // - publish 路径在调用方 UoW 内 → 事件写入 AbpEventOutbox 表与业务变更原子持久化
+    // - 后台 worker 扫表真正投递到消息中间件，保证 at-least-once 投递
+    // 下游消费方按 (DocumentId, EventType, EventTime) 自行幂等以处理重投。
+    private void ConfigureDistributedEventBus()
+    {
+        Configure<AbpDistributedEventBusOptions>(options =>
+        {
+            options.Outboxes.Configure(config =>
+            {
+                config.UseDbContext<Data.PaperbaseHostDbContext>();
+            });
+
+            options.Inboxes.Configure(config =>
+            {
+                config.UseDbContext<Data.PaperbaseHostDbContext>();
+            });
+        });
     }
 
     // Host 部署级文档类型注册——CLAUDE.md：Host 至少注册一个 fallback 通用类型，
@@ -392,7 +415,12 @@ public class PaperbaseHostModule : AbpModule
         {
             options.Configure(configurationContext =>
             {
-                configurationContext.UseSqlServer();
+                // compat level 170 = SQL Server 2025；让 EF Core 10 把所有 JSON 形态属性
+                // （primitive collection / Complex Type ToJson / Dictionary via ValueConverter）
+                // 自动落到 native json 列类型，享受 SQL Server 2025 原生 JSON 索引 / modify 优化。
+                // 字段架构 v2 forward-only 原则：部署目标 = SQL Server 2025+ / Azure SQL DB；
+                // 旧 SQL Server 版本部署需要降级 compat level 才能 apply migration（json 列不识别）。
+                configurationContext.UseSqlServer(o => o.UseCompatibilityLevel(170));
             });
         });
 

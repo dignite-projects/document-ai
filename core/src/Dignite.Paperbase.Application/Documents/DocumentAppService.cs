@@ -17,6 +17,7 @@ using Volo.Abp.BlobStoring;
 using Volo.Abp.Content;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Entities;
+using Volo.Abp.EventBus.Distributed;
 
 namespace Dignite.Paperbase.Documents;
 
@@ -26,20 +27,20 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     private readonly IBlobContainer<PaperbaseDocumentContainer> _blobContainer;
     private readonly DocumentPipelineRunManager _pipelineRunManager;
     private readonly DocumentPipelineJobScheduler _pipelineJobScheduler;
-    private readonly OutboxEventManager _outboxEventManager;
+    private readonly IDistributedEventBus _distributedEventBus;
 
     public DocumentAppService(
         IDocumentRepository documentRepository,
         IBlobContainer<PaperbaseDocumentContainer> blobContainer,
         DocumentPipelineRunManager pipelineRunManager,
         DocumentPipelineJobScheduler pipelineJobScheduler,
-        OutboxEventManager outboxEventManager)
+        IDistributedEventBus distributedEventBus)
     {
         _documentRepository = documentRepository;
         _blobContainer = blobContainer;
         _pipelineRunManager = pipelineRunManager;
         _pipelineJobScheduler = pipelineJobScheduler;
-        _outboxEventManager = outboxEventManager;
+        _distributedEventBus = distributedEventBus;
     }
 
     public virtual async Task<DocumentDto> GetAsync(Guid id)
@@ -139,13 +140,12 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
 
         await _documentRepository.InsertAsync(document, autoSave: true);
 
-        await _outboxEventManager.PublishAsync(
-            document.TenantId,
-            document.Id,
+        await _distributedEventBus.PublishAsync(
             new DocumentUploadedEto
             {
                 DocumentId = document.Id,
                 TenantId = document.TenantId,
+                EventTime = Clock.Now,
                 FileName = fileName,
                 FileSize = fileSize,
                 ContentType = contentType
@@ -178,13 +178,12 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         await _documentRepository.DeleteAsync(id);
 
         // 通知下游消费方：Document 进入回收站，应将派生数据置为可恢复的归档状态
-        await _outboxEventManager.PublishAsync(
-            document.TenantId,
-            document.Id,
+        await _distributedEventBus.PublishAsync(
             new DocumentDeletedEto
             {
                 DocumentId = document.Id,
                 TenantId = document.TenantId,
+                EventTime = Clock.Now,
                 DocumentTypeCode = document.DocumentTypeCode
             });
     }
@@ -212,13 +211,12 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         }
 
         // 通知下游消费方：Document 已不可恢复，应物理删除派生数据
-        await _outboxEventManager.PublishAsync(
-            document.TenantId,
-            document.Id,
+        await _distributedEventBus.PublishAsync(
             new DocumentPermanentlyDeletedEto
             {
                 DocumentId = document.Id,
                 TenantId = document.TenantId,
+                EventTime = Clock.Now,
                 DocumentTypeCode = document.DocumentTypeCode
             });
     }
@@ -240,13 +238,12 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
 
             await _documentRepository.UpdateAsync(document);
 
-            await _outboxEventManager.PublishAsync(
-                document.TenantId,
-                document.Id,
+            await _distributedEventBus.PublishAsync(
                 new DocumentRestoredEto
                 {
                     DocumentId = document.Id,
                     TenantId = document.TenantId,
+                    EventTime = Clock.Now,
                     DocumentTypeCode = document.DocumentTypeCode
                 });
         }
@@ -379,13 +376,12 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         await _pipelineRunManager.BeginAsync(document, run);
 
         await _pipelineRunManager.CompleteManualClassificationAsync(document, run, documentTypeCode);
-        await _outboxEventManager.PublishAsync(
-            document.TenantId,
-            document.Id,
+        await _distributedEventBus.PublishAsync(
             new DocumentClassifiedEto
             {
                 DocumentId = document.Id,
                 TenantId = document.TenantId,
+                EventTime = Clock.Now,
                 DocumentTypeCode = documentTypeCode,
                 ClassificationConfidence = 1.0,
                 Markdown = document.Markdown

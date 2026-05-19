@@ -7,12 +7,10 @@ using Dignite.Paperbase.Ai;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Volo.Abp.DependencyInjection;
-using Volo.Abp.Localization;
 
 namespace Dignite.Paperbase.Documents.Pipelines.Classification;
 
@@ -30,7 +28,6 @@ public class DocumentClassificationWorkflow : ITransientDependency
     /// </summary>
     private readonly IChatClient _chatClient;
     private readonly IPromptProvider _promptProvider;
-    private readonly IStringLocalizerFactory _stringLocalizerFactory;
     private readonly PaperbaseAIBehaviorOptions _options;
 
     public ILogger<DocumentClassificationWorkflow> Logger { get; set; }
@@ -39,17 +36,15 @@ public class DocumentClassificationWorkflow : ITransientDependency
     public DocumentClassificationWorkflow(
         [FromKeyedServices(PaperbaseAIConsts.StructuredChatClientKey)] IChatClient chatClient,
         IOptions<PaperbaseAIBehaviorOptions> options,
-        IPromptProvider promptProvider,
-        IStringLocalizerFactory stringLocalizerFactory)
+        IPromptProvider promptProvider)
     {
         _chatClient = chatClient;
         _promptProvider = promptProvider;
-        _stringLocalizerFactory = stringLocalizerFactory;
         _options = options.Value;
     }
 
     public virtual async Task<DocumentClassificationOutcome> RunAsync(
-        IReadOnlyList<DocumentTypeDefinition> candidateTypes,
+        IReadOnlyList<DocumentType> candidateTypes,
         string markdown,
         CancellationToken cancellationToken = default)
     {
@@ -74,16 +69,12 @@ public class DocumentClassificationWorkflow : ITransientDependency
             truncatedText = markdown[.._options.MaxTextLengthPerExtraction];
         }
 
-        // DisplayName 是 ILocalizableString —— 在 _options.DefaultLanguage 下解析，
-        // 与系统 instructions 的语言保持一致（避免 prompt 中类型名与回复语言错位）。
-        List<string> typeDescriptions;
-        using (CultureHelper.Use(_options.DefaultLanguage))
-        {
-            typeDescriptions = candidateTypes.Select(t =>
-                $"- TypeCode: {t.TypeCode}\n" +
-                $"  Name: {t.DisplayName.Localize(_stringLocalizerFactory).Value}"
-            ).ToList();
-        }
+        // 字段架构 v2：DocumentType.DisplayName 是 DB-resolved string，
+        // 由 HostDocumentTypeDataSeedContributor 在种子化时按默认 culture 解析 ILocalizableString 后存入。
+        var typeDescriptions = candidateTypes.Select(t =>
+            $"- TypeCode: {t.TypeCode}\n" +
+            $"  Name: {t.DisplayName}"
+        ).ToList();
 
         var userMessage = $$"""
                 ## Registered Document Types

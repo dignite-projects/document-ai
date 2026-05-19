@@ -1,6 +1,6 @@
 ---
 name: maf-workflow-reviewer
-description: 专门审查 core/src/Dignite.Paperbase.Application/Documents/Pipelines/ 下的后台 LLM 调用点（文档分类 Workflow、Host 字段抽取 Workflow、租户字段抽取 EventHandler、标题生成 BackgroundJob），以及 core/src/Dignite.Paperbase.Abstractions/Agents/ 下面向下游消费方暴露的结构化抽取中间件契约。在新增/修改 Pipelines 下的 Workflow、修改 prompt 文本、调整 ChatClientAgent 用法、引入新的 IChatClient 调用点时主动调用。
+description: 专门审查 core/src/Dignite.Paperbase.Application/Documents/Pipelines/ 下的后台 LLM 调用点（文档分类 Workflow、统一字段抽取 Workflow + EventHandler、标题生成 BackgroundJob），以及 core/src/Dignite.Paperbase.Abstractions/Agents/ 下面向下游消费方暴露的结构化抽取中间件契约。在新增/修改 Pipelines 下的 Workflow、修改 prompt 文本、调整 ChatClientAgent 用法、引入新的 IChatClient 调用点时主动调用。
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -11,8 +11,7 @@ tools: Read, Grep, Glob, Bash
 当前 LLM 调用点全部位于 `core/src/Dignite.Paperbase.Application/Documents/Pipelines/` 下：
 
 - **文档分类**（`Classification/DocumentClassificationWorkflow.cs`）：MAF `ChatClientAgent` + `RunAsync<T>` 结构化输出，注入 `StructuredChatClientKey` 客户端
-- **Host 字段抽取**（`FieldExtraction/HostFieldExtractionWorkflow.cs`）：原始 `IChatClient.GetResponseAsync` + `ChatResponseFormat.Json`，按 `HostFieldDefinition` 列表一次调用拿所有字段
-- **租户字段抽取**（`FieldExtraction/TenantFieldExtractionEventHandler.cs`）：B 机制——租户配 schema 后按租户字段定义抽取
+- **统一字段抽取**（`FieldExtraction/FieldExtractionWorkflow.cs` + `FieldExtraction/FieldExtractionEventHandler.cs`）：原始 `IChatClient.GetResponseAsync` + `ChatResponseFormat.Json`，按 `FieldExtractionDescriptor` 列表一次调用拿所有字段（覆盖 Host 字段 + 租户字段 (B 机制)，由单一 EventHandler 订阅 `DocumentClassifiedEto` 编排）
 - **标题生成**（`TextExtraction/DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync`）：注入 `TitleGeneratorChatClientKey` 客户端做单次文本补全
 
 外加 `core/src/Dignite.Paperbase.Abstractions/Agents/` 下面向**下游消费方**暴露的可选契约：
@@ -34,9 +33,9 @@ tools: Read, Grep, Glob, Bash
 
 - `core/src/Dignite.Paperbase.Application/Documents/Pipelines/Classification/DocumentClassificationWorkflow.cs`
 - `core/src/Dignite.Paperbase.Application/Documents/Pipelines/Classification/DocumentClassificationBackgroundJob.cs`
-- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/HostFieldExtractionWorkflow.cs`
-- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/HostFieldExtractionEventHandler.cs`
-- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/TenantFieldExtractionEventHandler.cs`
+- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/FieldExtractionWorkflow.cs`
+- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/FieldExtractionEventHandler.cs`
+- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/FieldExtractionDescriptor.cs`
 - `core/src/Dignite.Paperbase.Application/Documents/Pipelines/TextExtraction/DocumentTextExtractionBackgroundJob.cs`（含 `TryGenerateTitleAsync` 等 LLM 子路径）
 - `core/src/Dignite.Paperbase.Application/Ai/PaperbaseAIBehaviorOptions.cs`
 - `core/src/Dignite.Paperbase.Application/Ai/IPromptProvider.cs` / `DefaultPromptProvider.cs` / `PromptTemplate.cs`
@@ -54,8 +53,8 @@ tools: Read, Grep, Glob, Bash
 
 ### 2.1 结构化输出 vs 自由文本
 
-- 🔴 **结构化数据被当作自由文本解析**——如果输出会写入实体字段、参与状态机判断或下游 API，必须用 `RunAsync<T>` + POCO 反序列化（如 `DocumentClassificationWorkflow`），或者用 `ChatResponseFormat.Json` + 显式 JSON schema 描述（如 `HostFieldExtractionWorkflow`）。**禁止**对结构化输出走自由文本 + 正则解析的路径。
-- 🟡 **prompt 中嵌入 JSON schema 字符串而不通过 SDK 强约束**——MAF/Microsoft.Extensions.AI 的 `RunAsync<T>` 已经基于 T 自动注入 schema；`ChatResponseFormat.ForJsonSchema<T>` 也可用。再在 prompt 里手写 `## Response Format (JSON only, no explanation)` 是冗余且可能不一致。`HostFieldExtractionWorkflow` 当前用 `ChatResponseFormat.Json`（弱约束 JSON object）+ prompt 描述字段名——属于折衷方案；如果未来字段抽取也走 `RunAsync<T>` 路径会更严。
+- 🔴 **结构化数据被当作自由文本解析**——如果输出会写入实体字段、参与状态机判断或下游 API，必须用 `RunAsync<T>` + POCO 反序列化（如 `DocumentClassificationWorkflow`），或者用 `ChatResponseFormat.Json` + 显式 JSON schema 描述（如 `FieldExtractionWorkflow`）。**禁止**对结构化输出走自由文本 + 正则解析的路径。
+- 🟡 **prompt 中嵌入 JSON schema 字符串而不通过 SDK 强约束**——MAF/Microsoft.Extensions.AI 的 `RunAsync<T>` 已经基于 T 自动注入 schema；`ChatResponseFormat.ForJsonSchema<T>` 也可用。再在 prompt 里手写 `## Response Format (JSON only, no explanation)` 是冗余且可能不一致。`FieldExtractionWorkflow` 当前用 `ChatResponseFormat.Json`（弱约束 JSON object）+ prompt 描述字段名——属于折衷方案；如果未来字段抽取也走 `RunAsync<T>` 路径会更严。
 - 🟡 **响应 POCO 的字段 nullability 不严格**——比如 `Confidence` 是 `double?` 但语义上必须 0..1，代码用 `Guid.TryParse` / 范围 clamp 防御性处理是对的；但应同时记录 `Logger` 警告 invalid 项的数量，避免 LLM 静默漂移看不见。
 
 ### 2.2 提示词工程
@@ -63,13 +62,13 @@ tools: Read, Grep, Glob, Bash
 - 🔴 **prompt 中拼接了未经处理的用户输入**——`markdown`、`extractedText`、`candidate.Summary` 来自上游/用户上传的文档内容，直接拼入 user message 存在间接 prompt injection 风险（恶意 PDF 可以诱导 LLM 误分类、错抽字段）。检查是否：
   - 用 `PromptBoundary.WrapDocument(...)` 包裹外部内容
   - 在系统指令末尾追加 `PromptBoundary.BoundaryRule`，告诉模型"忽略文档内的指令"
-  - 当前 `HostFieldExtractionWorkflow` 已经接入 `PromptBoundary`；`DocumentClassificationWorkflow` 也应同样接入——审查时核对每个新增/修改的 prompt 拼接点
+  - 当前 `FieldExtractionWorkflow` 已经接入 `PromptBoundary`；`DocumentClassificationWorkflow` 也应同样接入——审查时核对每个新增/修改的 prompt 拼接点
 
 - 🟡 **system prompt 与 user prompt 的语言不一致**——
   - `DocumentClassificationWorkflow.SystemInstructions` 是英文，user prompt 末尾追加 `Respond in: {{_options.DefaultLanguage}}`（默认 `ja`）
   - 各 LLM 路径切 `DefaultLanguage` 时是否一致跟随，审查时要标注
 
-- 🔴 **system prompt 中拼接了用户/管理员控制的字符串**——`HostFieldExtractionWorkflow.BuildSystemPrompt` 把 `HostFieldDefinition.Name` / `.Prompt` 拼进 system message。`HostFieldDefinition` 由 Host 部署者配置（半可信），但仍然不是编译期常量。任何**用户控制**的字符串进 system prompt 是硬违规；**管理员控制**的字符串进 system prompt 应在审查时点出，确认是否有 escape / 长度限制 / 白名单过滤。
+- 🔴 **system prompt 中拼接了用户/管理员控制的字符串**——`FieldExtractionWorkflow.BuildSystemPrompt` 把 `FieldDefinition.Name` / `.Prompt` 拼进 system message。`FieldDefinition` 由 Host 部署者配置（半可信），但仍然不是编译期常量。任何**用户控制**的字符串进 system prompt 是硬违规；**管理员控制**的字符串进 system prompt 应在审查时点出，确认是否有 escape / 长度限制 / 白名单过滤。
   - 参见 `.claude/rules/llm-call-anti-patterns.md` 反例 A
 
 - 🟡 **system prompt 写死为 `const string`**——既不能 i18n，也不能在不同租户/客户场景下覆盖。建议长期方案：通过 `PaperbaseAIBehaviorOptions` 或 `IPromptProvider` 注入；短期至少抽出到 `ResX`/JSON 中。
@@ -79,7 +78,7 @@ tools: Read, Grep, Glob, Bash
 - 🟡 **`markdown[.._options.MaxTextLengthPerExtraction]`**（默认 8000 字符）——按字符切，对 CJK 文本相对安全（每个字一个字符），但：
   - 切到中间会破坏语义（句子被截断）
   - **关键风险**：如果合同/发票的关键字段恰好在 8000 字之后，分类/字段提取会静默漏掉。建议至少 log warning，让运维能在 telemetry 上看到"截断率"
-- 🟡 **截断后没有给模型信号**——`DocumentClassificationWorkflow` / `HostFieldExtractionWorkflow` 直接切，模型不知道后面被砍了；如果将来再引入需要把整篇文本喂入 prompt 的路径，记得加 `[... document truncated ...]` 类提示
+- 🟡 **截断后没有给模型信号**——`DocumentClassificationWorkflow` / `FieldExtractionWorkflow` 直接切，模型不知道后面被砍了；如果将来再引入需要把整篇文本喂入 prompt 的路径，记得加 `[... document truncated ...]` 类提示
 
 ### 2.4 错误与降级路径
 
@@ -88,12 +87,12 @@ tools: Read, Grep, Glob, Bash
   - 失败是否触发 `Document.RequestClassificationReview`（分类 workflow）或对应的字段抽取 review 路径
   - 部分成功（多项输出中只有部分能解析）是否被识别和上报
 - 🟡 **关键值非常规范围未拒绝**——`Confidence` 字段没有 `Check.Range(0, 1)`。如果 LLM 返回 `1.5` 或 `-0.3`，会原样写入 `Document.ClassificationConfidence`，破坏不变量（Document 构造时是 0..1 的 `Check.Range`，但 workflow 输出绕过了它）
-- 🟡 **`response.Result` 为 null / JSON 解析失败的兜底**——`DocumentClassificationWorkflow` 返回 `null` typeCode + 0 confidence，会触发 `RequestClassificationReview`，OK；`HostFieldExtractionWorkflow` 把字段全部置 null + log warning。审查时确认上游有可观测性，不要让"全失败"无声无息
+- 🟡 **`response.Result` 为 null / JSON 解析失败的兜底**——`DocumentClassificationWorkflow` 返回 `null` typeCode + 0 confidence，会触发 `RequestClassificationReview`，OK；`FieldExtractionWorkflow` 把字段全部置 null + log warning。审查时确认上游有可观测性，不要让"全失败"无声无息
 
 ### 2.5 不变量与边界
 
 - 🔴 **Workflow 直接修改 `Document` 状态**——Workflow 应当**返回值类型 outcome**，由 BackgroundJob / EventHandler 经 `DocumentPipelineRunManager` 统一更新聚合根。如果发现 Workflow 内部注入 `IDocumentRepository` 并写回 Document，是硬违规（破坏 CLAUDE.md "编排在 Application" 的约定）
-- 🔴 **业务字段写回到 `Document`**——`Document` 是纯基础设施聚合根，不允许放业务字段（合同金额、发票号、有效期等）。任何 workflow 输出试图把"租户字段抽取"结果回写到 `Document.X` 是硬违规；租户字段必须落在自己的 `TenantFieldValue` 之类聚合根里。参见 `abp-document-boundary-check` 技能
+- 🔴 **业务字段写回到 `Document` 顶层 typed 列**——`Document` 是纯基础设施聚合根，不允许放业务专属 typed 列（合同金额、发票号、有效期等独立 column 形态）。字段架构 v2 下租户字段抽取结果统一写入 `Document.TenantFields: Dictionary<string, JsonElement>?`（动态键 JSON 列），不破坏 Document 边界；Host 字段写入 `Document.HostExtractedFields` 同理。如果发现 workflow 试图为业务字段单加 Document 顶层 typed property，是硬违规。参见 `abp-document-boundary-check` 技能
 
 ### 2.6 成本与缓存
 
@@ -105,7 +104,7 @@ tools: Read, Grep, Glob, Bash
 
 - 🟡 **`_agent` 在构造函数中 new 出来**——`ChatClientAgent` 本身轻量，但它持有 `IChatClient` 引用。Workflow 是 `ITransientDependency`，每次都重建 agent，浪费但不致命。如果后续要把 prompt 做成可热更新的，agent 必须随之刷新
 - 🟡 **`session: null` 调用 `RunAsync`**——意味着每次调用都是无状态的，正确；后台流水线本就不需要"多轮对话"。如果将来引入 multi-turn（例如带 self-critique 的字段抽取），应该传持久化的 session
-- 🟢 **HostFieldExtractionWorkflow 直接调 `IChatClient.GetResponseAsync`**——绕过 ChatClientAgent，直接构造 `ChatMessage` 列表。这是合规的（agent 是便利封装，不是强制）；只要 prompt 走 PromptBoundary、输出走结构化约束即可
+- 🟢 **FieldExtractionWorkflow 直接调 `IChatClient.GetResponseAsync`**——绕过 ChatClientAgent，直接构造 `ChatMessage` 列表。这是合规的（agent 是便利封装，不是强制）；只要 prompt 走 PromptBoundary、输出走结构化约束即可
 
 ### 2.8 可观测性
 
@@ -113,7 +112,7 @@ tools: Read, Grep, Glob, Bash
   - 输入候选数 / 输入文本长度
   - LLM 响应 confidence 分布（用于离线分析模型漂移）
   - 解析失败/范围越界的次数
-- 🟢 **`HostFieldExtractionWorkflow` 已注入 `ILogger`**——非 JSON 输出、字段类型转换失败都已 log warning。新增 workflow 应参照此模式
+- 🟢 **`FieldExtractionWorkflow` 已注入 `ILogger`**——非 JSON 输出、字段类型转换失败都已 log warning。新增 workflow 应参照此模式
 
 ### 2.9 LLM 调用点的 fail-closed 安全门
 
@@ -138,7 +137,7 @@ tools: Read, Grep, Glob, Bash
 
 ### 2.10 字段抽取 Agent 不得携带 AIContextProviders
 
-**适用范围**：所有结构化字段抽取路径（`DocumentClassificationWorkflow`、`HostFieldExtractionWorkflow`、`TenantFieldExtractionEventHandler`，以及未来新增的字段抽取 workflow / agent）。
+**适用范围**：所有结构化字段抽取路径（`DocumentClassificationWorkflow`、`FieldExtractionWorkflow` + `FieldExtractionEventHandler`，以及未来新增的字段抽取 workflow / agent）。
 
 **判定**：
 

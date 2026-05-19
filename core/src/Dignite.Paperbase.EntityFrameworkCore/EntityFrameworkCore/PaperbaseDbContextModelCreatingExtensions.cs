@@ -1,5 +1,9 @@
+using System.Collections.Generic;
+using System.Text.Json;
 using Dignite.Paperbase.Documents;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Volo.Abp;
 using Volo.Abp.EntityFrameworkCore.Modeling;
 
@@ -7,6 +11,22 @@ namespace Dignite.Paperbase.EntityFrameworkCore;
 
 public static class PaperbaseDbContextModelCreatingExtensions
 {
+    // EF Core 10 SQL Server provider 暂未原生支持 Dictionary<string, JsonElement> ↔ json 列直接映射
+    // （会抛 "could not be mapped to the database type 'json'" 异常）。用 ValueConverter
+    // 显式把 Dictionary 序列化为 JSON 字符串，存储到 native json 列上——数据 round-trip 工作；
+    // LINQ 翻译能力受限（动态键查询要走 EF.Functions.JsonValue / JsonContains 而非
+    // d.ExtractedFields["x"]），与 plans/synthetic-leaping-kite.md 5.5.1 PoC #179 验证结果一致。
+    private static readonly ValueConverter<Dictionary<string, JsonElement>?, string?> ExtractedFieldsConverter =
+        new(
+            v => v == null ? null : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+            v => string.IsNullOrEmpty(v) ? null : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(v, (JsonSerializerOptions?)null));
+
+    private static readonly ValueComparer<Dictionary<string, JsonElement>?> ExtractedFieldsComparer =
+        new(
+            (a, b) => JsonSerializer.Serialize(a, (JsonSerializerOptions?)null) == JsonSerializer.Serialize(b, (JsonSerializerOptions?)null),
+            v => v == null ? 0 : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null).GetHashCode(),
+            v => v == null ? null : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(v, (JsonSerializerOptions?)null), (JsonSerializerOptions?)null));
+
     public static void ConfigurePaperbase(this ModelBuilder builder)
     {
         Check.NotNull(builder, nameof(builder));
@@ -23,8 +43,20 @@ public static class PaperbaseDbContextModelCreatingExtensions
             b.Property(x => x.ReviewStatus).IsRequired();
             b.Property(x => x.ClassificationReason);
             b.Property(x => x.Markdown);
-            b.Property(x => x.SystemFieldsJson);
             b.Property(x => x.Title).HasMaxLength(DocumentConsts.MaxTitleLength);
+
+            // 字段架构 v2：系统通用字段平铺顶层 typed columns —— 真 pipeline 自动产物
+            b.Property(x => x.Language).HasMaxLength(DocumentConsts.MaxLanguageLength);
+            b.Property(x => x.OcrConfidence);
+
+            // 字段架构 v2：ExtractedFields 是动态 schema (Dictionary<string, JsonElement>)。
+            // ValueConverter 序列化为 JSON 字符串，存到 SQL Server 2025 native json 列；
+            // 旧 compat level 自动 fallback 到 nvarchar(max)。
+            // 解读 X：源由 Document.TenantId 决定（Host 文档用 Host 字段定义；租户文档用租户字段定义）；
+            // 两层 mutually exclusive 同一 Document 只有一层抽取结果，无分桶。
+            b.Property(x => x.ExtractedFields)
+                .HasColumnType("json")
+                .HasConversion(ExtractedFieldsConverter, ExtractedFieldsComparer);
 
             b.OwnsOne(x => x.FileOrigin, fo =>
             {
@@ -49,9 +81,6 @@ public static class PaperbaseDbContextModelCreatingExtensions
             b.HasIndex(x => x.ReviewStatus);
             b.HasIndex(x => x.DocumentTypeCode);
             b.HasIndex(x => x.CreationTime);
-
-            // 每租户范围内按文件字节级 SHA-256 唯一；NULLS NOT DISTINCT 让单租户场景下 (NULL, hash) 也能正确判重。
-            // 跨 owned-entity 索引 EF Core 不直接支持，由迁移文件用 raw SQL 创建唯一索引。
         });
 
         builder.Entity<DocumentPipelineRun>(b =>
@@ -62,68 +91,42 @@ public static class PaperbaseDbContextModelCreatingExtensions
             b.Property(x => x.PipelineCode).IsRequired().HasMaxLength(DocumentPipelineRunConsts.MaxPipelineCodeLength);
             b.Property(x => x.StatusMessage).HasMaxLength(DocumentPipelineRunConsts.MaxStatusMessageLength);
 
-            // 联合索引：(DocumentId, PipelineCode, AttemptNumber DESC)
             b.HasIndex(x => new { x.DocumentId, x.PipelineCode, x.AttemptNumber });
         });
 
-        builder.Entity<OutboxEvent>(b =>
+        builder.Entity<DocumentType>(b =>
         {
-            b.ToTable(PaperbaseDbProperties.DbTablePrefix + "OutboxEvents", PaperbaseDbProperties.DbSchema);
+            b.ToTable(PaperbaseDbProperties.DbTablePrefix + "DocumentTypes", PaperbaseDbProperties.DbSchema);
             b.ConfigureByConvention();
 
-            b.Property(x => x.EventType).IsRequired().HasMaxLength(OutboxEventConsts.MaxEventTypeLength);
-            b.Property(x => x.Status).IsRequired();
-            b.Property(x => x.ScheduledAt).IsRequired();
+            b.Property(x => x.TypeCode).IsRequired().HasMaxLength(DocumentTypeConsts.MaxTypeCodeLength);
+            b.Property(x => x.DisplayName).IsRequired().HasMaxLength(DocumentTypeConsts.MaxDisplayNameLength);
+            b.Property(x => x.ConfidenceThreshold).IsRequired();
+            b.Property(x => x.Priority).IsRequired();
 
-            // 去重 key：(TenantId, DocumentId, EventType)。OutboxEventManager 通过此索引快速查找现有记录。
-            // 唯一索引 + 软删除过滤：同一 key 只允许一条 live 记录（语义去重的存储基础）。
-            //
-            // <strong>已知限制 — host (single-tenant) deployment</strong>：
-            // SQL standard 下 NULL 不等于 NULL，所以两条 (TenantId=NULL, DocumentId=X, EventType=Y)
-            // 的行都能 insert 成功。host 单租户场景下 DB 级唯一不强制；多租户部署（每条都有非空 TenantId）
-            // 完全受保护。应用层 OutboxEventManager.PublishAsync 内的 FindByKeyAsync 是单租户的兜底
-            // 保护，覆盖串行场景；罕见的并发竞争由 ABP 的 DbUpdateException → 上游重试覆盖。
-            b.HasIndex(x => new { x.TenantId, x.DocumentId, x.EventType })
+            // 唯一约束：(TenantId, TypeCode)；Host (TenantId IS NULL) 和租户私有可共用相同 TypeCode
+            // （但建议租户用 "tenant." 前缀避免歧义）。软删过滤。
+            b.HasIndex(x => new { x.TenantId, x.TypeCode })
                 .IsUnique()
                 .HasFilter("IsDeleted = 0");
-
-            // 二级索引：扫描 InFlight 事件供后台 worker 检查/重发（如果以后需要）。
-            b.HasIndex(x => new { x.Status, x.ScheduledAt });
         });
 
-        builder.Entity<TenantFieldDefinition>(b =>
+        builder.Entity<FieldDefinition>(b =>
         {
-            b.ToTable(PaperbaseDbProperties.DbTablePrefix + "TenantFieldDefinitions", PaperbaseDbProperties.DbSchema);
+            b.ToTable(PaperbaseDbProperties.DbTablePrefix + "FieldDefinitions", PaperbaseDbProperties.DbSchema);
             b.ConfigureByConvention();
 
-            b.Property(x => x.DocumentTypeCode).IsRequired().HasMaxLength(TenantFieldConsts.MaxDocumentTypeCodeLength);
-            b.Property(x => x.Name).IsRequired().HasMaxLength(TenantFieldConsts.MaxNameLength);
-            b.Property(x => x.Prompt).IsRequired().HasMaxLength(TenantFieldConsts.MaxPromptLength);
+            b.Property(x => x.DocumentTypeCode).IsRequired().HasMaxLength(FieldDefinitionConsts.MaxDocumentTypeCodeLength);
+            b.Property(x => x.Name).IsRequired().HasMaxLength(FieldDefinitionConsts.MaxNameLength);
+            b.Property(x => x.Prompt).IsRequired().HasMaxLength(FieldDefinitionConsts.MaxPromptLength);
             b.Property(x => x.DataType).IsRequired();
 
-            // 唯一索引：每租户每类型下字段名唯一。软删除过滤；NULL-tenant 限制同 OutboxEvent。
+            // 唯一约束：每租户每类型下字段名唯一
             b.HasIndex(x => new { x.TenantId, x.DocumentTypeCode, x.Name })
                 .IsUnique()
                 .HasFilter("IsDeleted = 0");
 
             b.HasIndex(x => new { x.TenantId, x.DocumentTypeCode });
-        });
-
-        builder.Entity<DocumentTenantField>(b =>
-        {
-            b.ToTable(PaperbaseDbProperties.DbTablePrefix + "DocumentTenantFields", PaperbaseDbProperties.DbSchema);
-            b.ConfigureByConvention();
-
-            b.Property(x => x.FieldName).IsRequired().HasMaxLength(TenantFieldConsts.MaxNameLength);
-            b.Property(x => x.Value).HasMaxLength(TenantFieldConsts.MaxValueLength);
-
-            // 唯一索引：每文档每字段名一行
-            b.HasIndex(x => new { x.TenantId, x.DocumentId, x.FieldName })
-                .IsUnique()
-                .HasFilter("IsDeleted = 0");
-
-            // keyword 搜索常用维度：值 + 字段名
-            b.HasIndex(x => new { x.TenantId, x.FieldName });
         });
     }
 }

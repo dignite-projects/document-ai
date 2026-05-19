@@ -10,35 +10,32 @@ using Volo.Abp.EntityFrameworkCore;
 
 namespace Dignite.Paperbase.Documents;
 
-public class EfCoreTenantFieldDefinitionRepository
-    : EfCoreRepository<PaperbaseDbContext, TenantFieldDefinition, Guid>, ITenantFieldDefinitionRepository
+public class EfCoreDocumentTypeRepository
+    : EfCoreRepository<PaperbaseDbContext, DocumentType, Guid>, IDocumentTypeRepository
 {
-    public EfCoreTenantFieldDefinitionRepository(IDbContextProvider<PaperbaseDbContext> dbContextProvider)
+    public EfCoreDocumentTypeRepository(IDbContextProvider<PaperbaseDbContext> dbContextProvider)
         : base(dbContextProvider) { }
 
-    public async Task<List<TenantFieldDefinition>> GetByDocumentTypeAsync(
+    public async Task<List<DocumentType>> GetVisibleAsync(
         Guid? tenantId,
-        string documentTypeCode,
         CancellationToken cancellationToken = default)
     {
         var dbSet = await GetDbSetAsync();
         return await dbSet
-            .Where(f => f.TenantId == tenantId && f.DocumentTypeCode == documentTypeCode)
-            .OrderBy(f => f.DisplayOrder)
+            .Where(t => t.TenantId == null || t.TenantId == tenantId)
+            .OrderByDescending(t => t.Priority)
+            .ThenBy(t => t.TypeCode)
             .ToListAsync(GetCancellationToken(cancellationToken));
     }
 
-    public async Task<TenantFieldDefinition?> FindByNameAsync(
+    public async Task<DocumentType?> FindByTypeCodeAsync(
         Guid? tenantId,
-        string documentTypeCode,
-        string name,
+        string typeCode,
         CancellationToken cancellationToken = default)
     {
         var dbSet = await GetDbSetAsync();
         return await dbSet.FirstOrDefaultAsync(
-            f => f.TenantId == tenantId
-              && f.DocumentTypeCode == documentTypeCode
-              && f.Name == name,
+            t => (t.TenantId == null || t.TenantId == tenantId) && t.TypeCode == typeCode,
             GetCancellationToken(cancellationToken));
     }
 }

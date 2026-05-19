@@ -9,13 +9,11 @@ using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Documents.Pipelines.Classification;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Shouldly;
 using Volo.Abp.BackgroundJobs;
 using Volo.Abp.EventBus.Distributed;
-using Volo.Abp.Localization;
 using Volo.Abp.Modularity;
 using Xunit;
 
@@ -27,27 +25,32 @@ public class DocumentClassificationJobTestModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
-        context.Services.AddSingleton(Substitute.For<IOutboxEventRepository>());
         context.Services.AddSingleton(Substitute.For<IDistributedEventBus>());
         context.Services.AddSingleton(Substitute.For<IBackgroundJobManager>());
+
+        // 字段架构 v2：候选集来自 IDocumentTypeRepository（DB），不再从 DocumentTypeOptions 进程内读
+        var contractType = new DocumentType(
+            Guid.NewGuid(),
+            tenantId: null,
+            typeCode: "contract.general",
+            displayName: "合同",
+            confidenceThreshold: 0.75,
+            priority: 0);
+
+        var typeRepo = Substitute.For<IDocumentTypeRepository>();
+        typeRepo.GetVisibleAsync(Arg.Any<Guid?>(), Arg.Any<CancellationToken>())
+            .Returns(new List<DocumentType> { contractType });
+        typeRepo.FindByTypeCodeAsync(Arg.Any<Guid?>(), "contract.general", Arg.Any<CancellationToken>())
+            .Returns(contractType);
+        typeRepo.FindByTypeCodeAsync(Arg.Any<Guid?>(), Arg.Is<string>(s => s != "contract.general"), Arg.Any<CancellationToken>())
+            .Returns((DocumentType?)null);
+        context.Services.AddSingleton(typeRepo);
 
         var workflow = Substitute.ForPartsOf<DocumentClassificationWorkflow>(
             Substitute.For<IChatClient>(),
             Options.Create(new PaperbaseAIBehaviorOptions()),
-            new DefaultPromptProvider(),
-            Substitute.For<IStringLocalizerFactory>());
+            new DefaultPromptProvider());
         context.Services.AddSingleton(workflow);
-
-        // 注册一个合同类型，阈值 0.75；DisplayName 用 FixedLocalizableString 避免测试依赖资源注册。
-        context.Services.Configure<DocumentTypeOptions>(opts =>
-        {
-            opts.Register(new DocumentTypeDefinition(
-                "contract.general",
-                new FixedLocalizableString("合同"))
-            {
-                ConfidenceThreshold = 0.75
-            });
-        });
 
         context.Services.Configure<PaperbaseAIBehaviorOptions>(_ => { });
     }
@@ -82,29 +85,26 @@ public class DocumentClassificationBackgroundJob_Tests
 
         _workflow
             .RunAsync(
-                Arg.Any<IReadOnlyList<DocumentTypeDefinition>>(),
+                Arg.Any<IReadOnlyList<DocumentType>>(),
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>())
             .Returns(new DocumentClassificationOutcome
             {
                 TypeCode = "contract.general",
-                ConfidenceScore = 0.92,   // 超过阈值 0.75
+                ConfidenceScore = 0.92,
                 Reason = "Contains contract keywords"
             });
 
         await _job.ExecuteAsync(new DocumentClassificationJobArgs { DocumentId = doc.Id });
 
-        // PipelineRun 以 Succeeded 完成
         var run = doc.GetLatestRun(PaperbasePipelines.Classification);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
-        // Document 的 TypeCode/ClassificationConfidence 已写入，ReviewStatus 重置为 None
         doc.DocumentTypeCode.ShouldBe("contract.general");
         doc.ClassificationConfidence.ShouldBe(0.92);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.None);
 
-        // 发布了 DocumentClassifiedEto
         await _eventBus.Received(1).PublishAsync(
             Arg.Is<DocumentClassifiedEto>(e =>
                 e.DocumentId == doc.Id &&
@@ -121,13 +121,13 @@ public class DocumentClassificationBackgroundJob_Tests
 
         _workflow
             .RunAsync(
-                Arg.Any<IReadOnlyList<DocumentTypeDefinition>>(),
+                Arg.Any<IReadOnlyList<DocumentType>>(),
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>())
             .Returns(new DocumentClassificationOutcome
             {
                 TypeCode = "contract.general",
-                ConfidenceScore = 0.50,   // 低于阈值 0.75
+                ConfidenceScore = 0.50,
                 Reason = "Low confidence"
             });
 
@@ -153,7 +153,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         _workflow
             .RunAsync(
-                Arg.Any<IReadOnlyList<DocumentTypeDefinition>>(),
+                Arg.Any<IReadOnlyList<DocumentType>>(),
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>())
             .Returns(new DocumentClassificationOutcome
@@ -174,18 +174,18 @@ public class DocumentClassificationBackgroundJob_Tests
     [Fact]
     public async Task UnregisteredTypeCode_Marks_PendingReview_Without_Polluting_Document()
     {
-        // LLM 幻觉：返回一个不在 DocumentTypeOptions 注册表中的 TypeCode
+        // LLM 幻觉：返回一个不在 DocumentType 注册表中的 TypeCode
         var doc = CreateDocument("Some document text.");
         SetupDocumentRepository(doc);
 
         _workflow
             .RunAsync(
-                Arg.Any<IReadOnlyList<DocumentTypeDefinition>>(),
+                Arg.Any<IReadOnlyList<DocumentType>>(),
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>())
             .Returns(new DocumentClassificationOutcome
             {
-                TypeCode = "invoice.general",   // 未注册——白名单不应放行
+                TypeCode = "invoice.general",
                 ConfidenceScore = 0.95,
                 Reason = "LLM hallucinated an unknown type"
             });
@@ -212,7 +212,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         _workflow
             .RunAsync(
-                Arg.Any<IReadOnlyList<DocumentTypeDefinition>>(),
+                Arg.Any<IReadOnlyList<DocumentType>>(),
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>())
             .Returns<DocumentClassificationOutcome>(_ => throw new TimeoutException("AI service timeout"));
@@ -231,14 +231,12 @@ public class DocumentClassificationBackgroundJob_Tests
     [Fact]
     public async Task JsonException_Routes_To_PendingReview()
     {
-        // Schema 漂移类异常不可重试——再调一次 LLM 大概率还是同样的坏输出。
-        // 直接走 PendingReview，由人工确认；ExecuteAsync 不重抛，避免空耗重试 quota。
         var doc = CreateDocument("業務委託契約書。甲：A社。乙：B社。");
         SetupDocumentRepository(doc);
 
         _workflow
             .RunAsync(
-                Arg.Any<IReadOnlyList<DocumentTypeDefinition>>(),
+                Arg.Any<IReadOnlyList<DocumentType>>(),
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>())
             .Returns<DocumentClassificationOutcome>(_ => throw new JsonException("schema mismatch: missing required field"));
@@ -268,7 +266,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         _workflow
             .RunAsync(
-                Arg.Any<IReadOnlyList<DocumentTypeDefinition>>(),
+                Arg.Any<IReadOnlyList<DocumentType>>(),
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>())
             .Returns<DocumentClassificationOutcome>(_ => throw outer);
@@ -281,8 +279,6 @@ public class DocumentClassificationBackgroundJob_Tests
         await _eventBus.DidNotReceive().PublishAsync(
             Arg.Any<DocumentClassifiedEto>(), Arg.Any<bool>());
     }
-
-    // ── helpers ────────────────────────────────────────────────────────────
 
     private void SetupDocumentRepository(Document doc)
     {

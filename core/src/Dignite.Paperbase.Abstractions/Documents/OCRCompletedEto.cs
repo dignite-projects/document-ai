@@ -17,9 +17,16 @@ public class OCRCompletedEto
     public Guid? TenantId { get; set; }
 
     /// <summary>
-    /// OCR 置信度（0.0 - 1.0）。仅 OCR 路径有意义；数字版抽取此值通常 = 1.0。
+    /// 事件发生时间。下游消费方按 <c>(DocumentId, EventType, EventTime)</c> 做幂等。
     /// </summary>
-    public double OcrConfidence { get; set; }
+    public DateTime EventTime { get; set; }
+
+    /// <summary>
+    /// OCR 置信度（0.0 - 1.0）。仅 OCR 路径有值（<see cref="UsedOcr"/> = true）；
+    /// 数字版抽取无 OCR 概念，此值为 <c>null</c>。下游应当依赖 <see cref="UsedOcr"/>
+    /// 区分路径，而非把 null 当 1.0 处理。
+    /// </summary>
+    public double? OcrConfidence { get; set; }
 
     /// <summary>
     /// 是否实际走了 OCR 路径（true = 图像 OCR；false = 数字版直接抽取）。

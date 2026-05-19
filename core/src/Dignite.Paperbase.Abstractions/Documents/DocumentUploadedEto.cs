@@ -16,6 +16,14 @@ public class DocumentUploadedEto
 
     public Guid? TenantId { get; set; }
 
+    /// <summary>
+    /// 事件发生时间——Paperbase 在 publish 时填入 <see cref="Volo.Abp.Timing.IClock.Now"/>。
+    /// 下游消费方按 <c>(DocumentId, EventType, EventTime)</c> 做幂等：
+    /// 同一 key 下若已处理过更晚的 EventTime，则丢弃。
+    /// 配合 ABP 内置 transactional outbox 的 at-least-once 投递使用。
+    /// </summary>
+    public DateTime EventTime { get; set; }
+
     public string? FileName { get; set; }
 
     public long FileSize { get; set; }

@@ -29,8 +29,9 @@ public interface IDocumentAppService : IApplicationService
     /// <summary>
     /// 操作员主动修正分类——任意状态下都允许覆写到新类型。
     /// 行为：写入 DocumentTypeCode/ReviewStatus=Reviewed/Confidence=1.0，发布
-    /// <see cref="Abstractions.Documents.DocumentClassifiedEto"/>（经 OutboxEventManager 去重）。
-    /// 下游业务消费方可订阅 DocumentClassifiedEto 来重跑各自的字段抽取。
+    /// <see cref="Abstractions.Documents.DocumentClassifiedEto"/>（经 ABP transactional outbox 投递）。
+    /// 下游业务消费方可订阅 DocumentClassifiedEto 来重跑各自的字段抽取——按
+    /// <c>(DocumentId, EventType, EventTime)</c> 自行幂等以处理 at-least-once 重投。
     /// </summary>
     Task<DocumentDto> ReclassifyAsync(Guid id, ReclassifyDocumentInput input);
 

@@ -41,15 +41,18 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
         var operation = await client.AnalyzeDocumentAsync(WaitUntil.Completed, analyzeOptions);
         var analyzeResult = operation.Value;
 
-        // Confidence: page.Lines 命中 Spans 视为高置信，否则给 0.9 兜底；整体取均值。
+        // Confidence: page.Words[*].Confidence 是 Azure DI 真实给的字符级 softmax 评分，
+        // 取所有词的均值作为整体识别置信度。DocumentLine 自身不携带 confidence，
+        // 早期实现按 Spans 命中兜底成 0.9/1.0 是假评分，会让门槛检查事实上变成 no-op——
+        // 现已切回 SDK 真实字段。
         double totalConfidence = 0;
-        int lineCount = 0;
+        int wordCount = 0;
         foreach (var page in analyzeResult.Pages ?? [])
         {
-            foreach (var line in page.Lines ?? [])
+            foreach (var word in page.Words ?? [])
             {
-                totalConfidence += line.Spans?.Any() == true ? 1.0 : 0.9;
-                lineCount++;
+                totalConfidence += word.Confidence;
+                wordCount++;
             }
         }
 
@@ -68,7 +71,7 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
         return new OcrResult
         {
             Markdown = markdown ?? string.Empty,
-            Confidence = lineCount > 0 ? totalConfidence / lineCount : 0,
+            Confidence = wordCount > 0 ? totalConfidence / wordCount : 0,
             DetectedLanguage = analyzeResult.Languages?.FirstOrDefault()?.Locale,
             PageCount = analyzeResult.Pages?.Count ?? 0
         };

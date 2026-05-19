@@ -68,11 +68,18 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("ExtraProperties");
 
+                    b.Property<string>("ExtractedFields")
+                        .HasColumnType("json");
+
                     b.Property<bool>("IsDeleted")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(false)
                         .HasColumnName("IsDeleted");
+
+                    b.Property<string>("Language")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<DateTime?>("LastModificationTime")
                         .HasColumnType("datetime2")
@@ -88,6 +95,9 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.Property<string>("Markdown")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<double?>("OcrConfidence")
+                        .HasColumnType("float");
+
                     b.Property<string>("OriginalFileBlobName")
                         .IsRequired()
                         .HasMaxLength(512)
@@ -98,9 +108,6 @@ namespace Dignite.Paperbase.Host.Migrations
 
                     b.Property<int>("SourceType")
                         .HasColumnType("int");
-
-                    b.Property<string>("SystemFieldsJson")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<Guid?>("TenantId")
                         .HasColumnType("uniqueidentifier")
@@ -169,13 +176,20 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.ToTable("PaperbaseDocumentPipelineRuns", (string)null);
                 });
 
-            modelBuilder.Entity("Dignite.Paperbase.Documents.DocumentTenantField", b =>
+            modelBuilder.Entity("Dignite.Paperbase.Documents.DocumentType", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<double?>("Confidence")
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<double>("ConfidenceThreshold")
                         .HasColumnType("float");
 
                     b.Property<DateTime>("CreationTime")
@@ -194,83 +208,7 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("DeletionTime");
 
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("FieldName")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false)
-                        .HasColumnName("IsDeleted");
-
-                    b.Property<DateTime?>("LastModificationTime")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("LastModificationTime");
-
-                    b.Property<Guid?>("LastModifierId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("LastModifierId");
-
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("TenantId");
-
-                    b.Property<string>("Value")
-                        .HasMaxLength(2048)
-                        .HasColumnType("nvarchar(2048)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "FieldName");
-
-                    b.HasIndex("TenantId", "DocumentId", "FieldName")
-                        .IsUnique()
-                        .HasFilter("IsDeleted = 0");
-
-                    b.ToTable("PaperbaseDocumentTenantFields", (string)null);
-                });
-
-            modelBuilder.Entity("Dignite.Paperbase.Documents.OutboxEvent", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ConcurrencyStamp")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("nvarchar(40)")
-                        .HasColumnName("ConcurrencyStamp");
-
-                    b.Property<DateTime?>("ConsumedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("CreationTime")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("CreationTime");
-
-                    b.Property<Guid?>("CreatorId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("CreatorId");
-
-                    b.Property<Guid?>("DeleterId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("DeleterId");
-
-                    b.Property<DateTime?>("DeletionTime")
-                        .HasColumnType("datetime2")
-                        .HasColumnName("DeletionTime");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("EventType")
+                    b.Property<string>("DisplayName")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
@@ -294,28 +232,28 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("LastModifierId");
 
-                    b.Property<DateTime>("ScheduledAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("Status")
+                    b.Property<int>("Priority")
                         .HasColumnType("int");
 
                     b.Property<Guid?>("TenantId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("TenantId");
 
+                    b.Property<string>("TypeCode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("Status", "ScheduledAt");
-
-                    b.HasIndex("TenantId", "DocumentId", "EventType")
+                    b.HasIndex("TenantId", "TypeCode")
                         .IsUnique()
                         .HasFilter("IsDeleted = 0");
 
-                    b.ToTable("PaperbaseOutboxEvents", (string)null);
+                    b.ToTable("PaperbaseDocumentTypes", (string)null);
                 });
 
-            modelBuilder.Entity("Dignite.Paperbase.Documents.TenantFieldDefinition", b =>
+            modelBuilder.Entity("Dignite.Paperbase.Documents.FieldDefinition", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -399,7 +337,7 @@ namespace Dignite.Paperbase.Host.Migrations
                         .IsUnique()
                         .HasFilter("IsDeleted = 0");
 
-                    b.ToTable("PaperbaseTenantFieldDefinitions", (string)null);
+                    b.ToTable("PaperbaseFieldDefinitions", (string)null);
                 });
 
             modelBuilder.Entity("Volo.Abp.AuditLogging.AuditLog", b =>
@@ -755,6 +693,84 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.HasIndex("IsAbandoned", "NextTryTime");
 
                     b.ToTable("AbpBackgroundJobs", (string)null);
+                });
+
+            modelBuilder.Entity("Volo.Abp.EntityFrameworkCore.DistributedEvents.IncomingEventRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<byte[]>("EventData")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<DateTime?>("HandledTime")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("MessageId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTime?>("NextRetryTime")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("Status", "CreationTime");
+
+                    b.ToTable("AbpEventInbox", (string)null);
+                });
+
+            modelBuilder.Entity("Volo.Abp.EntityFrameworkCore.DistributedEvents.OutgoingEventRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<byte[]>("EventData")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("ExtraProperties");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreationTime");
+
+                    b.ToTable("AbpEventOutbox", (string)null);
                 });
 
             modelBuilder.Entity("Volo.Abp.FeatureManagement.FeatureDefinitionRecord", b =>

@@ -56,7 +56,8 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
 
         result.Markdown.ShouldContain("Hello World");
         result.UsedOcr.ShouldBeFalse();
-        result.Confidence.ShouldBe(1.0);
+        // 数字版抽取无 OCR 概念——Confidence 为 null，不应兜底成 1.0。
+        result.Confidence.ShouldBeNull();
     }
 
     [Fact]

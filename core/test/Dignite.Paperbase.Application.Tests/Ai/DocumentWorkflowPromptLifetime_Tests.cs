@@ -1,16 +1,14 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Dignite.Paperbase.Abstractions.Documents;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents.Pipelines.Classification;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Shouldly;
-using Volo.Abp.Localization;
 using Xunit;
 
 namespace Dignite.Paperbase.Documents;
@@ -35,11 +33,10 @@ public class DocumentWorkflowPromptLifetime_Tests
         var workflow = new DocumentClassificationWorkflow(
             inner,
             Options.Create(new PaperbaseAIBehaviorOptions()),
-            promptProvider,
-            Substitute.For<IStringLocalizerFactory>());
+            promptProvider);
 
-        var types = new List<DocumentTypeDefinition>
-            { new DocumentTypeDefinition("contract.general", new FixedLocalizableString("合同")) };
+        var types = new List<DocumentType>
+            { new DocumentType(Guid.NewGuid(), null, "contract.general", "合同") };
 
         await workflow.RunAsync(types, "text one");
         await workflow.RunAsync(types, "text two");
@@ -63,11 +60,10 @@ public class DocumentWorkflowPromptLifetime_Tests
         var workflow = new DocumentClassificationWorkflow(
             inner,
             Options.Create(new PaperbaseAIBehaviorOptions()),
-            promptProvider,
-            Substitute.For<IStringLocalizerFactory>());
+            promptProvider);
 
-        var types = new List<DocumentTypeDefinition>
-            { new DocumentTypeDefinition("contract.general", new FixedLocalizableString("合同")) };
+        var types = new List<DocumentType>
+            { new DocumentType(Guid.NewGuid(), null, "contract.general", "合同") };
 
         await workflow.RunAsync(types, "text");
         await workflow.RunAsync(types, "text");

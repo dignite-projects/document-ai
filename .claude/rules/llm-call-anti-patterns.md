@@ -2,7 +2,7 @@
 
 本文件由 `maf-workflow-reviewer` agent 在审查 PR 时引用，用于快速定位 Paperbase 内部 **LLM 调用点**的两类典型错误。规则适用于所有 LLM 入口：
 
-- 当前已落地：`DocumentClassificationWorkflow` / `HostFieldExtractionWorkflow` / `TenantFieldExtractionEventHandler` / `DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync`
+- 当前已落地：`DocumentClassificationWorkflow` / `FieldExtractionWorkflow` + `FieldExtractionEventHandler`（字段架构 v2 统一 Host + 租户 (B 机制)）/ `DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync`
 - 未来扩展：MCP server tool（[#170](https://github.com/dignite-projects/dignite-paperbase/issues/170)）、Webhook 触发的 LLM 路径、任何由 LLM 输出影响参数的查询路径
 
 所有示例均为**伪代码**，不可编译，仅用于说明意图。
@@ -47,7 +47,7 @@ var run = await agent.RunAsync<HostFieldExtractionResult>(markdown);
 return run.Result ?? new HostFieldExtractionResult();
 ```
 
-或者像当前 `HostFieldExtractionWorkflow` 那样直接调 `IChatClient.GetResponseAsync`，绕过 agent 封装：
+或者像当前 `FieldExtractionWorkflow` 那样直接调 `IChatClient.GetResponseAsync`，绕过 agent 封装：
 
 ```csharp
 // 正确：直接构造 ChatMessage 列表，无 AIContextProvider 干扰
@@ -62,7 +62,7 @@ var response = await _chatClient.GetResponseAsync(messages, options, cancellatio
 
 **参照实现**：
 - `core/src/Dignite.Paperbase.Application/Documents/Pipelines/Classification/DocumentClassificationWorkflow.cs`
-- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/HostFieldExtractionWorkflow.cs`
+- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/FieldExtractionWorkflow.cs`
 
 ---
 

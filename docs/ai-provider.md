@@ -35,7 +35,7 @@ The only capability Paperbase's backend LLM calls need is **structured JSON outp
 
 | Capability | Where it's used | Failure mode if weak |
 |---|---|---|
-| Structured JSON output (`response_format: json_schema` or `json_object`) | `DocumentClassificationWorkflow` (via MAF `RunAsync<T>` + schema-bound `T`), `HostFieldExtractionWorkflow` (via `ChatResponseFormat.Json` + per-field prompt), tenant field extraction (B 机制) | Returns malformed JSON or violates schema → classification falls back to `(unclassified)`, fields write as `null`, document routes to manual review |
+| Structured JSON output (`response_format: json_schema` or `json_object`) | `DocumentClassificationWorkflow` (via MAF `RunAsync<T>` + schema-bound `T`), `FieldExtractionWorkflow` (via `ChatResponseFormat.Json` + per-field prompt, covers both Host 字段 and 租户字段 (B 机制)) | Returns malformed JSON or violates schema → classification falls back to `(unclassified)`, fields write as `null`, document routes to manual review |
 
 That's it. Function calling, tool-call willingness, large-context RAG, multi-turn coherence — none of those matter here because Paperbase has no Chat / RAG path. Even small open-source models (Qwen3-8B class) usually comply when the prompt explicitly demands a JSON object.
 
@@ -57,21 +57,20 @@ For **production**, prefer a model that's strict about schema compliance. Models
 | DI key | Consumed by | Why this exists separately |
 |---|---|---|
 | `PaperbaseAIConsts.TitleGeneratorChatClientKey` | `DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync` (auto-generates a short document title from extracted Markdown) | Single-shot text completion, no schema. Different model id lets hosts run a cheaper / faster model here without affecting classification / extraction quality |
-| `PaperbaseAIConsts.StructuredChatClientKey` | `DocumentClassificationWorkflow`, `HostFieldExtractionWorkflow`, `TenantFieldExtractionEventHandler` (B 机制) | All schema-bound `RunAsync<T>` / `ChatResponseFormat.Json` calls share this client. Splitting structured from title lets production teams tune quality vs cost per workload |
+| `PaperbaseAIConsts.StructuredChatClientKey` | `DocumentClassificationWorkflow`, `FieldExtractionWorkflow` (unified Host + 租户字段 (B 机制) entry, called by `FieldExtractionEventHandler`) | All schema-bound `RunAsync<T>` / `ChatResponseFormat.Json` calls share this client. Splitting structured from title lets production teams tune quality vs cost per workload |
 
 Both clients are registered with `UseOpenTelemetry()` + `UseLogging()`. Neither has `UseFunctionInvocation` (no tool calling anywhere in Paperbase) or `UseDistributedCache` (every prompt is document-content-derived and therefore unique per call — cache lookups would always miss).
 
 > **Provider-switch gotcha**: When switching `Endpoint` to a non-OpenAI provider (SiliconFlow, Ollama via `/v1` shim, OpenRouter, etc.), override **all three** model id keys together in your environment-specific config — `ChatModelId` alone is not enough if the provider doesn't recognize the default `gpt-4o-mini` placeholder that may be inherited from base `appsettings.json`. The simplest fix: copy all three overrides into your `appsettings.Development.json` / `appsettings.Production.json` / env vars whenever you change `Endpoint`.
 
-To split further (e.g. a different model per workflow), add more per-purpose `AddKeyedChatClient` registrations in your own `ConfigureAI` override. The current consolidation puts classification + Host field extraction + tenant field extraction on the same key because their call shape is identical (schema-bound JSON); split them only when production telemetry shows a real per-task cost or quality reason.
+To split further (e.g. a different model per workflow), add more per-purpose `AddKeyedChatClient` registrations in your own `ConfigureAI` override. The current consolidation puts classification + 字段抽取 (Host + 租户合一) on the same key because their call shape is identical (schema-bound JSON); split them only when production telemetry shows a real per-task cost or quality reason.
 
 ## Where it is used
 
 | Caller | Keyed client |
 |---|---|
 | `Documents/Pipelines/Classification/DocumentClassificationWorkflow` | `StructuredChatClientKey` |
-| `Documents/Pipelines/FieldExtraction/HostFieldExtractionWorkflow` | `StructuredChatClientKey` |
-| `Documents/Pipelines/FieldExtraction/TenantFieldExtractionEventHandler` (B 机制) | `StructuredChatClientKey` |
+| `Documents/Pipelines/FieldExtraction/FieldExtractionWorkflow` (unified Host + 租户字段 (B 机制)) | `StructuredChatClientKey` |
 | `Documents/Pipelines/TextExtraction/DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync` | `TitleGeneratorChatClientKey` |
 
 A single `PaperbaseAI` block serves all of them. Picking different models per workflow is a host-level customization that replaces the registrations in `PaperbaseHostModule.ConfigureAI`.

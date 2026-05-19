@@ -42,7 +42,7 @@ public class ElBrunoMarkdownProvider : IMarkdownTextProvider, ITransientDependen
         return new TextExtractionResult
         {
             Markdown = conversion.Markdown ?? string.Empty,
-            Confidence = 1.0,
+            // Confidence 留空 (null)——数字版无 OCR 概念，塞 1.0 会让下游无法区分"未走 OCR"和"OCR 99% 真值"。
             PageCount = conversion.Metadata?.PageCount ?? 0,
             DetectedLanguage = null,
             UsedOcr = false,

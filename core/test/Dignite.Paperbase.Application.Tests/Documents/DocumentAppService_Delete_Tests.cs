@@ -23,7 +23,6 @@ public class DocumentAppServiceDeleteTestModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
-        context.Services.AddSingleton(Substitute.For<IOutboxEventRepository>());
         context.Services.AddSingleton(Substitute.For<IBlobContainer<PaperbaseDocumentContainer>>());
         context.Services.AddSingleton(Substitute.For<IBackgroundJobManager>());
         context.Services.AddSingleton(Substitute.For<IDistributedEventBus>());
@@ -68,7 +67,6 @@ public class DocumentAppService_Delete_Tests
 
         await _appService.DeleteAsync(doc.Id);
 
-        // OutboxEventManager 路由后实际通过 IDistributedEventBus 发出事件。
         await _distributedEventBus.Received(1).PublishAsync(
             Arg.Is<DocumentDeletedEto>(e =>
                 e.DocumentId == doc.Id &&

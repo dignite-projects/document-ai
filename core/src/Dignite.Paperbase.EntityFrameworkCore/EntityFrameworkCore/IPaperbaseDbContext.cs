@@ -10,7 +10,6 @@ public interface IPaperbaseDbContext : IEfCoreDbContext
 {
     DbSet<Document> Documents { get; }
     DbSet<DocumentPipelineRun> DocumentPipelineRuns { get; }
-    DbSet<OutboxEvent> OutboxEvents { get; }
-    DbSet<TenantFieldDefinition> TenantFieldDefinitions { get; }
-    DbSet<DocumentTenantField> DocumentTenantFields { get; }
+    DbSet<DocumentType> DocumentTypes { get; }
+    DbSet<FieldDefinition> FieldDefinitions { get; }
 }

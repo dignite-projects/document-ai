@@ -4,10 +4,10 @@ using Volo.Abp.Validation;
 
 namespace Dignite.Paperbase.Documents;
 
-public class UpdateTenantFieldDefinitionDto
+public class UpdateFieldDefinitionDto
 {
     [Required]
-    [DynamicStringLength(typeof(TenantFieldConsts), nameof(TenantFieldConsts.MaxPromptLength))]
+    [DynamicStringLength(typeof(FieldDefinitionConsts), nameof(FieldDefinitionConsts.MaxPromptLength))]
     public string Prompt { get; set; } = default!;
 
     public FieldDataType DataType { get; set; }

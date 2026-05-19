@@ -4,7 +4,7 @@ using Volo.Abp.Application.Dtos;
 
 namespace Dignite.Paperbase.Documents;
 
-public class TenantFieldDefinitionDto : EntityDto<Guid>
+public class FieldDefinitionDto : EntityDto<Guid>
 {
     public Guid? TenantId { get; set; }
     public string DocumentTypeCode { get; set; } = default!;

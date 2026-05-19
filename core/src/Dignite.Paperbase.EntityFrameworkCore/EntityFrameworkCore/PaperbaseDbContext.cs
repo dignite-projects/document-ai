@@ -10,9 +10,8 @@ public class PaperbaseDbContext : AbpDbContext<PaperbaseDbContext>, IPaperbaseDb
 {
     public DbSet<Document> Documents { get; set; }
     public DbSet<DocumentPipelineRun> DocumentPipelineRuns { get; set; }
-    public DbSet<OutboxEvent> OutboxEvents { get; set; }
-    public DbSet<TenantFieldDefinition> TenantFieldDefinitions { get; set; }
-    public DbSet<DocumentTenantField> DocumentTenantFields { get; set; }
+    public DbSet<DocumentType> DocumentTypes { get; set; }
+    public DbSet<FieldDefinition> FieldDefinitions { get; set; }
 
     public PaperbaseDbContext(DbContextOptions<PaperbaseDbContext> options)
         : base(options)

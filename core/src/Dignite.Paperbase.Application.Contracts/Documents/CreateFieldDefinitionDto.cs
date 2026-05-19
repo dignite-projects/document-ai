@@ -4,18 +4,18 @@ using Volo.Abp.Validation;
 
 namespace Dignite.Paperbase.Documents;
 
-public class CreateTenantFieldDefinitionDto
+public class CreateFieldDefinitionDto
 {
     [Required]
-    [DynamicStringLength(typeof(TenantFieldConsts), nameof(TenantFieldConsts.MaxDocumentTypeCodeLength))]
+    [DynamicStringLength(typeof(FieldDefinitionConsts), nameof(FieldDefinitionConsts.MaxDocumentTypeCodeLength))]
     public string DocumentTypeCode { get; set; } = default!;
 
     [Required]
-    [DynamicStringLength(typeof(TenantFieldConsts), nameof(TenantFieldConsts.MaxNameLength))]
+    [DynamicStringLength(typeof(FieldDefinitionConsts), nameof(FieldDefinitionConsts.MaxNameLength))]
     public string Name { get; set; } = default!;
 
     [Required]
-    [DynamicStringLength(typeof(TenantFieldConsts), nameof(TenantFieldConsts.MaxPromptLength))]
+    [DynamicStringLength(typeof(FieldDefinitionConsts), nameof(FieldDefinitionConsts.MaxPromptLength))]
     public string Prompt { get; set; } = default!;
 
     public FieldDataType DataType { get; set; } = FieldDataType.String;

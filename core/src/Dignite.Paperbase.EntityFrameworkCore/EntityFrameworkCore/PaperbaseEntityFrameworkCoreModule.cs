@@ -18,9 +18,8 @@ public class PaperbaseEntityFrameworkCoreModule : AbpModule
             options.AddDefaultRepositories();
 
             options.AddRepository<Document, EfCoreDocumentRepository>();
-            options.AddRepository<OutboxEvent, EfCoreOutboxEventRepository>();
-            options.AddRepository<TenantFieldDefinition, EfCoreTenantFieldDefinitionRepository>();
-            options.AddRepository<DocumentTenantField, EfCoreDocumentTenantFieldRepository>();
+            options.AddRepository<DocumentType, EfCoreDocumentTypeRepository>();
+            options.AddRepository<FieldDefinition, EfCoreFieldDefinitionRepository>();
         });
     }
 }
