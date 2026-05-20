@@ -17,6 +17,7 @@ using Volo.Abp.BackgroundJobs;
 using Volo.Abp.BlobStoring;
 using Volo.Abp.Guids;
 using Volo.Abp.Modularity;
+using Volo.Abp.Uow;
 using Xunit;
 
 namespace Dignite.Paperbase.EntityFrameworkCore.Documents;
@@ -51,6 +52,7 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
     private readonly IBlobContainer<PaperbaseDocumentContainer> _blobContainer;
     private readonly IBackgroundJobManager _backgroundJobManager;
     private readonly IGuidGenerator _guidGenerator;
+    private readonly IUnitOfWorkManager _unitOfWorkManager;
 
     public DocumentPipelineBackgroundJobPersistence_Tests()
     {
@@ -61,6 +63,7 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
         _blobContainer = GetRequiredService<IBlobContainer<PaperbaseDocumentContainer>>();
         _backgroundJobManager = GetRequiredService<IBackgroundJobManager>();
         _guidGenerator = GetRequiredService<IGuidGenerator>();
+        _unitOfWorkManager = GetRequiredService<IUnitOfWorkManager>();
     }
 
     [Fact]
@@ -84,13 +87,17 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
                 Arg.Any<Stream>(),
                 Arg.Any<TextExtractionContext>(),
                 Arg.Any<CancellationToken>())
-            .Returns(new TextExtractionResult
+            .Returns(_ =>
             {
-                Markdown = "# Contract\n\nThis is a contract.",
-                Confidence = 0.98,
-                DetectedLanguage = "en",
-                PageCount = 1,
-                UsedOcr = false
+                _unitOfWorkManager.Current.ShouldBeNull();
+                return new TextExtractionResult
+                {
+                    Markdown = "# Contract\n\nThis is a contract.",
+                    Confidence = 0.98,
+                    DetectedLanguage = "en",
+                    PageCount = 1,
+                    UsedOcr = false
+                };
             });
 
         await _textExtractionJob.ExecuteAsync(new DocumentTextExtractionJobArgs

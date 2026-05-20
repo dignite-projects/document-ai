@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Ocr;
 using Microsoft.Extensions.Options;
@@ -12,7 +13,7 @@ using Volo.Abp.DependencyInjection;
 
 namespace Dignite.Paperbase.Ocr.PaddleOcr;
 
-public class PaddleOcrProvider : IOcrProvider, ITransientDependency
+public class PaddleOcrProvider : IOcrProvider, IOcrProbeProvider, ITransientDependency
 {
     private readonly PaddleOcrOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -27,55 +28,138 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
 
     public virtual async Task<OcrResult> RecognizeAsync(Stream fileStream, OcrOptions options)
     {
-        var languages = options.LanguageHints.Count > 0
-            ? options.LanguageHints
-            : _options.Languages;
+        var modelName = ResolveModelName(options.OcrProfileCode);
+        var result = await SendAsync(
+            fileStream,
+            options.LanguageHints,
+            options.ContentType,
+            modelName,
+            options.OcrProfileCode,
+            maxPages: null,
+            cancellationToken: default);
 
-        using var ms = new MemoryStream();
-        await fileStream.CopyToAsync(ms);
-        var fileBytes = ms.ToArray();
-
-        using var content = new MultipartFormDataContent();
-        var fileContent = new ByteArrayContent(fileBytes);
-        if (!string.IsNullOrEmpty(options.ContentType))
-            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(options.ContentType);
-        content.Add(fileContent, "file", "document");
-        content.Add(new StringContent(string.Join(",", languages)), "languages");
-        content.Add(new StringContent(_options.ModelName), "model_name");
-
-        var client = _httpClientFactory.CreateClient(PaperbasePaddleOcrModule.HttpClientName);
-        var response = await client.PostAsync($"{_options.Endpoint.TrimEnd('/')}/ocr", content);
-        if (!response.IsSuccessStatusCode)
-        {
-            var errorBody = await response.Content.ReadAsStringAsync();
-            throw new HttpRequestException(
-                $"PaddleOCR server returned {(int)response.StatusCode} {response.ReasonPhrase}: {errorBody}",
-                inner: null,
-                statusCode: response.StatusCode);
-        }
-
-        var json = await response.Content.ReadAsStringAsync();
-        var result = JsonSerializer.Deserialize<PaddleOcrResponse>(json)
-            ?? throw new InvalidOperationException("PaddleOCR server returned an empty response.");
-
-        // Markdown-first：PP-StructureV3 / PaddleOCR-VL 模式返回结构化 Markdown；
-        // PP-OCRv4 等只返回 raw_text 的模式由 Provider 内部包成扁平 Markdown 段落，
-        // 不把 plain-text-to-markdown 翻译职责泄漏给上游 orchestrator。
-        var markdown = !string.IsNullOrEmpty(result.Markdown)
-            ? result.Markdown
-            : WrapParagraphs(result.RawText);
-
-        var confidence = result.Blocks is { Count: > 0 }
-            ? result.Blocks.Average(b => b.Confidence)
-            : 0;
+        var markdown = BuildMarkdown(result);
+        var confidence = CalculateConfidence(result);
 
         return new OcrResult
         {
             Markdown = markdown,
             Confidence = confidence,
             DetectedLanguage = result.DetectedLanguage,
-            PageCount = result.PageCount
+            PageCount = result.PageCount,
+            AppliedProfileCode = options.OcrProfileCode,
+            ProviderName = result.ProviderName ?? "PaddleOCR",
+            ProviderModelName = result.ProviderModelName ?? modelName,
+            ProviderVersion = result.ProviderVersion,
+            QualitySignals = OcrQualitySignalBuilder.FromMarkdown(markdown, confidence, result.PageCount)
         };
+    }
+
+    public virtual async Task<OcrProbeResult> ProbeAsync(
+        Stream fileStream,
+        OcrProbeOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        var modelName = ResolveModelName(options.RequestedOcrProfileCode);
+        var result = await SendAsync(
+            fileStream,
+            options.LanguageHints,
+            options.ContentType,
+            modelName,
+            options.RequestedOcrProfileCode,
+            options.MaxPages,
+            cancellationToken);
+
+        var markdown = BuildMarkdown(result);
+        var confidence = CalculateConfidence(result);
+
+        return new OcrProbeResult
+        {
+            Markdown = markdown,
+            Confidence = confidence,
+            DetectedLanguage = result.DetectedLanguage,
+            PageCount = result.PageCount,
+            ProviderName = result.ProviderName ?? "PaddleOCR",
+            ProviderModelName = result.ProviderModelName ?? modelName,
+            ProviderVersion = result.ProviderVersion,
+            QualitySignals = OcrQualitySignalBuilder.FromMarkdown(markdown, confidence, result.PageCount)
+        };
+    }
+
+    private async Task<PaddleOcrResponse> SendAsync(
+        Stream fileStream,
+        IList<string> languageHints,
+        string contentType,
+        string modelName,
+        string? ocrProfileCode,
+        int? maxPages,
+        CancellationToken cancellationToken)
+    {
+        var languages = languageHints.Count > 0
+            ? languageHints
+            : _options.Languages;
+
+        using var ms = new MemoryStream();
+        await fileStream.CopyToAsync(ms, cancellationToken);
+        var fileBytes = ms.ToArray();
+
+        using var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(fileBytes);
+        if (!string.IsNullOrEmpty(contentType))
+            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+        content.Add(fileContent, "file", "document");
+        content.Add(new StringContent(string.Join(",", languages)), "languages");
+        content.Add(new StringContent(modelName), "model_name");
+        if (!string.IsNullOrWhiteSpace(ocrProfileCode))
+            content.Add(new StringContent(ocrProfileCode), "ocr_profile_code");
+        if (maxPages is > 0)
+            content.Add(new StringContent(maxPages.Value.ToString()), "max_pages");
+
+        var client = _httpClientFactory.CreateClient(PaperbasePaddleOcrModule.HttpClientName);
+        var response = await client.PostAsync($"{_options.Endpoint.TrimEnd('/')}/ocr", content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException(
+                $"PaddleOCR server returned {(int)response.StatusCode} {response.ReasonPhrase}: {errorBody}",
+                inner: null,
+                statusCode: response.StatusCode);
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        return JsonSerializer.Deserialize<PaddleOcrResponse>(json)
+            ?? throw new InvalidOperationException("PaddleOCR server returned an empty response.");
+    }
+
+    private string ResolveModelName(string? profileCode)
+    {
+        var normalized = OcrProfileCodes.Normalize(profileCode);
+        if (normalized == OcrProfileCodes.Auto)
+        {
+            return _options.ModelName;
+        }
+
+        return _options.ProfileModelNames.TryGetValue(normalized, out var modelName) &&
+               !string.IsNullOrWhiteSpace(modelName)
+            ? modelName
+            : _options.ModelName;
+    }
+
+    private static string BuildMarkdown(PaddleOcrResponse result)
+    {
+        // Markdown-first：PP-StructureV3 / PaddleOCR-VL 模式返回结构化 Markdown；
+        // PP-OCRv4 等只返回 raw_text 的模式由 Provider 内部包成扁平 Markdown 段落，
+        // 不把 plain-text-to-markdown 翻译职责泄漏给上游 orchestrator。
+        return !string.IsNullOrEmpty(result.Markdown)
+            ? result.Markdown
+            : WrapParagraphs(result.RawText);
+    }
+
+    private static double CalculateConfidence(PaddleOcrResponse result)
+    {
+        return result.Blocks is { Count: > 0 }
+            ? result.Blocks.Average(b => b.Confidence)
+            : result.Confidence;
     }
 
     private static string WrapParagraphs(string? rawText)
@@ -112,6 +196,18 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
 
         [JsonPropertyName("page_count")]
         public int PageCount { get; set; }
+
+        [JsonPropertyName("confidence")]
+        public double Confidence { get; set; }
+
+        [JsonPropertyName("provider_name")]
+        public string? ProviderName { get; set; }
+
+        [JsonPropertyName("provider_model")]
+        public string? ProviderModelName { get; set; }
+
+        [JsonPropertyName("provider_version")]
+        public string? ProviderVersion { get; set; }
     }
 
     private sealed class PaddleOcrLineConfidence

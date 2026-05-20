@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Azure;
 using Azure.AI.DocumentIntelligence;
@@ -10,7 +11,7 @@ using Volo.Abp.DependencyInjection;
 
 namespace Dignite.Paperbase.Ocr.AzureDocumentIntelligence;
 
-public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDependency
+public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, IOcrProbeProvider, ITransientDependency
 {
     private readonly AzureDocumentIntelligenceOptions _options;
 
@@ -21,6 +22,58 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
 
     public virtual async Task<OcrResult> RecognizeAsync(Stream fileStream, OcrOptions options)
     {
+        var modelId = ResolveModelId(options.OcrProfileCode);
+        var analyzeResult = await AnalyzeAsync(fileStream, modelId, pages: null, cancellationToken: default);
+
+        var markdown = BuildMarkdown(analyzeResult);
+        var confidence = CalculateConfidence(analyzeResult);
+        var pageCount = analyzeResult.Pages?.Count ?? 0;
+
+        return new OcrResult
+        {
+            Markdown = markdown,
+            Confidence = confidence,
+            DetectedLanguage = analyzeResult.Languages?.FirstOrDefault()?.Locale,
+            PageCount = pageCount,
+            AppliedProfileCode = options.OcrProfileCode,
+            ProviderName = "AzureDocumentIntelligence",
+            ProviderModelName = modelId,
+            ProviderVersion = typeof(DocumentIntelligenceClient).Assembly.GetName().Version?.ToString(),
+            QualitySignals = OcrQualitySignalBuilder.FromMarkdown(markdown, confidence, pageCount)
+        };
+    }
+
+    public virtual async Task<OcrProbeResult> ProbeAsync(
+        Stream fileStream,
+        OcrProbeOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        var pages = options.MaxPages > 0 ? $"1-{options.MaxPages}" : null;
+        var modelId = ResolveModelId(options.RequestedOcrProfileCode);
+        var analyzeResult = await AnalyzeAsync(fileStream, modelId, pages, cancellationToken);
+        var markdown = BuildMarkdown(analyzeResult);
+        var confidence = CalculateConfidence(analyzeResult);
+        var pageCount = analyzeResult.Pages?.Count ?? 0;
+
+        return new OcrProbeResult
+        {
+            Markdown = markdown,
+            Confidence = confidence,
+            DetectedLanguage = analyzeResult.Languages?.FirstOrDefault()?.Locale,
+            PageCount = pageCount,
+            ProviderName = "AzureDocumentIntelligence",
+            ProviderModelName = modelId,
+            ProviderVersion = typeof(DocumentIntelligenceClient).Assembly.GetName().Version?.ToString(),
+            QualitySignals = OcrQualitySignalBuilder.FromMarkdown(markdown, confidence, pageCount)
+        };
+    }
+
+    private async Task<AnalyzeResult> AnalyzeAsync(
+        Stream fileStream,
+        string modelId,
+        string? pages,
+        CancellationToken cancellationToken)
+    {
         var client = new DocumentIntelligenceClient(
             new Uri(_options.Endpoint),
             new AzureKeyCredential(_options.ApiKey));
@@ -28,19 +81,39 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
         BinaryData binaryData;
         using (var ms = new MemoryStream())
         {
-            await fileStream.CopyToAsync(ms);
+            await fileStream.CopyToAsync(ms, cancellationToken);
             binaryData = BinaryData.FromBytes(ms.ToArray());
         }
 
-        var analyzeOptions = new AnalyzeDocumentOptions(_options.ModelId, binaryData)
+        var analyzeOptions = new AnalyzeDocumentOptions(modelId, binaryData)
         {
             // 启用 Markdown 输出（需 api-version 2024-11-30+，SDK 1.0+）。
             // analyzeResult.Content 直接是带标题/表格/列表的 Markdown。
-            OutputContentFormat = DocumentContentFormat.Markdown
+            OutputContentFormat = DocumentContentFormat.Markdown,
+            Pages = pages
         };
-        var operation = await client.AnalyzeDocumentAsync(WaitUntil.Completed, analyzeOptions);
-        var analyzeResult = operation.Value;
 
+        var operation = await client.AnalyzeDocumentAsync(WaitUntil.Completed, analyzeOptions, cancellationToken);
+        var analyzeResult = operation.Value;
+        return analyzeResult;
+    }
+
+    private string ResolveModelId(string? profileCode)
+    {
+        var normalized = OcrProfileCodes.Normalize(profileCode);
+        if (normalized == OcrProfileCodes.Auto)
+        {
+            return _options.ModelId;
+        }
+
+        return _options.ProfileModelIds.TryGetValue(normalized, out var modelId) &&
+               !string.IsNullOrWhiteSpace(modelId)
+            ? modelId
+            : _options.ModelId;
+    }
+
+    private static double CalculateConfidence(AnalyzeResult analyzeResult)
+    {
         // Confidence: page.Words[*].Confidence 是 Azure DI 真实给的字符级 softmax 评分，
         // 取所有词的均值作为整体识别置信度。DocumentLine 自身不携带 confidence，
         // 早期实现按 Spans 命中兜底成 0.9/1.0 是假评分，会让门槛检查事实上变成 no-op——
@@ -56,6 +129,11 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
             }
         }
 
+        return wordCount > 0 ? totalConfidence / wordCount : 0;
+    }
+
+    private static string BuildMarkdown(AnalyzeResult analyzeResult)
+    {
         // analyzeResult.Content 已是 Markdown；若 Azure 返回空，回退到行级文本拼接成扁平 Markdown 段落。
         // Provider 负责自填，不把 plain-text-to-markdown 翻译职责泄漏给上游 orchestrator。
         var markdown = analyzeResult.Content;
@@ -68,12 +146,6 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
             markdown = string.Join(Environment.NewLine + Environment.NewLine, paragraphs);
         }
 
-        return new OcrResult
-        {
-            Markdown = markdown ?? string.Empty,
-            Confidence = wordCount > 0 ? totalConfidence / wordCount : 0,
-            DetectedLanguage = analyzeResult.Languages?.FirstOrDefault()?.Locale,
-            PageCount = analyzeResult.Pages?.Count ?? 0
-        };
+        return markdown ?? string.Empty;
     }
 }

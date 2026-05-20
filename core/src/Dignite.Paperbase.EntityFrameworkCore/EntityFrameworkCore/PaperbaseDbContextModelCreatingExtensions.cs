@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json;
+using Dignite.Paperbase.Abstractions.TextExtraction;
 using Dignite.Paperbase.Documents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -27,6 +28,17 @@ public static class PaperbaseDbContextModelCreatingExtensions
             v => v == null ? 0 : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null).GetHashCode(),
             v => v == null ? null : JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(v, (JsonSerializerOptions?)null), (JsonSerializerOptions?)null));
 
+    private static readonly ValueConverter<OcrQualitySignalSnapshot?, string?> OcrQualitySignalsConverter =
+        new(
+            v => v == null ? null : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+            v => string.IsNullOrEmpty(v) ? null : JsonSerializer.Deserialize<OcrQualitySignalSnapshot>(v, (JsonSerializerOptions?)null));
+
+    private static readonly ValueComparer<OcrQualitySignalSnapshot?> OcrQualitySignalsComparer =
+        new(
+            (a, b) => JsonSerializer.Serialize(a, (JsonSerializerOptions?)null) == JsonSerializer.Serialize(b, (JsonSerializerOptions?)null),
+            v => v == null ? 0 : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null).GetHashCode(),
+            v => v == null ? null : JsonSerializer.Deserialize<OcrQualitySignalSnapshot>(JsonSerializer.Serialize(v, (JsonSerializerOptions?)null), (JsonSerializerOptions?)null));
+
     public static void ConfigurePaperbase(this ModelBuilder builder)
     {
         Check.NotNull(builder, nameof(builder));
@@ -48,6 +60,15 @@ public static class PaperbaseDbContextModelCreatingExtensions
             // 字段架构 v2：系统通用字段平铺顶层 typed columns —— 真 pipeline 自动产物
             b.Property(x => x.Language).HasMaxLength(DocumentConsts.MaxLanguageLength);
             b.Property(x => x.OcrConfidence);
+            b.Property(x => x.RequestedOcrProfileCode).HasMaxLength(DocumentConsts.MaxOcrProfileCodeLength);
+            b.Property(x => x.EffectiveOcrProfileCode).HasMaxLength(DocumentConsts.MaxOcrProfileCodeLength);
+            b.Property(x => x.OcrProfileResolutionReason).HasMaxLength(DocumentConsts.MaxOcrProfileResolutionReasonLength);
+            b.Property(x => x.OcrProviderName).HasMaxLength(DocumentConsts.MaxOcrProviderNameLength);
+            b.Property(x => x.OcrProviderModelName).HasMaxLength(DocumentConsts.MaxOcrProviderModelNameLength);
+            b.Property(x => x.OcrProviderVersion).HasMaxLength(DocumentConsts.MaxOcrProviderVersionLength);
+            b.Property(x => x.OcrQualitySignals)
+                .HasColumnType("json")
+                .HasConversion(OcrQualitySignalsConverter, OcrQualitySignalsComparer);
 
             // 字段架构 v2：ExtractedFields 是动态 schema (Dictionary<string, JsonElement>)。
             // ValueConverter 序列化为 JSON 字符串，存到 SQL Server 2025 native json 列；

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using Dignite.Paperbase.Abstractions.TextExtraction;
 using Dignite.Paperbase.Documents;
 using Volo.Abp;
 using Volo.Abp.Domain.Entities.Auditing;
@@ -77,6 +78,20 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     /// <summary>OCR 平均置信度（0..1）。OCR 完成后填充；CLAUDE.md "OCR 置信度门槛"依赖此值决定 <c>DocumentReadyEto</c> 是否发布。</summary>
     public virtual double? OcrConfidence { get; private set; }
+
+    public virtual string? RequestedOcrProfileCode { get; private set; }
+
+    public virtual string? EffectiveOcrProfileCode { get; private set; }
+
+    public virtual string? OcrProfileResolutionReason { get; private set; }
+
+    public virtual string? OcrProviderName { get; private set; }
+
+    public virtual string? OcrProviderModelName { get; private set; }
+
+    public virtual string? OcrProviderVersion { get; private set; }
+
+    public virtual OcrQualitySignalSnapshot? OcrQualitySignals { get; private set; }
 
     /// <summary>
     /// 类型绑定字段抽取结果（字段架构 v2）。键 = FieldName（与 LLM 输出 JSON 键同形）。
@@ -165,6 +180,29 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
         OcrConfidence = confidence.HasValue
             ? Check.Range(confidence.Value, nameof(confidence), 0d, 1d)
             : null;
+    }
+
+    internal void SetOcrMetadata(OcrExtractionMetadata? metadata)
+    {
+        if (metadata == null)
+        {
+            RequestedOcrProfileCode = null;
+            EffectiveOcrProfileCode = null;
+            OcrProfileResolutionReason = null;
+            OcrProviderName = null;
+            OcrProviderModelName = null;
+            OcrProviderVersion = null;
+            OcrQualitySignals = null;
+            return;
+        }
+
+        RequestedOcrProfileCode = TrimToMax(metadata.RequestedProfileCode, DocumentConsts.MaxOcrProfileCodeLength);
+        EffectiveOcrProfileCode = TrimToMax(metadata.EffectiveProfileCode, DocumentConsts.MaxOcrProfileCodeLength);
+        OcrProfileResolutionReason = TrimToMax(metadata.ResolutionReason, DocumentConsts.MaxOcrProfileResolutionReasonLength);
+        OcrProviderName = TrimToMax(metadata.ProviderName, DocumentConsts.MaxOcrProviderNameLength);
+        OcrProviderModelName = TrimToMax(metadata.ProviderModelName, DocumentConsts.MaxOcrProviderModelNameLength);
+        OcrProviderVersion = TrimToMax(metadata.ProviderVersion, DocumentConsts.MaxOcrProviderVersionLength);
+        OcrQualitySignals = metadata.QualitySignals;
     }
 
     /// <summary>
@@ -273,5 +311,16 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     internal void PublishPipelineRunCompletedEvent(DocumentPipelineRunCompletedEvent evt)
     {
         AddLocalEvent(evt);
+    }
+
+    private static string? TrimToMax(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 }

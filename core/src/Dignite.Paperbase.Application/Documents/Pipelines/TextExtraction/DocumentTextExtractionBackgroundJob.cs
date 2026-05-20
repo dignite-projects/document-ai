@@ -137,7 +137,7 @@ public class DocumentTextExtractionBackgroundJob
                 document, runId, PaperbasePipelines.TextExtraction);
 
         await _pipelineRunManager.CompleteTextExtractionAsync(
-            document, run, result.Markdown, title, result.Confidence, actualSourceType);
+            document, run, result.Markdown, title, result.Confidence, actualSourceType, result.OcrMetadata);
 
         // 发布 OCRCompletedEto——薄载荷，下游通过 REST 回拉 Markdown。
         await _distributedEventBus.PublishAsync(

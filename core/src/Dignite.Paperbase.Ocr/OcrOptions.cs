@@ -9,4 +9,10 @@ public class OcrOptions
 
     /// <summary>文件 MIME 类型，帮助部分 Provider 优化识别策略。</summary>
     public string ContentType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Provider-neutral OCR profile code. <c>auto</c> is resolved by the orchestrator
+    /// before full-file OCR and should not be treated as a concrete provider mode.
+    /// </summary>
+    public string? OcrProfileCode { get; set; }
 }

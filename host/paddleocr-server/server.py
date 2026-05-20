@@ -81,12 +81,14 @@ def _markdown_text(md_info: Any) -> str:
     return str(md_info)
 
 
-def _process_structure(file_path: str, reader) -> tuple[list[dict], str, str, int]:
+def _process_structure(file_path: str, reader, max_pages: Optional[int]) -> tuple[list[dict], str, str, int]:
     """PP-StructureV3 pipeline: file path in, page-level Markdown out."""
     page_blocks: list[dict] = []
     page_markdowns: list[str] = []
     page_count = 0
     for page_num, res in enumerate(reader.predict(file_path), start=1):
+        if max_pages is not None and page_num > max_pages:
+            break
         page_count += 1
         md_text = _markdown_text(getattr(res, "markdown", None))
         page_markdowns.append(md_text)
@@ -103,12 +105,14 @@ def _process_structure(file_path: str, reader) -> tuple[list[dict], str, str, in
     return page_blocks, plain_text, markdown_payload, page_count
 
 
-def _process_vl(file_path: str, reader) -> tuple[list[dict], str, str, int]:
+def _process_vl(file_path: str, reader, max_pages: Optional[int]) -> tuple[list[dict], str, str, int]:
     """PaddleOCR-VL pipeline: file path in, page-level Markdown out (GPU)."""
     page_blocks: list[dict] = []
     page_markdowns: list[str] = []
     page_count = 0
     for page_num, res in enumerate(reader.predict(file_path), start=1):
+        if max_pages is not None and page_num > max_pages:
+            break
         page_count += 1
         md_text = _markdown_text(getattr(res, "markdown", None))
         page_markdowns.append(md_text)
@@ -128,12 +132,15 @@ def _process_pp_ocr(
     file_path: str,
     reader,
     include_bboxes: bool,
+    max_pages: Optional[int],
 ) -> tuple[list[dict], str, None, int]:
     """Legacy line-level OCR (PP-OCRv4 etc.). Returns blocks; markdown is None."""
     blocks: list[dict] = []
     texts: list[str] = []
     page_count = 0
     for page_num, res in enumerate(reader.predict(file_path), start=1):
+        if max_pages is not None and page_num > max_pages:
+            break
         page_count += 1
         # `res.json` returns {"res": {...}} in 3.x.
         payload = res.json
@@ -166,12 +173,22 @@ def _suffix_for(filename: str, content_type: Optional[str]) -> str:
     return ".png"
 
 
+def _paddle_version() -> Optional[str]:
+    try:
+        import paddleocr
+        return getattr(paddleocr, "__version__", None)
+    except Exception:
+        return None
+
+
 @app.post("/ocr")
 async def ocr(
     file: Annotated[UploadFile, File()],
     languages: Annotated[str, Form()] = "ja,en",
     model_name: Annotated[str, Form()] = "PP-StructureV3",
     include_bboxes: Annotated[str, Form()] = "false",
+    ocr_profile_code: Annotated[str, Form()] = "general",
+    max_pages: Annotated[Optional[int], Form()] = None,
 ):
     lang_list = [l.strip() for l in languages.split(",") if l.strip()]
     lang_code = _to_paddle_lang(lang_list[0]) if lang_list else "japan"
@@ -189,12 +206,12 @@ async def ocr(
     try:
         reader = _get_reader(lang_code, model_name)
         if _is_structure(model_name):
-            blocks, plain_text, markdown_payload, page_count = _process_structure(tmp_path, reader)
+            blocks, plain_text, markdown_payload, page_count = _process_structure(tmp_path, reader, max_pages)
         elif _is_vl(model_name):
-            blocks, plain_text, markdown_payload, page_count = _process_vl(tmp_path, reader)
+            blocks, plain_text, markdown_payload, page_count = _process_vl(tmp_path, reader, max_pages)
         else:
             blocks, plain_text, markdown_payload, page_count = _process_pp_ocr(
-                tmp_path, reader, include_bbox
+                tmp_path, reader, include_bbox, max_pages
             )
     except Exception as exc:
         logger.exception("OCR processing failed for model=%s lang=%s", model_name, lang_code)
@@ -218,6 +235,10 @@ async def ocr(
         "confidence": avg_confidence,
         "detected_language": lang_list[0] if lang_list else None,
         "page_count": page_count,
+        "provider_name": "PaddleOCR",
+        "provider_model": model_name,
+        "provider_version": _paddle_version(),
+        "ocr_profile_code": ocr_profile_code,
     })
 
 
