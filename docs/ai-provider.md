@@ -41,7 +41,7 @@ That's it. Function calling, tool-call willingness, large-context RAG, multi-tur
 
 ### Practical guidance
 
-For **production**, prefer a model that's strict about schema compliance. Models that "almost get JSON right" cost you retries (when wired up through `StructuredExtractionRetryMiddleware` on the downstream side) or silent nulls (in the host workflows). The choice is between cost and quality, not between "supports the protocol" vs "doesn't":
+For **production**, prefer a model that's strict about schema compliance. Models that "almost get JSON right" cost you silent nulls — malformed output is coerced to `null` fields and the document routes to manual review. The choice is between cost and quality, not between "supports the protocol" vs "doesn't":
 
 | Tier | Examples (OpenAI-compatible providers) | Trade-off |
 |---|---|---|
@@ -197,6 +197,6 @@ This matches what `PaperbaseHostModule.ConfigureOpenTelemetry` already adds when
 | --- | --- | --- |
 | `Experimental.Microsoft.Extensions.AI` (Activity + Meter) | `OpenTelemetryChatClient` (the `UseOpenTelemetry` decorator on each keyed client) | OTel GenAI semantic conventions: `chat {model}` / `execute_tool {name}` spans, `gen_ai.client.operation.duration` (s), `gen_ai.client.token.usage` |
 | `Experimental.Microsoft.Agents.AI` (Activity + Meter) | MAF agent runtime (`ChatClientAgent.RunAsync<T>` etc.) | Agent-level spans wrapping each `RunAsync` call — useful for tying classification workflow steps together |
-| `Dignite.Paperbase.*` (reserved) | None in Paperbase Core today | Reserved wildcard for downstream consumers' module-specific telemetry (e.g. a `Dignite.Paperbase.Contracts` meter from a downstream Contracts consumer — see [structured-extraction.md](structured-extraction.md)) |
+| `Dignite.Paperbase.*` (reserved) | None in Paperbase Core today | Reserved wildcard for downstream consumers' module-specific telemetry (e.g. a `Dignite.Paperbase.Contracts` meter emitted by a downstream Contracts consumer in its own repo) |
 
 Paperbase Core currently emits **no project-specific telemetry meters of its own**. The `Dignite.Paperbase.*` wildcard exists for future use and for downstream consumer modules to plug in their extraction telemetry without each one needing a host-side config change.

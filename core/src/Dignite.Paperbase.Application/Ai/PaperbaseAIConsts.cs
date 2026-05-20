@@ -1,14 +1,10 @@
 namespace Dignite.Paperbase.Ai;
 
 /// <summary>
-/// Public constants used by the host wiring (<c>PaperbaseHostModule.ConfigureAI</c>) and
-/// every service across core + business modules that consumes a keyed AI client via DI.
-///
-/// <para>
-/// Lives in <c>Dignite.Paperbase.Abstractions</c> so business modules (whose Domain layer
-/// references only Abstractions, not Application) can also inject these keyed clients.
+/// DI keys for the keyed <c>IChatClient</c> instances Paperbase's core LLM call sites resolve.
+/// Registered by the host wiring (<c>PaperbaseHostModule.ConfigureAI</c>) and consumed by the
+/// classification / field-extraction / title-generation pipelines.
 /// See <c>docs/ai-provider.md</c> for the keyed-clients table and what each is for.
-/// </para>
 /// </summary>
 public static class PaperbaseAIConsts
 {
@@ -25,7 +21,7 @@ public static class PaperbaseAIConsts
     /// <summary>
     /// DI key for the structured-output <c>IChatClient</c>
     /// shared by all single-shot, tool-free, prompt-unique <c>RunAsync&lt;T&gt;</c> call
-    /// sites: <c>DocumentClassificationWorkflow</c> and business-module field extractors.
+    /// sites: <c>DocumentClassificationWorkflow</c> and the field-extraction pipeline.
     ///
     /// <para>
     /// Same shape as the title-generator client (no FunctionInvocation, no DistributedCache) —

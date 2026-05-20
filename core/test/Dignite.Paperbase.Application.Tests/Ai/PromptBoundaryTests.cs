@@ -20,26 +20,6 @@ public class PromptBoundaryTests
     }
 
     [Fact]
-    public void WrapQuestion_Encloses_With_Question_Tags()
-    {
-        PromptBoundary.WrapQuestion("Q?").ShouldBe("<question>\nQ?\n</question>");
-    }
-
-    [Fact]
-    public void WrapCandidate_Includes_Index_Attribute()
-    {
-        PromptBoundary.WrapCandidate(3, "summary text")
-            .ShouldBe("<candidate index=\"3\">\nsummary text\n</candidate>");
-    }
-
-    [Fact]
-    public void WrapAnchor_Encloses_With_Anchor_Tags()
-    {
-        PromptBoundary.WrapAnchor("id=abc, type=contract.general")
-            .ShouldBe("<anchor>\nid=abc, type=contract.general\n</anchor>");
-    }
-
-    [Fact]
     public void WrapField_Encloses_With_Field_Tags()
     {
         // 用户派生字段（合同 summary / partyAName 等）的包裹形态
@@ -95,9 +75,6 @@ public class PromptBoundaryTests
     public void BoundaryRule_References_All_Tag_Names()
     {
         PromptBoundary.BoundaryRule.ShouldContain("<document>");
-        PromptBoundary.BoundaryRule.ShouldContain("<question>");
-        PromptBoundary.BoundaryRule.ShouldContain("<candidate>");
-        PromptBoundary.BoundaryRule.ShouldContain("<anchor>");
         PromptBoundary.BoundaryRule.ShouldContain("<field>");
     }
 }

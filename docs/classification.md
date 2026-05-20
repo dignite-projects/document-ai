@@ -65,5 +65,4 @@ The prompt language follows `PaperbaseAIBehavior:DefaultLanguage` (see [ai-provi
 ## See also
 
 - [Text extraction](text-extraction.md) — produces the `Document.Markdown` consumed here
-- [Structured extraction](structured-extraction.md) — the validator + retry middleware contract that downstream consumers use when reacting to `DocumentClassifiedEto`
 - [Pipeline runs](pipeline-runs.md) — the `Candidates` payload schema for the review UI

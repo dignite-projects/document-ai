@@ -115,7 +115,6 @@ Feature docs (start here for any specific topic):
 * [Text extraction](./docs/text-extraction.md) — Markdown-first contract, PaddleOCR / Azure DI configuration
 * [Classification](./docs/classification.md) — document-type pipeline and prompt tuning
 * [AI provider](./docs/ai-provider.md) — provider wiring for the two keyed chat clients (title generator + structured)
-* [Structured extraction](./docs/structured-extraction.md) — `IExtractionValidator<T>` + MAF agent middleware contract for downstream consumers
 * [Observability](./docs/observability.md) — OpenTelemetry pipeline, aspire-dashboard for local dev, switching OTLP backends
 * [Pipeline runs](./docs/pipeline-runs.md) — run history and review-UI payloads
 * [Deployment](./docs/deployment.md) — DB, certificate, Docker
