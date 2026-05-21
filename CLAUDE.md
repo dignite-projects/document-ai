@@ -253,7 +253,7 @@ Paperbase 通过四种出口给下游消费方：
 Paperbase 是通道，Markdown 是出口的**唯一文本载荷**。遇到取舍时优先保持 Markdown-first：
 
 - **OCR / 数字版抽取**：`ITextExtractor` / `IMarkdownTextProvider` / `IOcrProvider` 实现方**必须**输出 Markdown，**不得**退回 plain text 路径
-  - **对结构化文档而言**（合同 / 政策 / 报告 / CSV / 有标题的 DOCX / PP-StructureV3 / Azure DI prebuilt-document）——标题、表格、列表是下游切块和 LLM 理解的**真信号**，全力利用
+  - **对结构化文档而言**（合同 / 政策 / 报告 / CSV / 有标题的 DOCX / PP-StructureV3 / Azure DI prebuilt-layout）——标题、表格、列表是下游切块和 LLM 理解的**真信号**，全力利用
   - **对无结构内容而言**（OCR 散段落 / 纯 txt / PP-OCRv4 行级输出 / 单句便签）——Markdown 是**容器命名**，**不是**信号增益；保留 Markdown 路径只是为了下游 chunker / 内置 LLM 分类 / 自定义字段抽取消费同一种格式。诚实承认这一点，不要把扁平段落包装成"也是 Markdown 信号"
   - **翻译职责在 Provider 内部完成**——`OcrResult` / `TextExtractionResult` 不暴露 RawText 字段，Provider 拿到底层服务的纯文本输出后**自己**负责包成扁平 Markdown（例如 `string.Join("\n\n", paragraphs)`），不允许把 plain-text-to-markdown 的兜底逻辑泄漏给上游 orchestrator
 - **持久化**：`Document.Markdown` 是 Document 聚合根上唯一的文本字段，**禁止**在 `Document` 或事件载荷上引入并行的 plain-text 字段

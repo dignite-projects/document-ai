@@ -13,6 +13,11 @@ namespace Dignite.Paperbase.Ocr.AzureDocumentIntelligence;
 
 public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDependency
 {
+    // 通道层固定使用 prebuilt-layout：它输出带标题/表格的结构化 Markdown，契合 Markdown-first。
+    // 故意不暴露为 host 配置——prebuilt-read 只产纯文本会破坏 Markdown-first，业务 prebuilt
+    // （invoice / contract 等）属下游业务范畴，二者都不是通道层应有的 OCR 选项。
+    private const string ModelId = "prebuilt-layout";
+
     private readonly AzureDocumentIntelligenceOptions _options;
 
     public AzureDocumentIntelligenceOcrProvider(IOptions<AzureDocumentIntelligenceOptions> options)
@@ -22,8 +27,7 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
 
     public virtual async Task<OcrResult> RecognizeAsync(Stream fileStream, OcrOptions options)
     {
-        var modelId = ResolveModelId(options.OcrProfileCode);
-        var analyzeResult = await AnalyzeAsync(fileStream, modelId, cancellationToken: default);
+        var analyzeResult = await AnalyzeAsync(fileStream, ModelId, cancellationToken: default);
 
         var markdown = BuildMarkdown(analyzeResult);
         var confidence = CalculateConfidence(analyzeResult);
@@ -35,11 +39,9 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
             Confidence = confidence,
             DetectedLanguage = analyzeResult.Languages?.FirstOrDefault()?.Locale,
             PageCount = pageCount,
-            AppliedProfileCode = options.OcrProfileCode,
             ProviderName = "AzureDocumentIntelligence",
-            ProviderModelName = modelId,
-            ProviderVersion = typeof(DocumentIntelligenceClient).Assembly.GetName().Version?.ToString(),
-            QualitySignals = OcrQualitySignalBuilder.FromMarkdown(markdown, confidence, pageCount)
+            ProviderModelName = ModelId,
+            ProviderVersion = typeof(DocumentIntelligenceClient).Assembly.GetName().Version?.ToString()
         };
     }
 
@@ -61,28 +63,15 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
 
         var analyzeOptions = new AnalyzeDocumentOptions(modelId, binaryData)
         {
-            // 启用 Markdown 输出（需 api-version 2024-11-30+，SDK 1.0+）。
-            // analyzeResult.Content 直接是带标题/表格/列表的 Markdown。
+            // Markdown-first 执行点：Azure DI 的 OutputContentFormat 默认是 Text，必须显式请求 Markdown
+            // 才能拿到带标题/表格/列表的结构化 Content（需 api-version 2024-11-30+、SDK 1.0+）。
+            // 不可移除——移除会让 prebuilt-layout 退化成纯文本流，破坏 Markdown-first。
             OutputContentFormat = DocumentContentFormat.Markdown
         };
 
         var operation = await client.AnalyzeDocumentAsync(WaitUntil.Completed, analyzeOptions, cancellationToken);
         var analyzeResult = operation.Value;
         return analyzeResult;
-    }
-
-    private string ResolveModelId(string? profileCode)
-    {
-        var normalized = OcrProfileCodes.Normalize(profileCode);
-        if (normalized == OcrProfileCodes.Auto)
-        {
-            return _options.ModelId;
-        }
-
-        return _options.ProfileModelIds.TryGetValue(normalized, out var modelId) &&
-               !string.IsNullOrWhiteSpace(modelId)
-            ? modelId
-            : _options.ModelId;
     }
 
     private static double CalculateConfidence(AnalyzeResult analyzeResult)

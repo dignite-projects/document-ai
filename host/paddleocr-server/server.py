@@ -187,7 +187,6 @@ async def ocr(
     languages: Annotated[str, Form()] = "ja,en",
     model_name: Annotated[str, Form()] = "PP-StructureV3",
     include_bboxes: Annotated[str, Form()] = "false",
-    ocr_profile_code: Annotated[str, Form()] = "general",
     max_pages: Annotated[Optional[int], Form()] = None,
 ):
     lang_list = [l.strip() for l in languages.split(",") if l.strip()]
@@ -238,7 +237,6 @@ async def ocr(
         "provider_name": "PaddleOCR",
         "provider_model": model_name,
         "provider_version": _paddle_version(),
-        "ocr_profile_code": ocr_profile_code,
     })
 
 

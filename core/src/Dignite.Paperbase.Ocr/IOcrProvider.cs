@@ -13,7 +13,7 @@ namespace Dignite.Paperbase.Ocr;
 /// <remarks>
 /// <para>
 /// <b>Markdown-first 契约</b>：实现方<b>必须</b>填充 <see cref="OcrResult.Markdown"/>。
-/// 若底层服务输出本身就是 layout-aware Markdown（如 PaddleOCR PP-StructureV3、Azure DI `prebuilt-document`），
+/// 若底层服务输出本身就是 layout-aware Markdown（如 PaddleOCR PP-StructureV3、Azure DI `prebuilt-layout`），
 /// 直接透传——这种情况下标题、表格、列表是 LLM 理解的真信号。
 /// 若底层服务只返回纯文本（如 PaddleOCR PP-OCRv4），Provider <b>自己</b>负责把段落包成扁平 Markdown
 /// （例如 <c>string.Join("\n\n", paragraphs)</c>）；<b>不得</b>把翻译职责留给上游 orchestrator。

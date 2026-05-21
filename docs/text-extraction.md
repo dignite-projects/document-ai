@@ -6,7 +6,7 @@ Every document uploaded to Paperbase passes through a text-extraction stage that
 
 Paperbase is an AI-native platform. Markdown is the **single text payload** of the pipeline. But what Markdown contributes depends on whether the source document has structure — be honest about both cases:
 
-**With structure — real signal.** For contracts, reports, CSV, DOCX with headings, layout-aware OCR output (PP-StructureV3, Azure DI `prebuilt-document`): headings, tables and lists are not formatting decoration — they are semantic signals that downstream RAG chunkers (header-path injection) and Paperbase's own LLM prompts (system prompt: "input is Markdown") rely on. Use them in full.
+**With structure — real signal.** For contracts, reports, CSV, DOCX with headings, layout-aware OCR output (PP-StructureV3, Azure DI `prebuilt-layout`): headings, tables and lists are not formatting decoration — they are semantic signals that downstream RAG chunkers (header-path injection) and Paperbase's own LLM prompts (system prompt: "input is Markdown") rely on. Use them in full.
 
 **Without structure — container, not signal.** For OCR loose paragraphs, plain `.txt`, PP-OCRv4 line dumps, single-line notes: the Markdown wrapper is a **container name**, not a signal upgrade — `string.Join("\n\n", paragraphs)` and the plain text it wraps are byte-for-byte indistinguishable. We still route this through the Markdown contract so internal pipelines (classification / Host & tenant field extraction / title generation) and downstream consumers (RAG / business systems) stay on one shape. The wrapper buys uniformity, not LLM comprehension.
 
@@ -77,6 +77,12 @@ Default for development. `PP-StructureV3` runs on CPU and emits native Markdown 
 | `ModelName` | `PP-StructureV3` | One of: `PP-StructureV3` (CPU + native Markdown, default), `PP-OCRv4` (lightest, no Markdown structure), `PaddleOCR-VL-1.5` (highest quality; requires GPU + ~2 GB model download; native Markdown) |
 | `Languages` | `["ja", "en"]` | Default recognition languages (BCP 47); overridden per call by `OcrOptions.LanguageHints` |
 
+Paperbase does not auto-switch OCR profiles per document. The OCR provider runs once with the host-configured model; low confidence is handled by the pipeline's review path rather than a second OCR pass with a guessed specialized mode.
+
+OCR review has only two operator outcomes. Approving a low-confidence OCR result means the current Markdown is acceptable enough to continue classification. Rejecting it means this digitization result is unusable: Paperbase keeps the original file, Markdown, OCR confidence, and rejection reason for audit, marks the document failed, and does not offer a normal "rerun OCR" or source replacement path.
+
+`ReviewStatus` is the current routing state, not a durable audit ledger. When an OCR-approved document later classifies successfully, automatic classification may reset `ReviewStatus` to `None`; the OCR confidence and pipeline history remain available, while a dedicated audit/event model should be added only if the product needs to query "was manually OCR-approved" as historical fact.
+
 **Bring up the sidecar:**
 
 ```bash
@@ -99,12 +105,13 @@ Recommended for production workloads where data is allowed to leave the network 
 ```json
 "AzureDocumentIntelligence": {
   "Endpoint": "https://<your-resource>.cognitiveservices.azure.com/",
-  "ApiKey": "YOUR_KEY",
-  "ModelId": "prebuilt-read"
+  "ApiKey": "YOUR_KEY"
 }
 ```
 
 `PaperbaseAzureDocumentIntelligenceModule` binds this section automatically.
+
+Paperbase fixes the Azure model to `prebuilt-layout` and does not expose it as a config option — it emits the structured Markdown that Markdown-first requires. `prebuilt-read` (plain text only) and business prebuilts (invoice / contract) are intentionally not channel-layer OCR options.
 
 > ⚠️ **F0 limitations** — each request only processes the **first 2 pages**, only one F0 resource per subscription per region, ~1–2 TPS throughput. Suitable only for demos and short documents (≤ 2 pages). Switch to S0 for sustained development or any larger document.
 
@@ -114,7 +121,7 @@ Implement `IOcrProvider` (for image/scan input) or `IMarkdownTextProvider` (for 
 
 The provider lives in its own module project (`Dignite.Paperbase.Ocr.<Vendor>` or `Dignite.Paperbase.TextExtraction.<Vendor>`) and is enabled by the host through `[DependsOn(...)]`.
 
-**Markdown-first responsibility is on the provider, not the orchestrator.** The `OcrResult` and `TextExtractionResult` types expose only a `Markdown` field — there is no parallel `RawText` channel. If the underlying OCR engine returns plain text only (e.g. PaddleOCR PP-OCRv4), the provider itself must wrap paragraphs into flat Markdown (typically `string.Join("\n\n", paragraphs)`). Returning empty Markdown when the engine produced text is a contract violation.
+**Markdown-first responsibility is on the provider, not the orchestrator.** The `OcrResult` and `TextExtractionResult` types expose only a `Markdown` field — there is no parallel `RawText` channel. If the underlying OCR engine returns plain text only (e.g. PaddleOCR PP-OCRv4), the provider itself must wrap paragraphs into flat Markdown (typically `string.Join("\n\n", paragraphs)`). Returning empty Markdown when the engine produced text is a contract violation. Custom OCR providers should expose their model choice through provider/host configuration, not through Paperbase core profile codes.
 
 Custom OCR provider projects only need to reference `Dignite.Paperbase.Ocr` — they do not need (and should not pull in) `Dignite.Paperbase.TextExtraction` or `Dignite.Paperbase.Abstractions`.
 

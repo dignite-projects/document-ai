@@ -26,7 +26,7 @@ Verifies the default OCR provider after a sidecar upgrade, model swap, or fresh-
 
 ### Model variant compatibility
 
-- [ ] `PaddleOcr:ModelName = "PP-OCRv4"` → OCR still runs; `OcrResult.Markdown` is `null` (backward compatible, no Markdown structure)
+- [ ] `PaddleOcr:ModelName = "PP-OCRv4"` → OCR still runs; `OcrResult.Markdown` contains flat Markdown paragraphs (no native document structure)
 - [ ] `PaddleOcr:ModelName = "PaddleOCR-VL-1.5"` (GPU environment only) → OCR still runs; #78 Markdown-output acceptance preserved
 
 ### Performance

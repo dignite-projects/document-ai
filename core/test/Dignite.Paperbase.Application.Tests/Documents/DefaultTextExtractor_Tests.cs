@@ -42,10 +42,13 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
         result.Confidence.ShouldBe(0.95);
         result.UsedOcr.ShouldBeTrue();
 
-        // auto 直接进 general 全量识别，无事前 probe。
+        // OCR 编排只调用 provider 一次；具体模型由 provider/host 配置决定。
         await _ocrProvider.Received(1).RecognizeAsync(
             Arg.Any<Stream>(),
-            Arg.Is<OcrOptions>(o => o.OcrProfileCode == OcrProfileCodes.General));
+            Arg.Is<OcrOptions>(o =>
+                o.ContentType == "image/jpeg" &&
+                o.LanguageHints.Contains("ja") &&
+                o.LanguageHints.Contains("en")));
     }
 
     [Fact]
@@ -105,23 +108,15 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
     }
 
     [Fact]
-    public async Task Should_Retry_Once_With_Targeted_Profile_When_Quality_Is_Low()
+    public async Task Should_Not_Retry_Ocr_When_Result_Has_Low_Confidence()
     {
-        // 首次 general 识别得到低置信表格结果 → 诊断 table-structure → 定向重试 table-heavy → 取更优结果。
         _ocrProvider.RecognizeAsync(Arg.Any<Stream>(), Arg.Any<OcrOptions>())
-            .Returns(
-                new OcrResult
-                {
-                    Markdown = "| A | B |\n|---|---|\n| bad | table |",
-                    Confidence = 0.40,
-                    PageCount = 1
-                },
-                new OcrResult
-                {
-                    Markdown = "| A | B |\n|---|---|\n| good | table |",
-                    Confidence = 0.93,
-                    PageCount = 1
-                });
+            .Returns(new OcrResult
+            {
+                Markdown = "| A | B |\n|---|---|\n| kept | table |",
+                Confidence = 0.40,
+                PageCount = 1
+            });
 
         var stream = new MemoryStream(new byte[] { 0xFF, 0xD8 });
         var ctx = new TextExtractionContext
@@ -132,75 +127,12 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
 
         var result = await _extractor.ExtractAsync(stream, ctx);
 
-        result.Markdown.ShouldContain("good");
-
-        await _ocrProvider.Received(1).RecognizeAsync(
-            Arg.Any<Stream>(),
-            Arg.Is<OcrOptions>(o => o.OcrProfileCode == OcrProfileCodes.General));
-        await _ocrProvider.Received(1).RecognizeAsync(
-            Arg.Any<Stream>(),
-            Arg.Is<OcrOptions>(o => o.OcrProfileCode == OcrProfileCodes.TableHeavy));
-    }
-
-    [Fact]
-    public async Task Should_Not_Select_Empty_Retry_Result_Over_Meaningful_Text()
-    {
-        _ocrProvider.RecognizeAsync(Arg.Any<Stream>(), Arg.Any<OcrOptions>())
-            .Returns(
-                new OcrResult
-                {
-                    Markdown = "| A | B |\n|---|---|\n| kept | table |",
-                    Confidence = 0.50,
-                    PageCount = 1
-                },
-                new OcrResult
-                {
-                    Markdown = string.Empty,
-                    Confidence = 0.80,
-                    PageCount = 1
-                });
-
-        var stream = new MemoryStream(new byte[] { 0xFF, 0xD8 });
-        var ctx = new TextExtractionContext
-        {
-            ContentType = "image/jpeg",
-            FileExtension = ".jpg"
-        };
-
-        var result = await _extractor.ExtractAsync(stream, ctx);
-
-        // 重试结果为空 → 不优于首次有意义文本 → 保留首次 general 结果。
         result.Markdown.ShouldContain("kept");
+        result.Confidence.ShouldBe(0.40);
 
         await _ocrProvider.Received(1).RecognizeAsync(
             Arg.Any<Stream>(),
-            Arg.Is<OcrOptions>(o => o.OcrProfileCode == OcrProfileCodes.General));
-        await _ocrProvider.Received(1).RecognizeAsync(
-            Arg.Any<Stream>(),
-            Arg.Is<OcrOptions>(o => o.OcrProfileCode == OcrProfileCodes.TableHeavy));
-    }
-
-    [Fact]
-    public async Task Should_Use_Explicit_Profile_Without_Auto_Resolution()
-    {
-        var stream = new MemoryStream(new byte[] { 0xFF, 0xD8 });
-        var ctx = new TextExtractionContext
-        {
-            ContentType = "image/jpeg",
-            FileExtension = ".jpg",
-            OcrProfileCode = OcrProfileCodes.HighAccuracy
-        };
-
-        var result = await _extractor.ExtractAsync(stream, ctx);
-
-        result.UsedOcr.ShouldBeTrue();
-        // 显式 profile 直接生效，不经 auto→general。
-        await _ocrProvider.Received(1).RecognizeAsync(
-            Arg.Any<Stream>(),
-            Arg.Is<OcrOptions>(o => o.OcrProfileCode == OcrProfileCodes.HighAccuracy));
-        await _ocrProvider.DidNotReceive().RecognizeAsync(
-            Arg.Any<Stream>(),
-            Arg.Is<OcrOptions>(o => o.OcrProfileCode == OcrProfileCodes.General));
+            Arg.Any<OcrOptions>());
     }
 
     [DependsOn(
@@ -210,8 +142,7 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
     {
         public override void ConfigureServices(ServiceConfigurationContext context)
         {
-            // 取消 probe 后 OCR provider 只需实现 IOcrProvider；orchestrator 信任 provider，
-            // 结构信号事后从全量结果派生。
+            // OCR provider 负责选择部署配置中的模型并输出 Markdown；orchestrator 不做 profile 重试。
             var fakeOcr = Substitute.For<IOcrProvider>();
             fakeOcr.RecognizeAsync(Arg.Any<Stream>(), Arg.Any<OcrOptions>())
                 .Returns(new OcrResult

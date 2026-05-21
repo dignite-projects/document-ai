@@ -240,6 +240,8 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     /// <summary>
     /// 操作员拒绝审核——文档落到 Failed 生命周期状态；ReviewStatus 保留以便审计。
+    /// OCR 不可用是当前数字化结果的终态结论；保留原文件、Markdown、OCR confidence 和拒绝原因，
+    /// 不在同一 Document 上做源文件替换或普通 OCR 重跑。
     /// <para>
     /// <b>lifecycle 派生规则的合法例外</b>：通常 <see cref="LifecycleStatus"/> 由
     /// <see cref="DocumentPipelineRunManager"/> 从 pipeline run 状态派生（见类首注释 line 32-35），

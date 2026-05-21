@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Abstractions.TextExtraction;
 using Dignite.Paperbase.Ocr;
-using Dignite.Paperbase.TextExtraction.OcrProfiles;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -19,20 +18,17 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
     private readonly IOcrProvider _ocrProvider;
     private readonly IMarkdownTextProvider _markdownProvider;
     private readonly PaperbaseOcrOptions _ocrOptions;
-    private readonly IOcrQualityScorer _qualityScorer;
 
     public ILogger<DefaultTextExtractor> Logger { get; set; } = NullLogger<DefaultTextExtractor>.Instance;
 
     public DefaultTextExtractor(
         IOcrProvider ocrProvider,
         IMarkdownTextProvider markdownProvider,
-        IOptions<PaperbaseOcrOptions> ocrOptions,
-        IOcrQualityScorer qualityScorer)
+        IOptions<PaperbaseOcrOptions> ocrOptions)
     {
         _ocrProvider = ocrProvider;
         _markdownProvider = markdownProvider;
         _ocrOptions = ocrOptions.Value;
-        _qualityScorer = qualityScorer;
     }
 
     public virtual async Task<TextExtractionResult> ExtractAsync(
@@ -77,51 +73,20 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
         var languageHints = ctx.LanguageHints?.Count > 0
             ? ctx.LanguageHints
             : (IList<string>)_ocrOptions.DefaultLanguageHints;
-        var requestedProfile = OcrProfileCodes.Normalize(ctx.OcrProfileCode ?? _ocrOptions.DefaultOcrProfileCode);
 
-        // auto 不是真实 provider profile，只是编排入口：先信任 provider，以 general 跑一次全量 OCR，
-        // 再由首次结果的质量信号经 scorer 决定是否值得换更专精的 profile 重试一次。
-        // 不做事前 probe——结构信号事后从全量 Markdown 派生即可，无需为单页文档付双倍 OCR 成本。
-        var initialProfile = requestedProfile == OcrProfileCodes.Auto
-            ? OcrProfileCodes.General
-            : requestedProfile;
-
-        var initialResult = await RecognizeAsync(seekable, ctx, languageHints, initialProfile);
-        var initialAssessment = _qualityScorer.Score(initialResult, initialProfile);
-
-        var finalResult = initialResult;
-        var finalProfile = initialProfile;
-        var retrySelected = false;
-
-        // 质量评分低且诊断明确时，用针对性 profile 重试一次，保留更好的全量结果。
-        if (initialAssessment.IsLowQuality &&
-            !string.IsNullOrWhiteSpace(initialAssessment.TargetedRetryProfileCode))
-        {
-            var retryProfile = initialAssessment.TargetedRetryProfileCode!;
-            var retryResult = await RecognizeAsync(seekable, ctx, languageHints, retryProfile);
-            var retryAssessment = _qualityScorer.Score(retryResult, retryProfile);
-
-            if (_qualityScorer.IsBetter(retryAssessment, initialAssessment))
-            {
-                finalResult = retryResult;
-                finalProfile = retryProfile;
-                retrySelected = true;
-            }
-        }
+        var result = await RecognizeAsync(seekable, ctx, languageHints);
 
         Logger.LogDebug(
-            "OCR completed using {Provider}: requested {RequestedProfile}, effective {EffectiveProfile}, retried {Retried}.",
-            finalResult.ProviderName ?? _ocrProvider.GetType().Name,
-            requestedProfile,
-            finalProfile,
-            retrySelected);
+            "OCR completed using {Provider}: model {Model}.",
+            result.ProviderName ?? _ocrProvider.GetType().Name,
+            result.ProviderModelName);
 
         return new TextExtractionResult
         {
-            Markdown = finalResult.Markdown,
-            Confidence = finalResult.Confidence,
-            DetectedLanguage = finalResult.DetectedLanguage,
-            PageCount = finalResult.PageCount,
+            Markdown = result.Markdown,
+            Confidence = result.Confidence,
+            DetectedLanguage = result.DetectedLanguage,
+            PageCount = result.PageCount,
             UsedOcr = true
         };
     }
@@ -129,8 +94,7 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
     private async Task<OcrResult> RecognizeAsync(
         Stream seekable,
         TextExtractionContext ctx,
-        IList<string> languageHints,
-        string profileCode)
+        IList<string> languageHints)
     {
         seekable.Position = 0;
         return await _ocrProvider.RecognizeAsync(
@@ -138,8 +102,7 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
             new OcrOptions
             {
                 ContentType = ctx.ContentType ?? string.Empty,
-                LanguageHints = languageHints,
-                OcrProfileCode = profileCode
+                LanguageHints = languageHints
             });
     }
 

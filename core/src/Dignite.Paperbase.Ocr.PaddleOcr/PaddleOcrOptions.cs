@@ -21,12 +21,6 @@ public class PaddleOcrOptions
     public IList<string> Languages { get; set; } = new List<string> { "ja", "en" };
 
     /// <summary>
-    /// Optional provider-local profile → model override. Core only sends provider-neutral
-    /// profile codes; concrete model choices stay in host/provider configuration.
-    /// </summary>
-    public Dictionary<string, string> ProfileModelNames { get; set; } = new();
-
-    /// <summary>
     /// OCR 请求超时（秒）。PP-StructureV3 在 CPU 上处理多页图片 PDF 可能需要数分钟，
     /// 默认 600 秒（10 分钟）。可在 appsettings.json 的 PaddleOcr 节覆盖。
     /// </summary>

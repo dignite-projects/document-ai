@@ -1,6 +1,8 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Dignite.Paperbase.Documents.Pipelines;
 using Dignite.Paperbase.Documents.Pipelines.Classification;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
@@ -124,10 +126,10 @@ public class DocumentAppService_Review_Tests
     }
 
     [Fact]
-    public async Task ApproveReviewAsync_ClassificationReview_Without_Type_Keeps_Lifecycle_NonReady()
+    public async Task ApproveReviewAsync_ClassificationReview_Without_Type_Returns_Current_Pending_State()
     {
-        // 边界 case：DocumentTypeCode 为 null（分类置信度低）—— ApproveReview 不能让它 Ready。
-        // UI 应该用 ReclassifyAsync；如果误调 ApproveReview，文档保持非 Ready（type 空不满足 Ready 条件）。
+        // 边界 case：DocumentTypeCode 为 null（分类置信度低 / 无合适类型）。
+        // ApproveReview 不应向客户端抛错，也不能把文档移出 PendingReview 后又无法 Ready。
         var doc = CreateDocument();
         var textRun = await _pipelineRunManager.StartAsync(doc, PaperbasePipelines.TextExtraction);
         await _pipelineRunManager.CompleteAsync(doc, textRun);
@@ -139,10 +141,19 @@ public class DocumentAppService_Review_Tests
         doc.DocumentTypeCode.ShouldBeNull();
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
 
-        await _appService.ApproveReviewAsync(doc.Id);
+        var dto = await _appService.ApproveReviewAsync(doc.Id);
 
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.Reviewed);
+        dto.DocumentTypeCode.ShouldBeNull();
+        dto.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
+        dto.ClassificationReason.ShouldBe("ambiguous");
+        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
+        doc.ClassificationReason.ShouldBe("ambiguous");
         doc.LifecycleStatus.ShouldNotBe(DocumentLifecycleStatus.Ready);  // type 空不能 Ready
+
+        await _backgroundJobManager.DidNotReceive().EnqueueAsync(
+            Arg.Any<DocumentClassificationJobArgs>(),
+            Arg.Any<BackgroundJobPriority>(),
+            Arg.Any<TimeSpan?>());
     }
 
     [Fact]
@@ -158,6 +169,44 @@ public class DocumentAppService_Review_Tests
 
         doc.LifecycleStatus.ShouldBe(DocumentLifecycleStatus.Failed);
         doc.ClassificationReason.ShouldBe("scan unusable");
+    }
+
+    [Fact]
+    public void PendingReview_Filter_Excludes_Failed_Rejections_By_Default()
+    {
+        var activePending = CreateDocument();
+        activePending.MarkPendingOcrReview("needs review");
+
+        var rejected = CreateDocument();
+        rejected.MarkPendingOcrReview("OCR garbage");
+        rejected.RejectReview("scan unusable");
+
+        var result = ApplyFilterForTest(
+                new[] { activePending, rejected }.AsQueryable(),
+                new GetDocumentListInput { ReviewStatus = DocumentReviewStatus.PendingReview })
+            .ToList();
+
+        result.ShouldContain(activePending);
+        result.ShouldNotContain(rejected);
+    }
+
+    [Fact]
+    public void PendingReview_Filter_Allows_Failed_Rejections_When_Lifecycle_Is_Explicit()
+    {
+        var rejected = CreateDocument();
+        rejected.MarkPendingOcrReview("OCR garbage");
+        rejected.RejectReview("scan unusable");
+
+        var result = ApplyFilterForTest(
+                new[] { rejected }.AsQueryable(),
+                new GetDocumentListInput
+                {
+                    ReviewStatus = DocumentReviewStatus.PendingReview,
+                    LifecycleStatus = DocumentLifecycleStatus.Failed
+                })
+            .ToList();
+
+        result.ShouldContain(rejected);
     }
 
     private void StubGet(Document doc)
@@ -179,5 +228,24 @@ public class DocumentAppService_Review_Tests
                 contentHash: $"{Guid.NewGuid():N}{Guid.NewGuid():N}",
                 fileSize: 1024,
                 originalFileName: "test.pdf"));
+    }
+
+    private IQueryable<Document> ApplyFilterForTest(IQueryable<Document> query, GetDocumentListInput input)
+    {
+        var service = new DocumentAppService(
+            Substitute.For<IDocumentRepository>(),
+            Substitute.For<IDocumentTypeRepository>(),
+            Substitute.For<IBlobContainer<PaperbaseDocumentContainer>>(),
+            new DocumentPipelineRunManager(),
+            new DocumentPipelineJobScheduler(
+                Substitute.For<IDocumentRepository>(),
+                new DocumentPipelineRunManager(),
+                Substitute.For<IBackgroundJobManager>()),
+            Substitute.For<IDistributedEventBus>());
+
+        var method = typeof(DocumentAppService).GetMethod(
+            "ApplyFilter",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        return (IQueryable<Document>)method.Invoke(service, [query, input])!;
     }
 }

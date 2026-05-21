@@ -358,16 +358,23 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             return ObjectMapper.Map<Document, DocumentDto>(document);
         }
 
-        document.ApproveReview();
-
         // 兑现 CLAUDE.md "OCR 置信度门槛" 承诺："操作员手动确认通过 → 触发 DocumentReadyEto"。
         // 两类待审核场景：
         //   (a) OCR confidence 不达标 → classification 尚未跑：schedule classification pipeline，
         //       让它正常推进，完成后由 DeriveLifecycle 跃到 Ready 自动发 DocumentReadyEto。
         //   (b) classification 已跑且有 DocumentTypeCode：直接 RecomputeLifecycle 让它进 Ready。
-        //       注：分类置信度低 + DocumentTypeCode null 的场景应走 ReclassifyAsync 而非 ApproveAsync——
-        //       走到这里时 RecomputeLifecycle 判定 Processing（type 空不满足 Ready），不发事件，符合预期。
+        //       分类已跑但 DocumentTypeCode 仍为空时，当前后台 pipeline 已经停在
+        //       "没有已确认类型" 的审核结论上；不要抛客户端错误，也不要把它改成 Reviewed。
+        //       保持 PendingReview + ClassificationReason，让操作员创建 DocumentType 后
+        //       Reclassify，或重新上传更合适的源文件。
         var hasClassificationRun = document.GetLatestRun(PaperbasePipelines.Classification) != null;
+        if (hasClassificationRun && string.IsNullOrWhiteSpace(document.DocumentTypeCode))
+        {
+            return ObjectMapper.Map<Document, DocumentDto>(document);
+        }
+
+        document.ApproveReview();
+
         if (!hasClassificationRun)
         {
             // QueueAsync 内已 _documentRepository.UpdateAsync(document, autoSave: true)，
@@ -441,7 +448,18 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             query = query.Where(x => x.DocumentTypeCode == input.DocumentTypeCode);
 
         if (input.ReviewStatus.HasValue)
+        {
             query = query.Where(d => d.ReviewStatus == input.ReviewStatus.Value);
+
+            // PendingReview 队列默认只展示仍需处理的文档。RejectReview 会保留
+            // ReviewStatus=PendingReview 作为审计信号，但 lifecycle 已是 Failed；
+            // 若调用方确实要查失败审核记录，可显式传 LifecycleStatus=Failed。
+            if (input.ReviewStatus.Value == DocumentReviewStatus.PendingReview &&
+                !input.LifecycleStatus.HasValue)
+            {
+                query = query.Where(d => d.LifecycleStatus != DocumentLifecycleStatus.Failed);
+            }
+        }
 
         return query;
     }

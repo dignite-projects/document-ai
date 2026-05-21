@@ -28,9 +28,6 @@ public class OcrResult
     /// <summary>识别的页数。</summary>
     public int PageCount { get; set; }
 
-    /// <summary>Provider-neutral profile actually requested for this full-file OCR call.</summary>
-    public string? AppliedProfileCode { get; set; }
-
     /// <summary>OCR provider family/name for auditability; provider-specific options stay inside provider projects.</summary>
     public string? ProviderName { get; set; }
 
@@ -39,7 +36,4 @@ public class OcrResult
 
     /// <summary>Provider or SDK version when available.</summary>
     public string? ProviderVersion { get; set; }
-
-    /// <summary>Provider-neutral quality diagnostics for resolver/scorer decisions.</summary>
-    public OcrQualitySignals? QualitySignals { get; set; }
 }

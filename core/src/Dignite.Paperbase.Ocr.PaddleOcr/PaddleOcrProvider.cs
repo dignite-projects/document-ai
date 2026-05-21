@@ -28,13 +28,12 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
 
     public virtual async Task<OcrResult> RecognizeAsync(Stream fileStream, OcrOptions options)
     {
-        var modelName = ResolveModelName(options.OcrProfileCode);
+        var modelName = _options.ModelName;
         var result = await SendAsync(
             fileStream,
             options.LanguageHints,
             options.ContentType,
             modelName,
-            options.OcrProfileCode,
             cancellationToken: default);
 
         var markdown = BuildMarkdown(result);
@@ -46,11 +45,9 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
             Confidence = confidence,
             DetectedLanguage = result.DetectedLanguage,
             PageCount = result.PageCount,
-            AppliedProfileCode = options.OcrProfileCode,
             ProviderName = result.ProviderName ?? "PaddleOCR",
             ProviderModelName = result.ProviderModelName ?? modelName,
-            ProviderVersion = result.ProviderVersion,
-            QualitySignals = OcrQualitySignalBuilder.FromMarkdown(markdown, confidence, result.PageCount)
+            ProviderVersion = result.ProviderVersion
         };
     }
 
@@ -59,7 +56,6 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
         IList<string> languageHints,
         string contentType,
         string modelName,
-        string? ocrProfileCode,
         CancellationToken cancellationToken)
     {
         var languages = languageHints.Count > 0
@@ -77,8 +73,6 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
         content.Add(fileContent, "file", "document");
         content.Add(new StringContent(string.Join(",", languages)), "languages");
         content.Add(new StringContent(modelName), "model_name");
-        if (!string.IsNullOrWhiteSpace(ocrProfileCode))
-            content.Add(new StringContent(ocrProfileCode), "ocr_profile_code");
 
         var client = _httpClientFactory.CreateClient(PaperbasePaddleOcrModule.HttpClientName);
         var response = await client.PostAsync($"{_options.Endpoint.TrimEnd('/')}/ocr", content, cancellationToken);
@@ -94,20 +88,6 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
         return JsonSerializer.Deserialize<PaddleOcrResponse>(json)
             ?? throw new InvalidOperationException("PaddleOCR server returned an empty response.");
-    }
-
-    private string ResolveModelName(string? profileCode)
-    {
-        var normalized = OcrProfileCodes.Normalize(profileCode);
-        if (normalized == OcrProfileCodes.Auto)
-        {
-            return _options.ModelName;
-        }
-
-        return _options.ProfileModelNames.TryGetValue(normalized, out var modelName) &&
-               !string.IsNullOrWhiteSpace(modelName)
-            ? modelName
-            : _options.ModelName;
     }
 
     private static string BuildMarkdown(PaddleOcrResponse result)
