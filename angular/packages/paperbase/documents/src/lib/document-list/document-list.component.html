@@ -139,7 +139,7 @@
                 <td class="text-muted small">{{ formatFileSize(doc.fileOrigin?.fileSize ?? 0) }}</td>
                 <td class="text-muted small">{{ doc.creationTime | date:'yyyy-MM-dd HH:mm' }}</td>
                 <td class="d-flex gap-1">
-                  @if (needsConfirmation(doc)) {
+                  @if (needsConfirmation(doc) && canConfirm) {
                     <button
                       class="btn btn-sm btn-warning"
                       (click)="openConfirmDialog(doc, $event)"
@@ -211,37 +211,17 @@
           <p class="text-muted small mb-3">
             {{ doc.title || doc.fileOrigin?.originalFileName || doc.originalFileBlobName }}
           </p>
-          <p class="fw-semibold mb-2">{{ '::Document:SelectDocumentType' | abpLocalization }}</p>
-          @let candidates = getCandidates(doc);
-          @if (candidates.length > 0) {
-            <div class="list-group">
-              @for (c of candidates; track c.typeCode) {
-                <label class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-                  <div class="d-flex align-items-center gap-2">
-                    <input
-                      type="radio"
-                      name="typeCode"
-                      [value]="c.typeCode"
-                      [checked]="selectedTypeCode() === c.typeCode"
-                      (change)="selectedTypeCode.set(c.typeCode)"
-                    />
-                    <span>{{ c.typeCode }}</span>
-                  </div>
-                  <span class="badge bg-secondary">{{ (c.confidenceScore * 100).toFixed(0) }}%</span>
-                </label>
-              }
-            </div>
-          } @else {
-            <div class="input-group">
-              <input
-                type="text"
-                class="form-control"
-                [value]="selectedTypeCode()"
-                (input)="onTypeCodeInput($event)"
-                placeholder="{{ '::Document:DocumentTypeCode' | abpLocalization }}"
-              />
-            </div>
-          }
+          <label class="form-label fw-semibold">{{ '::Document:SelectDocumentType' | abpLocalization }}</label>
+          <select
+            class="form-select"
+            [ngModel]="selectedTypeCode()"
+            (ngModelChange)="selectedTypeCode.set($event)"
+          >
+            <option value="" disabled>{{ '::Document:SelectDocumentType' | abpLocalization }}</option>
+            @for (t of documentTypes(); track t.id) {
+              <option [value]="t.typeCode">{{ t.displayName }} ({{ t.typeCode }})</option>
+            }
+          </select>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" (click)="closeConfirmDialog()">

@@ -183,6 +183,27 @@
             </div>
           </div>
 
+          @if (extractedFieldEntries().length > 0) {
+            <div class="card shadow-sm">
+              <div class="card-header">
+                <h6 class="mb-0">
+                  <i class="fas fa-table-list me-2"></i>
+                  {{ '::Document:ExtractedFields' | abpLocalization }}
+                </h6>
+              </div>
+              <div class="card-body">
+                <dl class="row mb-0 small">
+                  @for (entry of extractedFieldEntries(); track entry.key) {
+                    <dt class="col-sm-5 text-muted text-truncate" [title]="entry.key">
+                      <code>{{ entry.key }}</code>
+                    </dt>
+                    <dd class="col-sm-7 mb-2" [title]="entry.value">{{ entry.value }}</dd>
+                  }
+                </dl>
+              </div>
+            </div>
+          }
+
           <div class="card shadow-sm">
             <div class="card-header">
               <h6 class="mb-0">

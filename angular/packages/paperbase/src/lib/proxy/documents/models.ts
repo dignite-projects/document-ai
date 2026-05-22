@@ -50,6 +50,11 @@ export interface DocumentDto extends EntityDto<string> {
   // Pre-migration documents may be null — UI must fall back to fileOrigin.originalFileName.
   title?: string | null;
   markdown?: string | null;
+  // Type-bound field extraction result (field architecture v2). Key = field name
+  // (same shape as FieldDefinitionDto.name). null when nothing has been extracted.
+  // JSON values are decoded server-side from a SQL Server json column, so each
+  // value may be a string, number, boolean, or null.
+  extractedFields?: Record<string, unknown> | null;
   creationTime: string;
   pipelineRuns: DocumentPipelineRunDto[];
 }

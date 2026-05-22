@@ -39,12 +39,21 @@ export function provideDocuments(): EnvironmentProviders {
           layout: eLayoutType.application,
         },
         {
+          path: '/documents/types',
+          name: '::Menu:DocumentTypes',
+          iconClass: 'fas fa-tags',
+          parentName: '::Menu:Documents',
+          requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification,
+          order: 3,
+          layout: eLayoutType.application,
+        },
+        {
           path: '/documents/recycle',
           name: '::Menu:DocumentRecycleBin',
           iconClass: 'fas fa-trash-can',
           parentName: '::Menu:Documents',
           requiredPolicy: PAPERBASE_PERMISSIONS.Documents.Restore,
-          order: 3,
+          order: 4,
           layout: eLayoutType.application,
         },
       ]);

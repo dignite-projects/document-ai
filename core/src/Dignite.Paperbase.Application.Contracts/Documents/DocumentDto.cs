@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using Dignite.Paperbase.Documents;
 using Volo.Abp.Application.Dtos;
 
@@ -28,6 +29,13 @@ public class DocumentDto : EntityDto<Guid>
     /// 前端可直接渲染；需要纯文本时由前端 strip 或后端通过 <c>MarkdownStripper.Strip</c> 投影。
     /// </summary>
     public string? Markdown { get; set; }
+
+    /// <summary>
+    /// 类型绑定字段抽取结果（字段架构 v2）。键 = FieldName（与 <see cref="FieldDefinitionDto.Name"/> 同形）。
+    /// 来源层由 <see cref="TenantId"/> 决定（Host 文档 → Host 字段定义；租户文档 → 该租户字段定义）。
+    /// 尚未抽取或无类型绑定字段时为 null。
+    /// </summary>
+    public Dictionary<string, JsonElement>? ExtractedFields { get; set; }
 
     public DateTime CreationTime { get; set; }
     public IList<DocumentPipelineRunDto> PipelineRuns { get; set; } = new List<DocumentPipelineRunDto>();

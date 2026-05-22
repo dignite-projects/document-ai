@@ -1,0 +1,220 @@
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="d-flex align-items-center mb-3 gap-2 flex-wrap">
+    <button class="btn btn-outline-secondary btn-sm" (click)="goBack()">
+      <i class="fas fa-arrow-left me-1"></i>
+      {{ '::Back' | abpLocalization }}
+    </button>
+    <h5 class="mb-0 ms-2">
+      <i class="fas fa-list-ul me-2"></i>
+      {{ '::FieldDefinition:Title' | abpLocalization }}
+    </h5>
+    <span class="badge bg-info text-dark ms-1">{{ documentTypeCode }}</span>
+    <div class="ms-auto d-flex gap-2">
+      <button
+        class="btn btn-outline-secondary"
+        (click)="refresh()"
+        [disabled]="isLoading()"
+        title="{{ '::Refresh' | abpLocalization }}"
+      >
+        <i class="fas fa-sync-alt" [class.fa-spin]="isLoading()"></i>
+      </button>
+      <button
+        class="btn"
+        [class.btn-secondary]="showDeleted()"
+        [class.btn-outline-secondary]="!showDeleted()"
+        (click)="toggleDeleted()"
+      >
+        <i class="fas fa-trash-can me-1"></i>
+        {{ '::FieldDefinition:ShowDeleted' | abpLocalization }}
+      </button>
+      @if (canManage && !showDeleted()) {
+        <button class="btn btn-primary" (click)="openCreate()">
+          <i class="fas fa-plus me-1"></i>
+          {{ '::FieldDefinition:New' | abpLocalization }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <!-- Loading spinner -->
+  @if (isLoading()) {
+    <div class="text-center py-5">
+      <div class="spinner-border text-primary" role="status"></div>
+    </div>
+  }
+
+  <!-- Empty state -->
+  @if (!isLoading() && fields().length === 0) {
+    <div class="card shadow-sm">
+      <div class="card-body text-center py-5">
+        <i class="fas fa-list-ul fa-3x text-muted mb-3 d-block"></i>
+        <p class="text-muted mb-0">
+          {{ (showDeleted() ? '::FieldDefinition:RecycleBinEmpty' : '::FieldDefinition:Empty') | abpLocalization }}
+        </p>
+      </div>
+    </div>
+  }
+
+  <!-- Fields table -->
+  @if (!isLoading() && fields().length > 0) {
+    <div class="card shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 56px">{{ '::FieldDefinition:DisplayOrder' | abpLocalization }}</th>
+              <th>{{ '::FieldDefinition:Name' | abpLocalization }}</th>
+              <th>{{ '::FieldDefinition:DisplayName' | abpLocalization }}</th>
+              <th>{{ '::FieldDefinition:DataType' | abpLocalization }}</th>
+              <th>{{ '::FieldDefinition:Required' | abpLocalization }}</th>
+              <th>{{ '::FieldDefinition:Prompt' | abpLocalization }}</th>
+              <th style="width: 110px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (field of fields(); track field.id) {
+              <tr>
+                <td class="text-muted">{{ field.displayOrder }}</td>
+                <td><code>{{ field.name }}</code></td>
+                <td class="fw-semibold">{{ field.displayName }}</td>
+                <td><span class="badge bg-light text-dark border">{{ dataTypeLabel(field.dataType) }}</span></td>
+                <td>
+                  @if (field.isRequired) {
+                    <span class="badge bg-warning text-dark">{{ '::FieldDefinition:Required' | abpLocalization }}</span>
+                  } @else {
+                    <span class="text-muted">—</span>
+                  }
+                </td>
+                <td class="text-muted small text-truncate" style="max-width: 280px;" [title]="field.prompt">
+                  {{ field.prompt }}
+                </td>
+                <td class="text-end">
+                  <div class="d-flex gap-1 justify-content-end">
+                    @if (showDeleted()) {
+                      @if (canManage) {
+                        <button
+                          class="btn btn-sm btn-outline-success"
+                          (click)="restore(field)"
+                          title="{{ '::FieldDefinition:Restore' | abpLocalization }}"
+                        >
+                          <i class="fas fa-rotate-left"></i>
+                        </button>
+                      }
+                    } @else if (canManage) {
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        (click)="openEdit(field)"
+                        title="{{ '::Edit' | abpLocalization }}"
+                      >
+                        <i class="fas fa-pen"></i>
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-danger"
+                        (click)="delete(field)"
+                        title="{{ '::Delete' | abpLocalization }}"
+                      >
+                        <i class="fas fa-trash"></i>
+                      </button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- Create / Edit modal -->
+@if (editing(); as mode) {
+  <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.4);" (click)="closeModal()">
+    <div class="modal-dialog modal-dialog-centered modal-lg" (click)="$event.stopPropagation()">
+      <div class="modal-content">
+        <form [formGroup]="form" (ngSubmit)="submit()">
+          <div class="modal-header">
+            <h5 class="modal-title">
+              <i class="fas fa-list-ul me-2"></i>
+              {{ (mode === 'create' ? '::FieldDefinition:New' : '::FieldDefinition:Edit') | abpLocalization }}
+            </h5>
+            <button type="button" class="btn-close" (click)="closeModal()"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label">{{ '::FieldDefinition:Name' | abpLocalization }}</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  formControlName="name"
+                  [class.is-invalid]="form.controls.name.touched && form.controls.name.invalid"
+                  placeholder="party_name"
+                />
+                <div class="form-text">{{ '::FieldDefinition:NameHint' | abpLocalization }}</div>
+                @if (form.controls.name.touched && form.controls.name.invalid) {
+                  <div class="invalid-feedback d-block">{{ '::FieldDefinition:NameInvalid' | abpLocalization }}</div>
+                }
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">{{ '::FieldDefinition:DisplayName' | abpLocalization }}</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  formControlName="displayName"
+                  [class.is-invalid]="form.controls.displayName.touched && form.controls.displayName.invalid"
+                />
+              </div>
+            </div>
+
+            <div class="mb-3 mt-3">
+              <label class="form-label">{{ '::FieldDefinition:Prompt' | abpLocalization }}</label>
+              <textarea
+                class="form-control"
+                rows="3"
+                formControlName="prompt"
+                [class.is-invalid]="form.controls.prompt.touched && form.controls.prompt.invalid"
+                placeholder="{{ '::FieldDefinition:PromptHint' | abpLocalization }}"
+              ></textarea>
+            </div>
+
+            <div class="row g-3 align-items-end">
+              <div class="col-md-5">
+                <label class="form-label">{{ '::FieldDefinition:DataType' | abpLocalization }}</label>
+                <select class="form-select" formControlName="dataType">
+                  @for (opt of dataTypeOptions; track opt.value) {
+                    <option [ngValue]="opt.value">{{ opt.key }}</option>
+                  }
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">{{ '::FieldDefinition:DisplayOrder' | abpLocalization }}</label>
+                <input type="number" class="form-control" formControlName="displayOrder" step="1" />
+              </div>
+              <div class="col-md-3">
+                <div class="form-check mt-2">
+                  <input type="checkbox" class="form-check-input" id="isRequired" formControlName="isRequired" />
+                  <label class="form-check-label" for="isRequired">
+                    {{ '::FieldDefinition:Required' | abpLocalization }}
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" (click)="closeModal()">
+              {{ '::Cancel' | abpLocalization }}
+            </button>
+            <button type="submit" class="btn btn-primary" [disabled]="form.invalid || isSubmitting()">
+              @if (isSubmitting()) {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+              }
+              {{ '::Save' | abpLocalization }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+}

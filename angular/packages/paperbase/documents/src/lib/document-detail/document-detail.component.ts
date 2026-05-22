@@ -151,6 +151,17 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     this.document()?.fileOrigin?.contentType?.startsWith('image/') ?? false
   );
 
+  // Type-bound extracted fields (field architecture v2). Key = field name; value
+  // is decoded server-side from a SQL Server json column. Sorted by key for a
+  // stable display order.
+  extractedFieldEntries = computed<{ key: string; value: string }[]>(() => {
+    const fields = this.document()?.extractedFields;
+    if (!fields) return [];
+    return Object.keys(fields)
+      .sort((a, b) => a.localeCompare(b))
+      .map(key => ({ key, value: this.formatFieldValue(fields[key]) }));
+  });
+
   private documentId!: string;
 
   ngOnInit(): void {
@@ -343,6 +354,12 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     const end = run.completedAt ? new Date(run.completedAt).getTime() : Date.now();
     if (Number.isNaN(end) || end < start) return null;
     return end - start;
+  }
+
+  formatFieldValue(value: unknown): string {
+    if (value === null || value === undefined) return '—';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
   }
 
   formatElapsed(run: DocumentPipelineRunDto): string {

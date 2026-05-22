@@ -21,9 +21,10 @@ import {
   DocumentListItemDto,
   DocumentReviewStatus,
   DocumentService,
+  DocumentTypeDto,
+  DocumentTypeService,
   GetDocumentListInput,
   PAPERBASE_PERMISSIONS,
-  PipelineRunCandidate,
 } from '@dignite/paperbase';
 import { from, of } from 'rxjs';
 import { catchError, map, mergeMap } from 'rxjs/operators';
@@ -48,6 +49,7 @@ interface UploadResult {
 })
 export class DocumentListComponent implements OnInit {
   private readonly documentService = inject(DocumentService);
+  private readonly documentTypeService = inject(DocumentTypeService);
   private readonly router = inject(Router);
   private readonly confirmation = inject(ConfirmationService);
   private readonly toaster = inject(ToasterService);
@@ -56,6 +58,9 @@ export class DocumentListComponent implements OnInit {
 
   readonly canDelete = this.permissionService.getGrantedPolicy(
     PAPERBASE_PERMISSIONS.Documents.Delete,
+  );
+  readonly canConfirm = this.permissionService.getGrantedPolicy(
+    PAPERBASE_PERMISSIONS.Documents.ConfirmClassification,
   );
 
   documents = signal<PagedResultDto<DocumentListItemDto>>({ totalCount: 0, items: [] });
@@ -66,6 +71,7 @@ export class DocumentListComponent implements OnInit {
 
   reviewStatusFilter = signal<DocumentReviewStatus | undefined>(undefined);
   confirmingDoc = signal<DocumentListItemDto | null>(null);
+  documentTypes = signal<DocumentTypeDto[]>([]);
   selectedTypeCode = signal('');
   isConfirming = signal(false);
 
@@ -84,10 +90,27 @@ export class DocumentListComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadList();
+    // GetVisible is gated by the ConfirmClassification permission; only fetch when
+    // the operator can actually act on the confirm dialog (avoids a 403 on load
+    // for view-only users).
+    if (this.canConfirm) {
+      this.loadDocumentTypes();
+    }
   }
 
   refresh(): void {
     this.loadList();
+  }
+
+  // Visible document types for the current layer (Host admin → Host types;
+  // tenant admin → that tenant's types). Drives the confirm-classification picker.
+  private loadDocumentTypes(): void {
+    this.documentTypeService.getVisible()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: types => this.documentTypes.set(types),
+        error: () => this.documentTypes.set([]),
+      });
   }
 
   private loadList(): void {
@@ -198,28 +221,17 @@ export class DocumentListComponent implements OnInit {
        doc.lifecycleStatus === DocumentLifecycleStatus.Uploaded);
   }
 
-  // The slim list DTO carries no pipeline runs, so the LLM's top-K candidates are
-  // not available here — the confirm dialog falls back to a free-text type code
-  // input. The current classification (if any) is offered as the lone suggestion.
-  getCandidates(doc: DocumentListItemDto): PipelineRunCandidate[] {
-    return doc.documentTypeCode ? [{ typeCode: doc.documentTypeCode, confidenceScore: 1 }] : [];
-  }
-
   openConfirmDialog(doc: DocumentListItemDto, event: Event): void {
     event.stopPropagation();
     this.confirmingDoc.set(doc);
-    const candidates = this.getCandidates(doc);
-    const defaultCode = candidates[0]?.typeCode ?? doc.documentTypeCode ?? '';
-    this.selectedTypeCode.set(defaultCode);
+    // Pre-select the document's current (low-confidence) classification when present,
+    // so the operator usually just confirms; otherwise force an explicit choice.
+    this.selectedTypeCode.set(doc.documentTypeCode ?? '');
   }
 
   closeConfirmDialog(): void {
     this.confirmingDoc.set(null);
     this.selectedTypeCode.set('');
-  }
-
-  onTypeCodeInput(event: Event): void {
-    this.selectedTypeCode.set((event.target as HTMLInputElement).value);
   }
 
   submitConfirmation(): void {

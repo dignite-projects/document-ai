@@ -27,6 +27,24 @@ export const DOCUMENTS_ROUTES: Routes = [
       ),
   },
   {
+    path: 'types',
+    canActivate: [authGuard, permissionGuard],
+    data: { requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification },
+    loadComponent: () =>
+      import('./document-type-list/document-type-list.component').then(
+        c => c.DocumentTypeListComponent,
+      ),
+  },
+  {
+    path: 'types/:typeCode/fields',
+    canActivate: [authGuard, permissionGuard],
+    data: { requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification },
+    loadComponent: () =>
+      import('./field-definition-list/field-definition-list.component').then(
+        c => c.FieldDefinitionListComponent,
+      ),
+  },
+  {
     path: ':id',
     canActivate: [authGuard, permissionGuard],
     data: { requiredPolicy: PAPERBASE_PERMISSIONS.Documents.Default },

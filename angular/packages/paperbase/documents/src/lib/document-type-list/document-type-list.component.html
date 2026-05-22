@@ -1,0 +1,195 @@
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">
+      <i class="fas fa-tags me-2"></i>
+      {{ '::DocumentType:Title' | abpLocalization }}
+    </h4>
+    <div class="d-flex gap-2">
+      <button
+        class="btn btn-outline-secondary"
+        (click)="refresh()"
+        [disabled]="isLoading()"
+        title="{{ '::Refresh' | abpLocalization }}"
+      >
+        <i class="fas fa-sync-alt" [class.fa-spin]="isLoading()"></i>
+      </button>
+      <button
+        class="btn"
+        [class.btn-secondary]="showDeleted()"
+        [class.btn-outline-secondary]="!showDeleted()"
+        (click)="toggleDeleted()"
+      >
+        <i class="fas fa-trash-can me-1"></i>
+        {{ '::DocumentType:ShowDeleted' | abpLocalization }}
+      </button>
+      @if (canManage && !showDeleted()) {
+        <button class="btn btn-primary" (click)="openCreate()">
+          <i class="fas fa-plus me-1"></i>
+          {{ '::DocumentType:New' | abpLocalization }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <!-- Loading spinner -->
+  @if (isLoading()) {
+    <div class="text-center py-5">
+      <div class="spinner-border text-primary" role="status"></div>
+    </div>
+  }
+
+  <!-- Empty state -->
+  @if (!isLoading() && types().length === 0) {
+    <div class="card shadow-sm">
+      <div class="card-body text-center py-5">
+        <i class="fas fa-tags fa-3x text-muted mb-3 d-block"></i>
+        <p class="text-muted mb-0">
+          {{ (showDeleted() ? '::DocumentType:RecycleBinEmpty' : '::DocumentType:Empty') | abpLocalization }}
+        </p>
+      </div>
+    </div>
+  }
+
+  <!-- Types table -->
+  @if (!isLoading() && types().length > 0) {
+    <div class="card shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>{{ '::DocumentType:TypeCode' | abpLocalization }}</th>
+              <th>{{ '::DocumentType:DisplayName' | abpLocalization }}</th>
+              <th>{{ '::DocumentType:ConfidenceThreshold' | abpLocalization }}</th>
+              <th>{{ '::DocumentType:Priority' | abpLocalization }}</th>
+              <th style="width: 160px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (type of types(); track type.id) {
+              <tr>
+                <td><span class="badge bg-info text-dark">{{ type.typeCode }}</span></td>
+                <td class="fw-semibold">{{ type.displayName }}</td>
+                <td class="text-muted">{{ (type.confidenceThreshold * 100).toFixed(0) }}%</td>
+                <td class="text-muted">{{ type.priority }}</td>
+                <td class="text-end">
+                  <div class="d-flex gap-1 justify-content-end">
+                    @if (showDeleted()) {
+                      @if (canManage) {
+                        <button
+                          class="btn btn-sm btn-outline-success"
+                          (click)="restore(type)"
+                          title="{{ '::DocumentType:Restore' | abpLocalization }}"
+                        >
+                          <i class="fas fa-rotate-left"></i>
+                        </button>
+                      }
+                    } @else {
+                      <button
+                        class="btn btn-sm btn-outline-primary"
+                        (click)="manageFields(type)"
+                        title="{{ '::DocumentType:ManageFields' | abpLocalization }}"
+                      >
+                        <i class="fas fa-list-ul"></i>
+                      </button>
+                      @if (canManage) {
+                        <button
+                          class="btn btn-sm btn-outline-secondary"
+                          (click)="openEdit(type)"
+                          title="{{ '::Edit' | abpLocalization }}"
+                        >
+                          <i class="fas fa-pen"></i>
+                        </button>
+                        <button
+                          class="btn btn-sm btn-outline-danger"
+                          (click)="delete(type)"
+                          title="{{ '::Delete' | abpLocalization }}"
+                        >
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      }
+                    }
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- Create / Edit modal -->
+@if (editing(); as mode) {
+  <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.4);" (click)="closeModal()">
+    <div class="modal-dialog modal-dialog-centered" (click)="$event.stopPropagation()">
+      <div class="modal-content">
+        <form [formGroup]="form" (ngSubmit)="submit()">
+          <div class="modal-header">
+            <h5 class="modal-title">
+              <i class="fas fa-tags me-2"></i>
+              {{ (mode === 'create' ? '::DocumentType:New' : '::DocumentType:Edit') | abpLocalization }}
+            </h5>
+            <button type="button" class="btn-close" (click)="closeModal()"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label class="form-label">{{ '::DocumentType:TypeCode' | abpLocalization }}</label>
+              <input
+                type="text"
+                class="form-control"
+                formControlName="typeCode"
+                [class.is-invalid]="form.controls.typeCode.touched && form.controls.typeCode.invalid"
+                placeholder="host.contract"
+              />
+              <div class="form-text">{{ '::DocumentType:TypeCodeHint' | abpLocalization }}</div>
+              @if (form.controls.typeCode.touched && form.controls.typeCode.invalid) {
+                <div class="invalid-feedback d-block">{{ '::DocumentType:TypeCodeInvalid' | abpLocalization }}</div>
+              }
+            </div>
+            <div class="mb-3">
+              <label class="form-label">{{ '::DocumentType:DisplayName' | abpLocalization }}</label>
+              <input
+                type="text"
+                class="form-control"
+                formControlName="displayName"
+                [class.is-invalid]="form.controls.displayName.touched && form.controls.displayName.invalid"
+              />
+            </div>
+            <div class="row g-3">
+              <div class="col-6">
+                <label class="form-label">{{ '::DocumentType:ConfidenceThreshold' | abpLocalization }}</label>
+                <input
+                  type="number"
+                  class="form-control"
+                  formControlName="confidenceThreshold"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  [class.is-invalid]="form.controls.confidenceThreshold.touched && form.controls.confidenceThreshold.invalid"
+                />
+                <div class="form-text">{{ '::DocumentType:ConfidenceThresholdHint' | abpLocalization }}</div>
+              </div>
+              <div class="col-6">
+                <label class="form-label">{{ '::DocumentType:Priority' | abpLocalization }}</label>
+                <input type="number" class="form-control" formControlName="priority" step="1" />
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" (click)="closeModal()">
+              {{ '::Cancel' | abpLocalization }}
+            </button>
+            <button type="submit" class="btn btn-primary" [disabled]="form.invalid || isSubmitting()">
+              @if (isSubmitting()) {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+              }
+              {{ '::Save' | abpLocalization }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+}
