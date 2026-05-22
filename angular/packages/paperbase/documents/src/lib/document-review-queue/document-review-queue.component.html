@@ -1,0 +1,246 @@
+<div class="container-fluid py-4">
+  <!-- Header -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">
+      <i class="fas fa-user-edit me-2"></i>
+      {{ '::Document:Review:QueueTitle' | abpLocalization }}
+      @if (documents().totalCount > 0) {
+        <span class="badge bg-danger ms-2">{{ documents().totalCount }}</span>
+      }
+    </h4>
+    <button
+      class="btn btn-outline-secondary"
+      (click)="refresh()"
+      [disabled]="isLoading()"
+      title="{{ '::Refresh' | abpLocalization }}"
+    >
+      <i class="fas fa-sync-alt" [class.fa-spin]="isLoading()"></i>
+    </button>
+  </div>
+
+  <!-- Loading spinner -->
+  @if (isLoading()) {
+    <div class="text-center py-5">
+      <div class="spinner-border text-primary" role="status"></div>
+    </div>
+  }
+
+  <!-- Empty state -->
+  @if (!isLoading() && documents().totalCount === 0) {
+    <div class="card shadow-sm">
+      <div class="card-body text-center py-5">
+        <i class="fas fa-clipboard-check fa-3x text-success mb-3 d-block"></i>
+        <p class="text-muted mb-0">{{ '::Document:Review:Empty' | abpLocalization }}</p>
+      </div>
+    </div>
+  }
+
+  <!-- Review queue -->
+  @if (!isLoading() && documents().totalCount > 0) {
+    <div class="card shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 48px"></th>
+              <th>{{ '::Document:FileName' | abpLocalization }}</th>
+              <th>{{ '::Document:Type' | abpLocalization }}</th>
+              <th>{{ '::Document:ClassificationConfidence' | abpLocalization }}</th>
+              <th>{{ '::Document:UploadedAt' | abpLocalization }}</th>
+              <th style="width: 150px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (doc of documents().items; track doc.id) {
+              <tr class="align-middle cursor-pointer" (click)="openDetail(doc)">
+                <td>
+                  @if (isImage(doc)) {
+                    <i class="fas fa-file-image fa-lg text-primary"></i>
+                  } @else {
+                    <i class="fas fa-file-pdf fa-lg text-danger"></i>
+                  }
+                </td>
+                <td>
+                  <span class="fw-semibold">
+                    {{ doc.title || doc.fileOrigin?.originalFileName || doc.originalFileBlobName }}
+                  </span>
+                </td>
+                <td>
+                  @if (doc.documentTypeCode) {
+                    <span class="badge bg-info text-dark">{{ doc.documentTypeCode }}</span>
+                  } @else {
+                    <span class="text-muted">—</span>
+                  }
+                </td>
+                <td>
+                  <span
+                    class="small"
+                    [class.text-danger]="confidencePercent(doc) < 50"
+                    [class.text-muted]="confidencePercent(doc) >= 50"
+                  >
+                    {{ confidencePercent(doc) }}%
+                  </span>
+                </td>
+                <td class="text-muted small">{{ doc.creationTime | date:'yyyy-MM-dd HH:mm' }}</td>
+                <td (click)="$event.stopPropagation()">
+                  <div class="d-flex gap-1 justify-content-end">
+                    @if (doc.documentTypeCode) {
+                      <button
+                        class="btn btn-sm btn-success"
+                        (click)="approve(doc, $event)"
+                        [disabled]="isSubmitting()"
+                        title="{{ '::Document:Review:Approve' | abpLocalization }}"
+                      >
+                        <i class="fas fa-check-double"></i>
+                      </button>
+                    }
+                    <button
+                      class="btn btn-sm btn-warning"
+                      (click)="openClassifyDialog(doc, $event)"
+                      [disabled]="isSubmitting()"
+                      title="{{ '::Document:ConfirmClassification' | abpLocalization }}"
+                    >
+                      <i class="fas fa-tags"></i>
+                    </button>
+                    <button
+                      class="btn btn-sm btn-outline-danger"
+                      (click)="openRejectDialog(doc, $event)"
+                      [disabled]="isSubmitting()"
+                      title="{{ '::Document:Review:Reject' | abpLocalization }}"
+                    >
+                      <i class="fas fa-ban"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      @if (totalPages() > 1) {
+        <div class="card-footer d-flex justify-content-between align-items-center">
+          <small class="text-muted">
+            {{ '::Document:TotalCount' | abpLocalization }} {{ documents().totalCount }}
+          </small>
+          <nav>
+            <ul class="pagination pagination-sm mb-0">
+              <li class="page-item" [class.disabled]="page() === 0">
+                <button class="page-link" (click)="navigateTo(page() - 1)">
+                  <i class="fas fa-chevron-left"></i>
+                </button>
+              </li>
+              @for (p of paginationPages(); track p) {
+                <li class="page-item" [class.active]="page() === p">
+                  <button class="page-link" (click)="navigateTo(p)">{{ p + 1 }}</button>
+                </li>
+              }
+              <li class="page-item" [class.disabled]="page() === totalPages() - 1">
+                <button class="page-link" (click)="navigateTo(page() + 1)">
+                  <i class="fas fa-chevron-right"></i>
+                </button>
+              </li>
+            </ul>
+          </nav>
+        </div>
+      }
+    </div>
+  }
+</div>
+
+<!-- Confirm / assign classification modal -->
+@if (classifyingDoc(); as doc) {
+  <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.4);" (click)="closeClassifyDialog()">
+    <div class="modal-dialog modal-dialog-centered" (click)="$event.stopPropagation()">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i class="fas fa-tags me-2"></i>
+            {{ '::Document:ConfirmClassification' | abpLocalization }}
+          </h5>
+          <button type="button" class="btn-close" (click)="closeClassifyDialog()"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            {{ doc.title || doc.fileOrigin?.originalFileName || doc.originalFileBlobName }}
+          </p>
+          <label class="form-label fw-semibold">{{ '::Document:SelectDocumentType' | abpLocalization }}</label>
+          <select
+            class="form-select"
+            [ngModel]="selectedTypeCode()"
+            (ngModelChange)="selectedTypeCode.set($event)"
+          >
+            <option value="" disabled>{{ '::Document:SelectDocumentType' | abpLocalization }}</option>
+            @for (t of documentTypes(); track t.id) {
+              <option [value]="t.typeCode">{{ t.displayName }} ({{ t.typeCode }})</option>
+            }
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" (click)="closeClassifyDialog()">
+            {{ '::Cancel' | abpLocalization }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            [disabled]="!selectedTypeCode() || isSubmitting()"
+            (click)="submitClassify()"
+          >
+            @if (isSubmitting()) {
+              <span class="spinner-border spinner-border-sm me-1"></span>
+            }
+            {{ '::Document:Confirm' | abpLocalization }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Reject modal -->
+@if (rejectingDoc(); as doc) {
+  <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.4);" (click)="closeRejectDialog()">
+    <div class="modal-dialog modal-dialog-centered" (click)="$event.stopPropagation()">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i class="fas fa-ban me-2 text-danger"></i>
+            {{ '::Document:Review:Reject' | abpLocalization }}
+          </h5>
+          <button type="button" class="btn-close" (click)="closeRejectDialog()"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            {{ doc.title || doc.fileOrigin?.originalFileName || doc.originalFileBlobName }}
+          </p>
+          <label class="form-label fw-semibold">{{ '::Document:Review:RejectReason' | abpLocalization }}</label>
+          <textarea
+            class="form-control"
+            rows="3"
+            maxlength="512"
+            [ngModel]="rejectReason()"
+            (ngModelChange)="rejectReason.set($event)"
+            placeholder="{{ '::Document:Review:RejectReasonHint' | abpLocalization }}"
+          ></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" (click)="closeRejectDialog()">
+            {{ '::Cancel' | abpLocalization }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-danger"
+            [disabled]="isSubmitting()"
+            (click)="submitReject()"
+          >
+            @if (isSubmitting()) {
+              <span class="spinner-border spinner-border-sm me-1"></span>
+            }
+            {{ '::Document:Review:Reject' | abpLocalization }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+}

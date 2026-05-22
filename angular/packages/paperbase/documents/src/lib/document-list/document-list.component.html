@@ -45,6 +45,59 @@
     </div>
   </div>
 
+  <!-- Filters -->
+  <div class="d-flex flex-wrap gap-2 mb-3">
+    <div class="input-group input-group-sm" style="max-width: 280px;">
+      <input
+        type="text"
+        class="form-control"
+        [ngModel]="keyword()"
+        (ngModelChange)="keyword.set($event)"
+        (keyup.enter)="applyKeyword()"
+        placeholder="{{ '::Document:SearchPlaceholder' | abpLocalization }}"
+      />
+      @if (keyword()) {
+        <button
+          class="btn btn-outline-secondary"
+          (click)="clearKeyword()"
+          title="{{ '::Cancel' | abpLocalization }}"
+        >
+          <i class="fas fa-times"></i>
+        </button>
+      }
+      <button
+        class="btn btn-outline-secondary"
+        (click)="applyKeyword()"
+        title="{{ '::Search' | abpLocalization }}"
+      >
+        <i class="fas fa-search"></i>
+      </button>
+    </div>
+    <select
+      class="form-select form-select-sm w-auto"
+      [ngModel]="lifecycleFilter()"
+      (ngModelChange)="onLifecycleFilterChange($event)"
+    >
+      <option [ngValue]="undefined">{{ '::Document:Filter:AllStatuses' | abpLocalization }}</option>
+      <option [ngValue]="DocumentLifecycleStatus.Uploaded">{{ '::Document:Status:Uploaded' | abpLocalization }}</option>
+      <option [ngValue]="DocumentLifecycleStatus.Processing">{{ '::Document:Status:Processing' | abpLocalization }}</option>
+      <option [ngValue]="DocumentLifecycleStatus.Ready">{{ '::Document:Status:Ready' | abpLocalization }}</option>
+      <option [ngValue]="DocumentLifecycleStatus.Failed">{{ '::Document:Status:Failed' | abpLocalization }}</option>
+    </select>
+    @if (documentTypes().length > 0) {
+      <select
+        class="form-select form-select-sm w-auto"
+        [ngModel]="typeFilter()"
+        (ngModelChange)="onTypeFilterChange($event)"
+      >
+        <option value="">{{ '::Document:Filter:AllTypes' | abpLocalization }}</option>
+        @for (t of documentTypes(); track t.id) {
+          <option [value]="t.typeCode">{{ t.displayName }}</option>
+        }
+      </select>
+    }
+  </div>
+
   <!-- Bulk upload results -->
   @if (bulkUploadResults().length > 0) {
     <div class="card shadow-sm mb-3">

@@ -29,6 +29,7 @@ export class DocumentService {
           lifecycleStatus: input.lifecycleStatus ?? undefined,
           documentTypeCode: input.documentTypeCode ?? undefined,
           reviewStatus: input.reviewStatus ?? undefined,
+          keyword: input.keyword ?? undefined,
           isDeleted: input.isDeleted ?? undefined,
         },
       },
@@ -41,6 +42,25 @@ export class DocumentService {
         method: 'POST',
         url: `${this.basePath}/${id}/confirm-classification`,
         body: { documentTypeCode },
+      },
+      { apiName: this.apiName }
+    );
+
+  // Approve a PendingReview document. On the backend this is a no-op when the
+  // document has no DocumentTypeCode yet (the operator must confirm/reclassify
+  // a type first), so callers gate this action on documentTypeCode presence.
+  approveReview = (id: string): Observable<DocumentDto> =>
+    this.rest.request<void, DocumentDto>(
+      { method: 'POST', url: `${this.basePath}/${id}/review/approve` },
+      { apiName: this.apiName }
+    );
+
+  rejectReview = (id: string, reason?: string): Observable<DocumentDto> =>
+    this.rest.request<{ reason?: string }, DocumentDto>(
+      {
+        method: 'POST',
+        url: `${this.basePath}/${id}/review/reject`,
+        body: { reason },
       },
       { apiName: this.apiName }
     );
@@ -97,6 +117,7 @@ export class DocumentService {
     if (input.lifecycleStatus != null) params.set('lifecycleStatus', String(input.lifecycleStatus));
     if (input.documentTypeCode) params.set('documentTypeCode', input.documentTypeCode);
     if (input.reviewStatus != null) params.set('reviewStatus', String(input.reviewStatus));
+    if (input.keyword) params.set('keyword', input.keyword);
     const qs = params.toString();
     return `${this.env.getApiUrl(this.apiName)}${this.basePath}/export${qs ? '?' + qs : ''}`;
   };

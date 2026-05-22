@@ -30,12 +30,21 @@ export function provideDocuments(): EnvironmentProviders {
           layout: eLayoutType.application,
         },
         {
+          path: '/documents/review',
+          name: '::Menu:DocumentReviewQueue',
+          iconClass: 'fas fa-clipboard-check',
+          parentName: '::Menu:Documents',
+          requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification,
+          order: 2,
+          layout: eLayoutType.application,
+        },
+        {
           path: '/documents/upload',
           name: '::Menu:UploadDocument',
           iconClass: 'fas fa-upload',
           parentName: '::Menu:Documents',
           requiredPolicy: PAPERBASE_PERMISSIONS.Documents.Upload,
-          order: 2,
+          order: 3,
           layout: eLayoutType.application,
         },
         {
@@ -44,7 +53,7 @@ export function provideDocuments(): EnvironmentProviders {
           iconClass: 'fas fa-tags',
           parentName: '::Menu:Documents',
           requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification,
-          order: 3,
+          order: 4,
           layout: eLayoutType.application,
         },
         {
@@ -53,7 +62,7 @@ export function provideDocuments(): EnvironmentProviders {
           iconClass: 'fas fa-trash-can',
           parentName: '::Menu:Documents',
           requiredPolicy: PAPERBASE_PERMISSIONS.Documents.Restore,
-          order: 4,
+          order: 5,
           layout: eLayoutType.application,
         },
       ]);

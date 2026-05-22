@@ -461,6 +461,17 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             }
         }
 
+        // Keyword 子串匹配（Title / 原始文件名 / Markdown 全文）。当前用 LIKE '%kw%'，
+        // 文档量大时是顺序扫描；规模化后可在 Markdown 上建 SQL Server 全文索引替换。
+        if (!input.Keyword.IsNullOrWhiteSpace())
+        {
+            var keyword = input.Keyword!.Trim();
+            query = query.Where(d =>
+                (d.Title != null && d.Title.Contains(keyword)) ||
+                (d.FileOrigin.OriginalFileName != null && d.FileOrigin.OriginalFileName.Contains(keyword)) ||
+                (d.Markdown != null && d.Markdown.Contains(keyword)));
+        }
+
         return query;
     }
 

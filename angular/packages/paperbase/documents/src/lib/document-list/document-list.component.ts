@@ -70,6 +70,9 @@ export class DocumentListComponent implements OnInit {
   bulkUploadResults = signal<UploadResult[]>([]);
 
   reviewStatusFilter = signal<DocumentReviewStatus | undefined>(undefined);
+  typeFilter = signal<string>('');
+  lifecycleFilter = signal<DocumentLifecycleStatus | undefined>(undefined);
+  keyword = signal<string>('');
   confirmingDoc = signal<DocumentListItemDto | null>(null);
   documentTypes = signal<DocumentTypeDto[]>([]);
   selectedTypeCode = signal('');
@@ -82,8 +85,6 @@ export class DocumentListComponent implements OnInit {
   pendingReviewCount = computed(() =>
     this.documents().items.filter(d => d.reviewStatus === DocumentReviewStatus.PendingReview).length
   );
-
-  private activeFilter: GetDocumentListInput = {};
 
   readonly DocumentLifecycleStatus = DocumentLifecycleStatus;
   readonly DocumentReviewStatus = DocumentReviewStatus;
@@ -102,6 +103,39 @@ export class DocumentListComponent implements OnInit {
     this.loadList();
   }
 
+  onLifecycleFilterChange(value: DocumentLifecycleStatus | undefined): void {
+    this.lifecycleFilter.set(value);
+    this.page.set(0);
+    this.loadList();
+  }
+
+  onTypeFilterChange(value: string): void {
+    this.typeFilter.set(value);
+    this.page.set(0);
+    this.loadList();
+  }
+
+  applyKeyword(): void {
+    this.page.set(0);
+    this.loadList();
+  }
+
+  clearKeyword(): void {
+    if (!this.keyword()) return;
+    this.keyword.set('');
+    this.page.set(0);
+    this.loadList();
+  }
+
+  private buildFilter(): GetDocumentListInput {
+    return {
+      documentTypeCode: this.typeFilter() || undefined,
+      lifecycleStatus: this.lifecycleFilter(),
+      reviewStatus: this.reviewStatusFilter(),
+      keyword: this.keyword().trim() || undefined,
+    };
+  }
+
   // Visible document types for the current layer (Host admin → Host types;
   // tenant admin → that tenant's types). Drives the confirm-classification picker.
   private loadDocumentTypes(): void {
@@ -116,11 +150,10 @@ export class DocumentListComponent implements OnInit {
   private loadList(): void {
     this.isLoading.set(true);
     this.documentService.getList({
-      ...this.activeFilter,
+      ...this.buildFilter(),
       maxResultCount: this.pageSize,
       skipCount: this.page() * this.pageSize,
       sorting: 'creationTime desc',
-      reviewStatus: this.reviewStatusFilter(),
     })
     .pipe(takeUntilDestroyed(this.destroyRef))
     .subscribe({
@@ -180,7 +213,7 @@ export class DocumentListComponent implements OnInit {
   }
 
   exportCsv(): void {
-    const url = this.documentService.getExportUrl(this.activeFilter);
+    const url = this.documentService.getExportUrl(this.buildFilter());
     window.open(url, '_blank');
   }
 

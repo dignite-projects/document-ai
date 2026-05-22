@@ -14,6 +14,12 @@ public class GetDocumentListInput : PagedAndSortedResultRequestDto
     public DocumentReviewStatus? ReviewStatus { get; set; }
 
     /// <summary>
+    /// Keyword 子串搜索：命中 Title / 原始文件名 / Markdown 全文任一即返回。
+    /// </summary>
+    [DynamicStringLength(typeof(DocumentConsts), nameof(DocumentConsts.MaxSearchKeywordLength))]
+    public string? Keyword { get; set; }
+
+    /// <summary>
     /// 软删除过滤：null 或 false = 仅返回未删除文档（默认行为，依赖 EF DataFilter）；
     /// true = 仅返回已软删除文档（回收站视图，需要 <see cref="Documents.PaperbasePermissions.Documents.Restore"/> 权限）。
     /// </summary>

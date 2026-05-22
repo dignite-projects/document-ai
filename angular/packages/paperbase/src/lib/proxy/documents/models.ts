@@ -82,6 +82,8 @@ export interface GetDocumentListInput {
   lifecycleStatus?: DocumentLifecycleStatus | number | null;
   documentTypeCode?: string | null;
   reviewStatus?: DocumentReviewStatus | null;
+  // Keyword 子串搜索：命中 title / 原始文件名 / Markdown 全文任一即返回。
+  keyword?: string | null;
   // true = 仅返回已软删除文档（回收站视图）；undefined/false = 仅返回未删除文档
   isDeleted?: boolean | null;
 }

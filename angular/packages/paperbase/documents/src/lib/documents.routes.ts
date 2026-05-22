@@ -27,6 +27,15 @@ export const DOCUMENTS_ROUTES: Routes = [
       ),
   },
   {
+    path: 'review',
+    canActivate: [authGuard, permissionGuard],
+    data: { requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification },
+    loadComponent: () =>
+      import('./document-review-queue/document-review-queue.component').then(
+        c => c.DocumentReviewQueueComponent,
+      ),
+  },
+  {
     path: 'types',
     canActivate: [authGuard, permissionGuard],
     data: { requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification },
