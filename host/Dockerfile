@@ -9,8 +9,8 @@ WORKDIR /src
 # Issue #112: copy the whole source tree before restore. The previous Slice-0
 # pattern of per-csproj COPY directives existed only to keep the restore-cache
 # layer stable across pure source edits, but it silently broke the moment
-# Slice 1+ added projects (KnowledgeIndex.Qdrant, TextExtraction*,
-# Ocr.PaddleOcr, Contracts.*) and moved the Slice-0 per-tier props files into
+# Slice 1+ added projects (TextExtraction*, Ocr.PaddleOcr,
+# Contracts.*) and moved the Slice-0 per-tier props files into
 # the consolidated root common.props + Directory.Packages.props. Trading the
 # restore-cache for a build that doesn't need a Dockerfile audit on every
 # project add — the Host image is rebuilt by CI per push, not in tight inner
