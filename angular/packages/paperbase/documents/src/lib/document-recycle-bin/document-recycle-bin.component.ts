@@ -6,7 +6,7 @@ import { LocalizationPipe, PermissionService } from '@abp/ng.core';
 import type { PagedResultDto } from '@abp/ng.core';
 import { Confirmation, ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
 import {
-  DocumentDto,
+  DocumentListItemDto,
   DocumentService,
   PAPERBASE_PERMISSIONS,
 } from '@dignite/paperbase';
@@ -25,7 +25,7 @@ export class DocumentRecycleBinComponent implements OnInit {
   private readonly permissionService = inject(PermissionService);
   private readonly destroyRef = inject(DestroyRef);
 
-  documents = signal<PagedResultDto<DocumentDto>>({ totalCount: 0, items: [] });
+  documents = signal<PagedResultDto<DocumentListItemDto>>({ totalCount: 0, items: [] });
   isLoading = signal(true);
   page = signal(0);
   pageSize = 10;
@@ -71,7 +71,7 @@ export class DocumentRecycleBinComponent implements OnInit {
       });
   }
 
-  restore(doc: DocumentDto): void {
+  restore(doc: DocumentListItemDto): void {
     this.confirmation
       .warn('::Document:AreYouSureToRestore', '::AreYouSure')
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -88,7 +88,7 @@ export class DocumentRecycleBinComponent implements OnInit {
       });
   }
 
-  permanentDelete(doc: DocumentDto): void {
+  permanentDelete(doc: DocumentListItemDto): void {
     this.confirmation
       .warn('::Document:AreYouSureToPermanentlyDelete', '::AreYouSure', {
         yesText: '::Document:PermanentDelete',
@@ -107,7 +107,7 @@ export class DocumentRecycleBinComponent implements OnInit {
       });
   }
 
-  isImage(doc: DocumentDto): boolean {
+  isImage(doc: DocumentListItemDto): boolean {
     return doc.fileOrigin?.contentType?.startsWith('image/') ?? false;
   }
 

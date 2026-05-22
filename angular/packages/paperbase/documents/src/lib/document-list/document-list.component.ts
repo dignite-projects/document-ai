@@ -17,9 +17,8 @@ import type { PagedResultDto } from '@abp/ng.core';
 import { ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
 import { Confirmation } from '@abp/ng.theme.shared';
 import {
-  DocumentDto,
   DocumentLifecycleStatus,
-  DocumentPipelineRunDto,
+  DocumentListItemDto,
   DocumentReviewStatus,
   DocumentService,
   GetDocumentListInput,
@@ -59,14 +58,14 @@ export class DocumentListComponent implements OnInit {
     PAPERBASE_PERMISSIONS.Documents.Delete,
   );
 
-  documents = signal<PagedResultDto<DocumentDto>>({ totalCount: 0, items: [] });
+  documents = signal<PagedResultDto<DocumentListItemDto>>({ totalCount: 0, items: [] });
   isLoading = signal(true);
   isExporting = signal(false);
   isBulkUploading = signal(false);
   bulkUploadResults = signal<UploadResult[]>([]);
 
   reviewStatusFilter = signal<DocumentReviewStatus | undefined>(undefined);
-  confirmingDoc = signal<DocumentDto | null>(null);
+  confirmingDoc = signal<DocumentListItemDto | null>(null);
   selectedTypeCode = signal('');
   isConfirming = signal(false);
 
@@ -117,7 +116,7 @@ export class DocumentListComponent implements OnInit {
     this.loadList();
   }
 
-  openDetail(doc: DocumentDto): void {
+  openDetail(doc: DocumentListItemDto): void {
     this.router.navigate(['/documents', doc.id]);
   }
 
@@ -162,7 +161,7 @@ export class DocumentListComponent implements OnInit {
     window.open(url, '_blank');
   }
 
-  delete(doc: DocumentDto, event: Event): void {
+  delete(doc: DocumentListItemDto, event: Event): void {
     event.stopPropagation();
     this.confirmation
       .warn('::Document:AreYouSureToDelete', '::AreYouSure')
@@ -189,30 +188,24 @@ export class DocumentListComponent implements OnInit {
     this.loadList();
   }
 
-  getLatestClassificationRun(doc: DocumentDto): DocumentPipelineRunDto | null {
-    const runs = doc.pipelineRuns?.filter(r => r.pipelineCode === 'classification') ?? [];
-    if (runs.length === 0) return null;
-    return runs.reduce((prev, curr) => curr.attemptNumber > prev.attemptNumber ? curr : prev);
-  }
-
-  needsConfirmation(doc: DocumentDto): boolean {
+  needsConfirmation(doc: DocumentListItemDto): boolean {
     return doc.reviewStatus === DocumentReviewStatus.PendingReview;
   }
 
-  isProcessingDocument(doc: DocumentDto): boolean {
+  isProcessingDocument(doc: DocumentListItemDto): boolean {
     return doc.reviewStatus !== DocumentReviewStatus.PendingReview &&
       (doc.lifecycleStatus === DocumentLifecycleStatus.Processing ||
        doc.lifecycleStatus === DocumentLifecycleStatus.Uploaded);
   }
 
-  getCandidates(doc: DocumentDto): PipelineRunCandidate[] {
-    const run = this.getLatestClassificationRun(doc);
-    const fromRun = run?.candidates;
-    if (fromRun && fromRun.length > 0) return fromRun;
+  // The slim list DTO carries no pipeline runs, so the LLM's top-K candidates are
+  // not available here — the confirm dialog falls back to a free-text type code
+  // input. The current classification (if any) is offered as the lone suggestion.
+  getCandidates(doc: DocumentListItemDto): PipelineRunCandidate[] {
     return doc.documentTypeCode ? [{ typeCode: doc.documentTypeCode, confidenceScore: 1 }] : [];
   }
 
-  openConfirmDialog(doc: DocumentDto, event: Event): void {
+  openConfirmDialog(doc: DocumentListItemDto, event: Event): void {
     event.stopPropagation();
     this.confirmingDoc.set(doc);
     const candidates = this.getCandidates(doc);
@@ -264,7 +257,7 @@ export class DocumentListComponent implements OnInit {
     }
   }
 
-  getDocumentStatusBadgeClass(doc: DocumentDto): string {
+  getDocumentStatusBadgeClass(doc: DocumentListItemDto): string {
     if (doc.reviewStatus === DocumentReviewStatus.PendingReview) {
       return 'badge bg-warning text-dark';
     }
@@ -287,7 +280,7 @@ export class DocumentListComponent implements OnInit {
     }
   }
 
-  getDocumentStatusLabel(doc: DocumentDto): string {
+  getDocumentStatusLabel(doc: DocumentListItemDto): string {
     if (doc.reviewStatus === DocumentReviewStatus.PendingReview) {
       return '::DocumentReviewStatus:PendingReview';
     }
@@ -295,7 +288,7 @@ export class DocumentListComponent implements OnInit {
     return this.getStatusLabel(doc.lifecycleStatus);
   }
 
-  isImage(doc: DocumentDto): boolean {
+  isImage(doc: DocumentListItemDto): boolean {
     return doc.fileOrigin?.contentType?.startsWith('image/') ?? false;
   }
 

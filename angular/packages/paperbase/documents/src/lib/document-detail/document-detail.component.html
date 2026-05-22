@@ -65,7 +65,7 @@
 
     <div class="row g-3">
       <!-- LEFT: Original file preview -->
-      <div class="col-lg-4">
+      <div class="col-lg-5">
         <div class="card shadow-sm h-100">
           <div class="card-header">
             <h6 class="mb-0">
@@ -115,217 +115,168 @@
         </div>
       </div>
 
-      <!-- MIDDLE: Tabbed panel -->
-      <div class="col-lg-4 d-flex flex-column">
+      <!-- RIGHT: Document metadata, pipelines, Markdown -->
+      <div class="col-lg-7 d-flex flex-column">
+        <div class="d-flex flex-column gap-3">
+          <div class="card shadow-sm">
+            <div class="card-body">
+              <dl class="row mb-0 small">
+                <dt class="col-sm-5 text-muted">{{ '::Document:Type' | abpLocalization }}</dt>
+                <dd class="col-sm-7">
+                  @if (document()!.documentTypeCode) {
+                    <span class="badge bg-info text-dark">{{ document()!.documentTypeCode }}</span>
+                  } @else {
+                    <span class="text-muted">—</span>
+                  }
+                </dd>
 
-        <!-- Nav tabs -->
-        <ul class="nav nav-tabs mb-3">
-          <li class="nav-item">
-            <button class="nav-link" [class.active]="activeTab() === 'info'" (click)="setTab('info')">
-              <i class="fas fa-info-circle me-1"></i>
-              {{ '::Document:Metadata' | abpLocalization }}
-            </button>
-          </li>
-          <li class="nav-item">
-            <button class="nav-link" [class.active]="activeTab() === 'relations'" (click)="setTab('relations')">
-              <i class="fas fa-project-diagram me-1"></i>
-              {{ '::Document:Relations' | abpLocalization }}
-            </button>
-          </li>
-          <li class="nav-item">
-            <button class="nav-link" [class.active]="activeTab() === 'graph'" (click)="setTab('graph')">
-              <i class="fas fa-share-nodes me-1"></i>
-              {{ '::Document:RelationGraph:Tab' | abpLocalization }}
-            </button>
-          </li>
-        </ul>
+                <dt class="col-sm-5 text-muted">{{ '::Document:ClassificationConfidence' | abpLocalization }}</dt>
+                <dd class="col-sm-7">
+                  @if (document()!.classificationConfidence > 0) {
+                    {{ (document()!.classificationConfidence * 100).toFixed(0) }}%
+                  } @else {
+                    —
+                  }
+                </dd>
 
-        <!-- Tab: Info -->
-        @if (activeTab() === 'info') {
-          <div class="d-flex flex-column gap-3">
-            <div class="card shadow-sm">
-              <div class="card-body">
-                <dl class="row mb-0 small">
-                  <dt class="col-sm-5 text-muted">{{ '::Document:Type' | abpLocalization }}</dt>
+                @if (document()!.reviewStatus !== DocumentReviewStatus.None) {
+                  <dt class="col-sm-5 text-muted">{{ '::Document:ReviewStatus' | abpLocalization }}</dt>
                   <dd class="col-sm-7">
-                    @if (document()!.documentTypeCode) {
-                      <span class="badge bg-info text-dark">{{ document()!.documentTypeCode }}</span>
+                    @if (document()!.reviewStatus === DocumentReviewStatus.PendingReview) {
+                      <span class="badge bg-warning text-dark">
+                        {{ '::DocumentReviewStatus:PendingReview' | abpLocalization }}
+                      </span>
                     } @else {
-                      <span class="text-muted">—</span>
+                      <span class="badge bg-success">
+                        {{ '::DocumentReviewStatus:Reviewed' | abpLocalization }}
+                      </span>
                     }
                   </dd>
+                }
 
-                  <dt class="col-sm-5 text-muted">{{ '::Document:ClassificationConfidence' | abpLocalization }}</dt>
-                  <dd class="col-sm-7">
-                    @if (document()!.classificationConfidence > 0) {
-                      {{ (document()!.classificationConfidence * 100).toFixed(0) }}%
-                    } @else {
-                      —
-                    }
-                  </dd>
+                @if (document()!.classificationReason) {
+                  <dt class="col-sm-5 text-muted">{{ '::Document:ClassificationReason' | abpLocalization }}</dt>
+                  <dd class="col-sm-7 text-muted fst-italic small">{{ document()!.classificationReason }}</dd>
+                }
 
-                  @if (document()!.reviewStatus !== DocumentReviewStatus.None) {
-                    <dt class="col-sm-5 text-muted">{{ '::Document:ReviewStatus' | abpLocalization }}</dt>
-                    <dd class="col-sm-7">
-                      @if (document()!.reviewStatus === DocumentReviewStatus.PendingReview) {
-                        <span class="badge bg-warning text-dark">
-                          {{ '::DocumentReviewStatus:PendingReview' | abpLocalization }}
-                        </span>
-                      } @else {
-                        <span class="badge bg-success">
-                          {{ '::DocumentReviewStatus:Reviewed' | abpLocalization }}
-                        </span>
-                      }
-                    </dd>
+                <dt class="col-sm-5 text-muted">{{ '::Document:UploadedBy' | abpLocalization }}</dt>
+                <dd class="col-sm-7">{{ document()!.fileOrigin?.uploadedByUserName }}</dd>
+
+                <dt class="col-sm-5 text-muted">{{ '::Document:UploadedAt' | abpLocalization }}</dt>
+                <dd class="col-sm-7">{{ document()!.creationTime | date:'yyyy-MM-dd HH:mm' }}</dd>
+              </dl>
+
+              <div class="mt-3">
+                <button
+                  class="btn btn-outline-primary btn-sm"
+                  (click)="openFile()"
+                  [disabled]="isBlobLoading()"
+                >
+                  @if (isBlobLoading()) {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                  } @else {
+                    <i class="fas fa-external-link-alt me-1"></i>
                   }
-
-                  @if (document()!.classificationReason) {
-                    <dt class="col-sm-5 text-muted">{{ '::Document:ClassificationReason' | abpLocalization }}</dt>
-                    <dd class="col-sm-7 text-muted fst-italic small">{{ document()!.classificationReason }}</dd>
-                  }
-
-                  <dt class="col-sm-5 text-muted">{{ '::Document:UploadedBy' | abpLocalization }}</dt>
-                  <dd class="col-sm-7">{{ document()!.fileOrigin?.uploadedByUserName }}</dd>
-
-                  <dt class="col-sm-5 text-muted">{{ '::Document:UploadedAt' | abpLocalization }}</dt>
-                  <dd class="col-sm-7">{{ document()!.creationTime | date:'yyyy-MM-dd HH:mm' }}</dd>
-                </dl>
-
-                <div class="mt-3">
-                  <button
-                    class="btn btn-outline-primary btn-sm"
-                    (click)="openFile()"
-                    [disabled]="isBlobLoading()"
-                  >
-                    @if (isBlobLoading()) {
-                      <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                    } @else {
-                      <i class="fas fa-external-link-alt me-1"></i>
-                    }
-                    {{ '::Document:OpenFile' | abpLocalization }}
-                  </button>
-                </div>
+                  {{ '::Document:OpenFile' | abpLocalization }}
+                </button>
               </div>
             </div>
+          </div>
 
-            <div class="card shadow-sm">
-              <div class="card-header">
-                <h6 class="mb-0">
-                  <i class="fas fa-stream me-2"></i>
-                  {{ '::Document:Pipelines' | abpLocalization }}
-                </h6>
-              </div>
-              <ul class="list-group list-group-flush small">
-                @for (row of pipelineRows(); track row.pipelineCode) {
-                  <li class="list-group-item">
-                    <div class="d-flex align-items-center flex-wrap gap-2">
-                      <span class="fw-semibold">
-                        @if (row.isKnown) {
-                          {{ row.labelKey | abpLocalization }}
-                        } @else {
-                          {{ row.pipelineCode }}
-                        }
+          <div class="card shadow-sm">
+            <div class="card-header">
+              <h6 class="mb-0">
+                <i class="fas fa-stream me-2"></i>
+                {{ '::Document:Pipelines' | abpLocalization }}
+              </h6>
+            </div>
+            <ul class="list-group list-group-flush small">
+              @for (row of pipelineRows(); track row.pipelineCode) {
+                <li class="list-group-item">
+                  <div class="d-flex align-items-center flex-wrap gap-2">
+                    <span class="fw-semibold">
+                      @if (row.isKnown) {
+                        {{ row.labelKey | abpLocalization }}
+                      } @else {
+                        {{ row.pipelineCode }}
+                      }
+                    </span>
+                    <span [class]="row.statusBadgeClass">
+                      @if (row.inProgress) {
+                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                      }
+                      {{ row.statusLabel | abpLocalization }}
+                    </span>
+                    @if (row.run && row.run.attemptNumber > 1) {
+                      <span class="badge bg-light text-muted border">
+                        {{ '::Document:Pipeline:Attempt' | abpLocalization }}
+                        #{{ row.run.attemptNumber }}
                       </span>
-                      <span [class]="row.statusBadgeClass">
-                        @if (row.inProgress) {
+                    }
+                    @if (row.elapsedDisplay !== null) {
+                      <span class="text-muted ms-auto">
+                        <i class="fas fa-clock me-1"></i>{{ row.elapsedDisplay }}
+                      </span>
+                    }
+                    @if (row.retryable) {
+                      <button
+                        class="btn btn-outline-primary btn-sm"
+                        [class.ms-auto]="row.elapsedDisplay === null"
+                        [disabled]="retryingPipeline() !== null"
+                        (click)="retryPipeline(row.pipelineCode)">
+                        @if (retryingPipeline() === row.pipelineCode) {
                           <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                          {{ '::Document:Pipeline:Retrying' | abpLocalization }}
+                        } @else {
+                          <i class="fas fa-redo me-1"></i>
+                          {{ '::Document:Pipeline:Retry' | abpLocalization }}
                         }
-                        {{ row.statusLabel | abpLocalization }}
-                      </span>
-                      @if (row.run && row.run.attemptNumber > 1) {
-                        <span class="badge bg-light text-muted border">
-                          {{ '::Document:Pipeline:Attempt' | abpLocalization }}
-                          #{{ row.run.attemptNumber }}
+                      </button>
+                    }
+                  </div>
+                  @if (row.run) {
+                    <div class="text-muted small mt-1">
+                      @if (row.run.startedAt) {
+                        <span>
+                          <i class="fas fa-play me-1"></i>{{ row.run.startedAt | date:'yyyy-MM-dd HH:mm:ss' }}
                         </span>
                       }
-                      @if (row.elapsedDisplay !== null) {
-                        <span class="text-muted ms-auto">
-                          <i class="fas fa-clock me-1"></i>{{ row.elapsedDisplay }}
+                      @if (row.run.completedAt) {
+                        <span class="ms-3">
+                          <i class="fas fa-flag-checkered me-1"></i>{{ row.run.completedAt | date:'yyyy-MM-dd HH:mm:ss' }}
                         </span>
-                      }
-                      @if (row.retryable) {
-                        <button
-                          class="btn btn-outline-primary btn-sm"
-                          [class.ms-auto]="row.elapsedDisplay === null"
-                          [disabled]="retryingPipeline() !== null"
-                          (click)="retryPipeline(row.pipelineCode)">
-                          @if (retryingPipeline() === row.pipelineCode) {
-                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                            {{ '::Document:Pipeline:Retrying' | abpLocalization }}
-                          } @else {
-                            <i class="fas fa-redo me-1"></i>
-                            {{ '::Document:Pipeline:Retry' | abpLocalization }}
-                          }
-                        </button>
                       }
                     </div>
-                    @if (row.run) {
-                      <div class="text-muted small mt-1">
-                        @if (row.run.startedAt) {
-                          <span>
-                            <i class="fas fa-play me-1"></i>{{ row.run.startedAt | date:'yyyy-MM-dd HH:mm:ss' }}
-                          </span>
-                        }
-                        @if (row.run.completedAt) {
-                          <span class="ms-3">
-                            <i class="fas fa-flag-checkered me-1"></i>{{ row.run.completedAt | date:'yyyy-MM-dd HH:mm:ss' }}
-                          </span>
-                        }
-                      </div>
-                    }
-                    @if (row.run?.statusMessage) {
-                      <div class="alert mt-2 mb-0 py-2 small"
-                           [class.alert-danger]="row.run!.status === PipelineRunStatus.Failed"
-                           [class.alert-secondary]="row.run!.status !== PipelineRunStatus.Failed">
-                        {{ row.run!.statusMessage }}
-                      </div>
-                    }
-                  </li>
-                }
-              </ul>
-            </div>
+                  }
+                  @if (row.run?.statusMessage) {
+                    <div class="alert mt-2 mb-0 py-2 small"
+                         [class.alert-danger]="row.run!.status === PipelineRunStatus.Failed"
+                         [class.alert-secondary]="row.run!.status !== PipelineRunStatus.Failed">
+                      {{ row.run!.statusMessage }}
+                    </div>
+                  }
+                </li>
+              }
+            </ul>
+          </div>
 
-            @if (document()!.markdown) {
-              <div class="card shadow-sm">
-                <div class="card-header d-flex justify-content-between align-items-center"
-                     role="button" (click)="toggleText()" style="cursor: pointer;">
-                  <h6 class="mb-0">
-                    <i class="fas fa-align-left me-2"></i>
-                    {{ '::Document:Markdown' | abpLocalization }}
-                  </h6>
-                  <i class="fas" [class.fa-chevron-down]="!isTextExpanded()" [class.fa-chevron-up]="isTextExpanded()"></i>
-                </div>
-                @if (isTextExpanded()) {
-                  <div class="card-body">
-                    <pre class="ocr-text">{{ document()!.markdown }}</pre>
-                  </div>
-                }
+          @if (document()!.markdown) {
+            <div class="card shadow-sm">
+              <div class="card-header d-flex justify-content-between align-items-center"
+                   role="button" (click)="toggleText()" style="cursor: pointer;">
+                <h6 class="mb-0">
+                  <i class="fas fa-align-left me-2"></i>
+                  {{ '::Document:Markdown' | abpLocalization }}
+                </h6>
+                <i class="fas" [class.fa-chevron-down]="!isTextExpanded()" [class.fa-chevron-up]="isTextExpanded()"></i>
               </div>
-            }
-          </div>
-        }
-
-        <!-- Tab: Relations -->
-        @if (activeTab() === 'relations') {
-          <lib-document-relations [documentId]="document()!.id" />
-        }
-
-        <!-- Tab: Relation Graph (wiki-style navigability) -->
-        @if (activeTab() === 'graph') {
-          <lib-document-relation-graph [documentId]="document()!.id" />
-        }
-
-      </div>
-
-      <!-- RIGHT: Document-scoped Chat panel -->
-      <div class="col-lg-4 d-flex flex-column">
-        <div class="card shadow-sm flex-fill">
-          <div class="card-body p-0 d-flex flex-column">
-            <lib-chat-panel
-              mode="panel"
-              [documentId]="document()!.id"
-            />
-          </div>
+              @if (isTextExpanded()) {
+                <div class="card-body">
+                  <pre class="ocr-text">{{ document()!.markdown }}</pre>
+                </div>
+              }
+            </div>
+          }
         </div>
       </div>
     </div>

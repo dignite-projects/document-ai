@@ -22,12 +22,4 @@ export const APP_ROUTES: Routes = [
     path: 'documents',
     loadChildren: () => import('@dignite/paperbase/documents').then(m => m.DOCUMENTS_ROUTES),
   },
-  {
-    path: 'chat',
-    loadChildren: () => import('@dignite/paperbase/chat').then(m => m.CHAT_ROUTES),
-  },
-  {
-    path: 'contracts',
-    loadChildren: () => import('@dignite/paperbase.contracts').then(m => m.CONTRACTS_ROUTES),
-  },
 ];

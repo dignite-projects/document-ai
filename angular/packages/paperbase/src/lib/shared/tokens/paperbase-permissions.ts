@@ -12,16 +12,4 @@ export const PAPERBASE_PERMISSIONS = {
       Retry: 'Paperbase.Documents.Pipelines.Retry',
     },
   },
-  Chat: {
-    Default: 'Paperbase.Chat',
-    Create: 'Paperbase.Chat.Create',
-    SendMessage: 'Paperbase.Chat.SendMessage',
-    Delete: 'Paperbase.Chat.Delete',
-  },
-  DocumentRelations: {
-    Default: 'Paperbase.DocumentRelations',
-    Create: 'Paperbase.DocumentRelations.Create',
-    Delete: 'Paperbase.DocumentRelations.Delete',
-    ConfirmRelation: 'Paperbase.DocumentRelations.ConfirmRelation',
-  },
 } as const;

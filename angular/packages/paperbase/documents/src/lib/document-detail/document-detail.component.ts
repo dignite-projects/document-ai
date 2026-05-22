@@ -22,9 +22,6 @@ import {
   PAPERBASE_PERMISSIONS,
   PipelineRunStatus,
 } from '@dignite/paperbase';
-import { ChatPanelComponent } from '@dignite/paperbase/chat';
-import { DocumentRelationsComponent } from '../document-relations/document-relations.component';
-import { DocumentRelationGraphComponent } from '../document-relation-graph/document-relation-graph.component';
 
 interface PipelineRow {
   pipelineCode: string;
@@ -44,21 +41,16 @@ interface PipelineRow {
 }
 
 // Mirrors core/src/Dignite.Paperbase.Domain.Shared/Documents/PaperbasePipelines.cs.
-// 'relation-discovery' is the L2/L3 RelationDiscovery pipeline (Issue #115); not a key
-// pipeline (Document.LifecycleStatus is unaffected by its outcome) but operators want
-// to see whether L2 ran successfully and how many AiSuggested relations it produced.
 const KNOWN_PIPELINE_CODES = [
   'text-extraction',
   'classification',
-  'embedding',
-  'relation-discovery',
 ] as const;
 
 @Component({
   selector: 'lib-document-detail',
   templateUrl: './document-detail.component.html',
   styleUrls: ['./document-detail.component.scss'],
-  imports: [CommonModule, RouterModule, LocalizationPipe, ChatPanelComponent, DocumentRelationsComponent, DocumentRelationGraphComponent],
+  imports: [CommonModule, RouterModule, LocalizationPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DocumentDetailComponent implements OnInit, OnDestroy {
@@ -78,7 +70,6 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   isLoading = signal(true);
   isTextExpanded = signal(false);
   imageError = signal(false);
-  activeTab = signal<'info' | 'relations' | 'graph'>('info');
   retryingPipeline = signal<string | null>(null);
   blobUrl = signal<string | null>(null);
   isBlobLoading = signal(false);
@@ -222,10 +213,6 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
           this.isBlobLoading.set(false);
         },
       });
-  }
-
-  setTab(tab: 'info' | 'relations' | 'graph'): void {
-    this.activeTab.set(tab);
   }
 
   ngOnDestroy(): void {

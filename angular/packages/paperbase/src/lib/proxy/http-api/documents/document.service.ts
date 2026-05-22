@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { EnvironmentService, RestService } from '@abp/ng.core';
 import type { PagedResultDto } from '@abp/ng.core';
 import { Observable } from 'rxjs';
-import type { DocumentDto, GetDocumentListInput } from '../../documents/models';
+import type { DocumentDto, DocumentListItemDto, GetDocumentListInput } from '../../documents/models';
 
 @Injectable({ providedIn: 'root' })
 export class DocumentService {
@@ -17,8 +17,8 @@ export class DocumentService {
       { apiName: this.apiName }
     );
 
-  getList = (input: GetDocumentListInput): Observable<PagedResultDto<DocumentDto>> =>
-    this.rest.request<void, PagedResultDto<DocumentDto>>(
+  getList = (input: GetDocumentListInput): Observable<PagedResultDto<DocumentListItemDto>> =>
+    this.rest.request<void, PagedResultDto<DocumentListItemDto>>(
       {
         method: 'GET',
         url: this.basePath,

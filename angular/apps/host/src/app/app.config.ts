@@ -12,8 +12,7 @@ import { provideLogo, withEnvironmentOptions } from "@abp/ng.theme.shared";
 import { ApplicationConfig } from '@angular/core';
 import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideRouter } from '@angular/router';
-import { provideChat, provideDocuments } from '@dignite/paperbase/config';
-import { provideContracts } from '@dignite/paperbase.contracts/config';
+import { provideDocuments } from '@dignite/paperbase/config';
 import { environment } from '../environments/environment';
 import { APP_ROUTES } from './app.routes';
 import { HOME_MENU_PROVIDER } from './home/home.menu.provider';
@@ -40,8 +39,6 @@ export const appConfig: ApplicationConfig = {
     provideThemeLeptonX(),
     provideSideMenuLayout(),
     provideLogo(withEnvironmentOptions(environment)),
-    provideChat(),
     provideDocuments(),
-    provideContracts(),
   ]
 };
