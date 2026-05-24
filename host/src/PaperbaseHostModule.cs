@@ -421,9 +421,31 @@ public class PaperbaseHostModule : AbpModule
 
     private void ConfigureAI(ServiceConfigurationContext context, IConfiguration configuration)
     {
+        // Classification and field extraction have no non-LLM fallback, so a provider is mandatory.
+        // Fail fast at startup instead of letting documents silently fail provider auth on the first
+        // pipeline call. The committed appsettings.json ships the "YOUR_API_KEY" placeholder; a real
+        // provider must come from appsettings.Development.json / user-secrets / env vars. Hosts that
+        // target a non-OpenAI wire protocol replace this whole method (see docs/ai-provider.md) and
+        // own their own validation.
+        var endpoint = configuration["PaperbaseAI:Endpoint"];
+        var apiKey = configuration["PaperbaseAI:ApiKey"];
+        var chatModelId = configuration["PaperbaseAI:ChatModelId"];
+        if (string.IsNullOrWhiteSpace(endpoint)
+            || string.IsNullOrWhiteSpace(apiKey)
+            || apiKey == "YOUR_API_KEY"
+            || string.IsNullOrWhiteSpace(chatModelId))
+        {
+            throw new AbpException(
+                "Paperbase requires an LLM provider before it can start: document classification and " +
+                "field extraction have no non-LLM fallback. Set PaperbaseAI:Endpoint, PaperbaseAI:ApiKey, " +
+                "and PaperbaseAI:ChatModelId in host/src/appsettings.Development.json (git-ignored), " +
+                "user-secrets, or environment variables. For a zero-cost local option, point Endpoint at a " +
+                "local Ollama /v1 endpoint and use any non-empty token as the key. See docs/ai-provider.md.");
+        }
+
         var openAIClient = new OpenAIClient(
-            new System.ClientModel.ApiKeyCredential(configuration["PaperbaseAI:ApiKey"]!),
-            new OpenAIClientOptions { Endpoint = new Uri(configuration["PaperbaseAI:Endpoint"]!) });
+            new System.ClientModel.ApiKeyCredential(apiKey),
+            new OpenAIClientOptions { Endpoint = new Uri(endpoint) });
 
         // Title-generator chat client: single-shot, tool-free, prompt-unique-per-call so
         // distributed caching is a net negative. Consumed by
@@ -432,7 +454,7 @@ public class PaperbaseHostModule : AbpModule
         // to ChatModelId when TitleGeneratorModelId is unset; hosts that want to cut cost
         // can point this at a small fast model (e.g. Qwen3-8B).
         var titleGeneratorModelId = configuration["PaperbaseAI:TitleGeneratorModelId"]
-            ?? configuration["PaperbaseAI:ChatModelId"]!;
+            ?? chatModelId;
         context.Services.AddKeyedChatClient(
             PaperbaseAIConsts.TitleGeneratorChatClientKey,
             _ => openAIClient.GetChatClient(titleGeneratorModelId).AsIChatClient())
@@ -448,7 +470,7 @@ public class PaperbaseHostModule : AbpModule
         // token budgets can point this at a smaller / cheaper model that can still
         // satisfy schema-bound output.
         var structuredModelId = configuration["PaperbaseAI:StructuredModelId"]
-            ?? configuration["PaperbaseAI:ChatModelId"]!;
+            ?? chatModelId;
         context.Services.AddKeyedChatClient(
             PaperbaseAIConsts.StructuredChatClientKey,
             _ => openAIClient.GetChatClient(structuredModelId).AsIChatClient())

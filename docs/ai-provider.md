@@ -11,6 +11,12 @@ The split keeps credentials (`ApiKey`) out of any `IOptions<>` flowing into busi
 
 > **Paperbase is a channel layer.** It does not host chat / RAG / agentic tool-calling paths (those were removed in #166 — see CLAUDE.md "OUT of scope"). The only LLM call sites in this repo are backend pipeline workflows. Downstream RAG / Chat consumers register their own `IChatClient` against their own provider on their side.
 
+## Required before first run
+
+An LLM provider is **mandatory**. `DocumentClassificationWorkflow` and `FieldExtractionWorkflow` have no non-LLM fallback, so a host with no provider cannot classify documents or extract fields. To make this unmissable, `PaperbaseHostModule.ConfigureAI` **fails fast at startup**: if `PaperbaseAI:Endpoint`, `PaperbaseAI:ApiKey`, or `PaperbaseAI:ChatModelId` is missing — or `ApiKey` is still the committed `"YOUR_API_KEY"` placeholder — the host throws before serving any request, with a message pointing here.
+
+Supply credentials in `host/src/appsettings.Development.json` (git-ignored), [user-secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets), or environment variables. **Do not** edit the committed `appsettings.json` — its placeholder is exactly what the startup guard checks against, and a real key there would leak into source control. The cheapest first-run path is a local [Ollama](#trying-alternative-providers) endpoint; otherwise any OpenAI-compatible provider works (see [Picking a chat model](#picking-a-chat-model)).
+
 ## Provider wiring (`PaperbaseAI`)
 
 ```json
@@ -78,7 +84,7 @@ A single `PaperbaseAI` block serves all of them. Picking different models per wo
 ## Trying alternative providers
 
 - **Azure OpenAI**: set `Endpoint` to `https://<resource>.openai.azure.com/openai/deployments/<deployment>/` and use the deployment name as `ChatModelId`. (API-key auth only — for Microsoft Entra ID see [Going off-protocol](#going-off-protocol-non-openai-providers).)
-- **Ollama (local)**: run `ollama serve`, set `Endpoint` to `http://localhost:11434/v1`, leave `ApiKey` empty, and pick a locally pulled model id.
+- **Ollama (local)**: run `ollama serve`, set `Endpoint` to `http://localhost:11434/v1`, set `ApiKey` to any non-empty token (the `/v1` shim ignores it, but the OpenAI client rejects an empty key), and pick a locally pulled model id.
 - **Any OpenAI-compatible gateway** (OpenRouter, vLLM, LM Studio, etc.) works the same way — only the keys in `PaperbaseAI` need to change.
 
 ## Going off-protocol (non-OpenAI providers)

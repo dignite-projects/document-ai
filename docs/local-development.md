@@ -59,31 +59,9 @@ docker compose down
 
 ## Backend configuration
 
-Create `host/src/appsettings.Development.json`. This file is git-ignored.
+Create `host/src/appsettings.Development.json`. This file is git-ignored — keep your real credentials here (or in user-secrets / environment variables), never in the committed `appsettings.json`.
 
-### Minimal configuration (no AI features)
-
-If you only want to play with the upload / text-extraction pipeline against a local SQL Server LocalDB instance, the committed `appsettings.json` already covers it; you only need to override the connection string if your local SQL Server differs:
-
-```json
-{
-  "Serilog": {
-    "MinimumLevel": {
-      "Default": "Debug"
-    }
-  },
-  "ConnectionStrings": {
-    "Default": "Server=YOUR_DB_SERVER;Database=Paperbase-Dev;User ID=YOUR_USER;Password=YOUR_PASSWORD;TrustServerCertificate=true"
-  },
-  "StringEncryption": {
-    "DefaultPassPhrase": "any-random-string-here"
-  }
-}
-```
-
-### Full configuration (with AI)
-
-Add the `PaperbaseAI` block to enable the classification / Host field extraction / tenant field extraction / title-generation LLM paths:
+An LLM provider is **required**. The host fails fast at startup if `PaperbaseAI` is not configured, because document classification and field extraction have no non-LLM fallback (the committed `appsettings.json` ships only a `"YOUR_API_KEY"` placeholder, which the startup guard rejects). Minimum viable dev config:
 
 ```json
 {
@@ -101,14 +79,14 @@ Add the `PaperbaseAI` block to enable the classification / Host field extraction
   "PaperbaseAI": {
     "Endpoint": "https://api.openai.com/v1",
     "ApiKey": "sk-...",
-    "ChatModelId": "gpt-4o-mini",
-    "TitleGeneratorModelId": "gpt-4o-mini",
-    "StructuredModelId": "gpt-4o-mini"
+    "ChatModelId": "gpt-4o-mini"
   }
 }
 ```
 
-To use a non-OpenAI provider (Azure OpenAI, SiliconFlow, OpenRouter, Ollama, etc.), see [docs/ai-provider.md](./ai-provider.md) — for OpenAI-protocol providers you only swap `Endpoint` + `ApiKey` + model ids; for non-OpenAI wire protocols you override `ConfigureAI` in `PaperbaseHostModule`.
+`TitleGeneratorModelId` / `StructuredModelId` are optional and default to `ChatModelId`; set them only when you want a different model per workload.
+
+To use a non-OpenAI provider (Azure OpenAI, SiliconFlow, OpenRouter, Ollama, etc.), see [docs/ai-provider.md](./ai-provider.md) — for OpenAI-protocol providers you only swap `Endpoint` + `ApiKey` + model ids; for non-OpenAI wire protocols you override `ConfigureAI` in `PaperbaseHostModule`. For a zero-cost local option, run Ollama and point `Endpoint` at its `/v1` endpoint (use any non-empty token as `ApiKey`).
 
 > **OpenIddict certificates**: In Development mode, temporary signing and encryption certificates are generated automatically. No `.pfx` file is needed.
 
@@ -157,7 +135,7 @@ Default credentials (seeded on first run):
 
 1. SQL Server is running and the target database (e.g. `Paperbase-Dev`) is reachable
 2. `docker compose up -d paddleocr` completed successfully in `host/` (only required if you upload scanned documents)
-3. `host/src/appsettings.Development.json` exists with valid connection string and passphrase
+3. `host/src/appsettings.Development.json` exists with a valid connection string, passphrase, and `PaperbaseAI` provider config (the host won't start without it — see [Backend configuration](#backend-configuration))
 4. `dotnet run` started without errors in `host/src`
 5. `npm start` started in `host/angular`
 
