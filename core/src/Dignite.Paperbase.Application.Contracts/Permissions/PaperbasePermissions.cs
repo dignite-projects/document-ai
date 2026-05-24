@@ -21,6 +21,14 @@ public class PaperbasePermissions
             public const string Default = Documents.Default + ".Pipelines";
             public const string Retry = Default + ".Retry";
         }
+
+        public static class Templates
+        {
+            public const string Default = Documents.Default + ".Templates";
+            public const string Create = Default + ".Create";
+            public const string Update = Default + ".Update";
+            public const string Delete = Default + ".Delete";
+        }
     }
 
     // 文件柜（#194）——人工组织维度，与 Documents 同级权限组。

@@ -12,5 +12,6 @@ public interface IPaperbaseDbContext : IEfCoreDbContext
     DbSet<DocumentPipelineRun> DocumentPipelineRuns { get; }
     DbSet<DocumentType> DocumentTypes { get; }
     DbSet<FieldDefinition> FieldDefinitions { get; }
+    DbSet<ExportTemplate> ExportTemplates { get; }
     DbSet<Cabinet> Cabinets { get; }
 }
