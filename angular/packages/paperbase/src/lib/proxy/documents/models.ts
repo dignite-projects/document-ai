@@ -77,6 +77,18 @@ export interface DocumentListItemDto extends EntityDto<string> {
   creationTime: string;
   // 软删除时间（仅当 isDeleted=true 的回收站视图查询时有值）。
   deletionTime?: string | null;
+  // Type-bound field extraction result (field architecture v2). Key = field name
+  // (same shape as FieldDefinitionDto.name). null when nothing has been extracted.
+  // JSON values are decoded server-side from a SQL Server json column, so each
+  // value may be a string, number, boolean, or null.
+  extractedFields?: Record<string, unknown> | null;
+}
+
+export interface DocumentFieldFilter {
+  name?: string;
+  value?: string | null;
+  min?: string | null;
+  max?: string | null;
 }
 
 export interface GetDocumentListInput {
@@ -86,10 +98,10 @@ export interface GetDocumentListInput {
   lifecycleStatus?: DocumentLifecycleStatus | number | null;
   documentTypeCode?: string | null;
   reviewStatus?: DocumentReviewStatus | null;
-  // Keyword 子串搜索：命中 title / 原始文件名 / Markdown 全文任一即返回。
-  keyword?: string | null;
   // true = 仅返回已软删除文档（回收站视图）；undefined/false = 仅返回未删除文档
   isDeleted?: boolean | null;
   // 按文件柜筛选（#194）。null/undefined = 不筛选。
   cabinetId?: string | null;
+  // ExtractedFields 字段值过滤器（多个之间 AND，锚定 documentTypeCode）。null/undefined = 仅按元数据检索。
+  fieldFilters?: DocumentFieldFilter[] | null;
 }

@@ -5,6 +5,7 @@ using Dignite.Paperbase.Documents.Pipelines.Classification;
 using Dignite.Paperbase.Documents.Pipelines.TextExtraction;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 using Shouldly;
 using Volo.Abp;
 using Volo.Abp.BackgroundJobs;
@@ -189,12 +190,14 @@ public class DocumentAppService_Retry_Tests
     [Fact]
     public async Task RetryPipelineAsync_Throws_EntityNotFound_When_Cross_Tenant()
     {
+        // 租户隔离由仓储的 ambient IMultiTenant 过滤器施加（AppService 不再手写 TenantId 断言）：
+        // 调用方是别的租户时，真实仓储的 GetAsync 查不到该文档而抛 EntityNotFound。mock 仓储不带过滤器，
+        // 此处显式让 GetAsync 抛 EntityNotFound 模拟该框架行为，断言 AppService 如实传播、且不入队任何 Job。
         var docTenant = Guid.NewGuid();
         var callerTenant = Guid.NewGuid();
         var doc = CreateDocument(tenantId: docTenant);
-        var run = await _pipelineRunManager.StartAsync(doc, PaperbasePipelines.TextExtraction);
-        await _pipelineRunManager.FailAsync(doc, run, errorMessage: "boom");
-        StubGet(doc);
+        _documentRepository.GetAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new EntityNotFoundException(typeof(Document), doc.Id));
 
         using (_currentTenant.Change(callerTenant))
         {

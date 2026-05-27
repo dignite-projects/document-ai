@@ -282,10 +282,10 @@ Paperbase 是通道，Markdown 是出口的**唯一文本载荷**。遇到取舍
 
 以下安全约定适用于 Paperbase 内部 LLM 调用路径（内置 LLM 分类、Host 字段抽取、租户字段抽取（B 机制）等）：
 
-- **Fail-closed 安全断言**：任何由 LLM 触发或参数受 LLM 输出影响的查询路径，必须显式做**权限断言**（`IAuthorizationService.CheckAsync(...)`）+ 显式 `TenantId` 谓词（**不依赖 ambient `DataFilter`**）+ 结果集硬上限（`Take(N)`），不得裸跑 raw SQL。`DataFilter` 是可读性辅助，不是安全边界——任何禁用过滤器的代码路径（后台任务、单元测试 helper、特殊路径）会绕过保护
+- **Fail-closed 安全断言**：任何由 LLM 触发或参数受 LLM 输出影响的查询路径，必须显式做**权限断言**（`IAuthorizationService.CheckAsync(...)`——AppService 上的 `[Authorize]` 在 MCP / 反射 / tool-dispatch 路径不触发）+ 结果集硬上限（`Take(N)`），不得裸跑 raw SQL
 - **PromptBoundary**：用户派生的自由文本字段（title / partyName / summary / 文档内容等）进入 LLM prompt 或 LLM-facing 输出前，必须经 `PromptBoundary.WrapField(...)` 包裹，防止 prompt injection 注入向量
 - **Description / Instructions 编译期常量**：任何 LLM-facing description / instructions 都必须是**编译期常量**或纯静态字符串字面量，**禁止**运行时拼接用户控制的字符串
-- **多租户隔离**：所有 `Document` / 衍生字段查询路径必须显式按 `CurrentTenant.Id` 过滤
+- **多租户隔离**：依赖 ABP 的 `IMultiTenant` 全局查询过滤器——它由已认证主体的 tenant 声明解析、对所有查询（含 `FromSqlRaw`，经 EF Core 子查询包装）默认生效，是框架级租户边界。不在查询路径手写 `CurrentTenant.Id` 谓词（冗余且会静默无视调用方意图）；唯一纪律是**不得在 LLM 触发路径上 `Disable<IMultiTenant>()` / `IgnoreQueryFilters()`**
 
 ## 处理规则
 

@@ -92,10 +92,8 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
     {
         var template = await GetOwnedTemplateAsync(input.TemplateId);
 
-        // 显式租户谓词 — fail closed，不依赖 ambient DataFilter（CLAUDE.md "## 安全约定"）。
-        var tenantId = CurrentTenant.Id;
-        var query = (await _documentRepository.GetQueryableAsync())
-            .Where(d => d.TenantId == tenantId);
+        // 租户隔离由 ambient IMultiTenant 过滤器施加（含下方 GetQueryableAsync）。
+        var query = await _documentRepository.GetQueryableAsync();
 
         if (input.DocumentIds is { Count: > 0 } ids)
         {
@@ -112,8 +110,6 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
             {
                 query = query.Where(d => d.DocumentTypeCode == input.DocumentTypeCode);
             }
-
-            query = DocumentQueryFilters.WhereKeyword(query, input.Keyword);
         }
 
         // 模板可限定适用文档类型——在筛选 / 勾选基础上再收窄一层。

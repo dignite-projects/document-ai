@@ -11,9 +11,6 @@ public static class DocumentConsts
     /// <summary>OCR / 抽取阶段检测到的语言 tag（ISO 639-1 或 IETF）。</summary>
     public static int MaxLanguageLength { get; set; } = 16;
 
-    /// <summary>操作员列表 keyword 搜索框的最大长度。</summary>
-    public static int MaxSearchKeywordLength { get; set; } = 128;
-
     /// <summary>
     /// 程序化 / LLM 触发检索（MCP 检索 tool 等）单次结果硬上限。
     /// fail-closed 安全门：防 prompt-injection 诱导宽泛查询炸 LLM context / 制造费用攻击。
@@ -26,4 +23,11 @@ public static class DocumentConsts
     /// fail-closed 安全门：超长输入直接空结果，不进 JSON_VALUE 全表扫，防 DB / CPU 滥用。
     /// </summary>
     public const int MaxSearchFieldValueLength = 512;
+
+    /// <summary>
+    /// 单次检索可叠加的 ExtractedFields 字段过滤器数量上限（多字段之间取 AND）。
+    /// fail-closed 安全门：防 prompt-injection 灌入海量过滤器撑爆拼接 SQL / 参数数量。
+    /// 设为编译期 <c>const</c>——安全边界不可被运行时配置放大。
+    /// </summary>
+    public const int MaxSearchFieldFilters = 10;
 }

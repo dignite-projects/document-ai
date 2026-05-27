@@ -9,8 +9,6 @@ Notable hand edits (do **not** lose these if you ever regenerate):
 - `http-api/documents/document.service.ts`
   - `upload(file: File)` posts `FormData` (the auto-generated shape was wrong)
   - `retryPipeline(id, pipelineCode)` — endpoint added after the last regeneration
-  - `getBlobUrl(id)` / `getExportUrl(input)` — synchronous URL builders for
-    `<a href>` / `window.open`, not RPC calls
 - `http-api/documents/document-relation.service.ts`
   - `getList` query param fixed: `documentId` (matches backend `IDocumentRelationAppService.GetListAsync(Guid documentId)`)
 - `documents/source-type.enum.ts`

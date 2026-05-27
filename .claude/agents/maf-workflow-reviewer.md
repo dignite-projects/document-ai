@@ -121,7 +121,7 @@ tools: Read, Grep, Glob, Bash
 **判定**：任何由 LLM 触发或参数受 LLM 输出影响的查询路径，必须依次满足：
 
 1. **显式权限断言**——`IAuthorizationService.CheckAsync(...)`，**不依赖** AppService 上的 `[Authorize]`（LLM 触发的反射调用不走 HTTP 边界）
-2. **显式 `TenantId` 谓词**——`q.Where(x => x.TenantId == currentTenant.Id)`，**不依赖** ambient `DataFilter`。`DataFilter` 是可读性辅助，不是安全边界——任何禁用过滤器的代码路径（后台任务、单元测试 helper）会绕过保护
+2. **租户隔离交给框架过滤器**——依赖 ABP 的 `IMultiTenant` 全局查询过滤器（由已认证主体的 tenant 声明解析、对所有查询默认生效，`FromSqlRaw` 经子查询包装后同样受约束），它即租户安全边界；**不手写** `Where(x => x.TenantId == ...)` 谓词（冗余且在调用方禁用过滤器时会静默无视其意图）。纪律是**不得在 LLM 路径上 `DataFilter.Disable<IMultiTenant>()` / `IgnoreQueryFilters()`**，也不得把端点映射在 `UseMultiTenancy()` 之外
 3. **结果集硬上限**——`Take(N)`，防止 prompt-injection 诱导宽泛查询炸 LLM context window
 4. **Description / Instructions 编译期常量**——LLM-facing description / instructions 必须是**编译期常量**或纯静态字符串字面量，**禁止**运行时拼接用户控制的字符串
 5. **不裸跑 raw SQL**——LLM 拼 SQL 即使看似可控也在攻击面内（prompt injection 完全可以诱导 `WHERE 1=1` 或 `; DROP TABLE`）
@@ -130,7 +130,7 @@ tools: Read, Grep, Glob, Bash
 
 **🔴 反例**（以下设计均违规）：
 - 给 LLM 工具调用方法挂 `[Authorize]` 但不在方法体里再做显式 `CheckAsync`——LLM 反射调用不过 HTTP 边界
-- 用 `ICurrentTenant.Id` 间接通过 `DataFilter` 过滤，而非显式 `Where(x => x.TenantId == ...)`
+- 在 LLM 触发路径上 `DataFilter.Disable<IMultiTenant>()` / `IgnoreQueryFilters()`，或把 MCP/Webhook 端点映射在多租户中间件之外（击穿框架租户边界）
 - 结果集无 `Take(N)`，相信"业务上不会返回太多"
 - 把用户/租户字符串拼进 tool description / system instructions
 - LLM 触发的查询走 raw SQL

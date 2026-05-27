@@ -2,52 +2,56 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents;
-using Dignite.Paperbase.Permissions;
-using Microsoft.AspNetCore.Authorization;
 using ModelContextProtocol.Server;
-using Volo.Abp.Authorization;
 
 namespace Dignite.Paperbase.Mcp.Documents;
 
 /// <summary>
-/// MCP 检索 tool：按 keyword + 结构化元数据 + ExtractedFields 字段值发现文档。
-/// 仅 keyword + metadata 过滤，**不做语义/向量检索**（向量检索是下游 RAG 的事，见 CLAUDE.md OUT of scope）。
-/// 入参限定强类型 schema（无 free-form JSON path），fail-closed 安全门在仓储 + 本方法体内强制。
+/// MCP 检索 tool：薄壳——把 LLM 入参组装成 <see cref="GetDocumentListInput"/> 后委托
+/// <see cref="IDocumentAppService.GetListAsync"/>（与 REST 列表同一个用例入口：权限断言、参数校验、
+/// 字段定义解析、租户隔离都在 AppService 内统一执行）。检索收敛为结构化字段查询——元数据 +
+/// 一个或多个 ExtractedFields 字段值过滤器（多个之间 AND），无 keyword 全文 / 子串检索
+/// （退化检索引擎属 OUT of scope，见 CLAUDE.md / Issue #204）。字段值查询锚定 <c>documentTypeCode</c>（required）：
+/// amount 等字段离开类型无确定含义，引导下游 AI 客户端在用户未指定类型时**反问澄清**
+/// （澄清发生在客户端 LLM，Paperbase 不实现对话 agent）。
+/// 命中行直接带回该文档的全部 ExtractedFields（省二次回拉）；本 tool 只承担传输层关注点：容错解析
+/// lifecycle 字符串、结果集硬上限 clamp 到 <see cref="DocumentConsts.MaxSearchResultCount"/>（保护 LLM context）、
+/// title 与字段值经 <c>PromptBoundary</c> 包裹防 indirect prompt injection。
 /// </summary>
 [McpServerToolType]
 public sealed class DocumentSearchTool
 {
     [McpServerTool(Name = "search_paperbase_documents")]
-    [Description("Search Paperbase documents by keyword and/or structured metadata. "
-        + "Returns up to 50 thin rows (id, uri, title, type, lifecycle, created-at); "
-        + "read a match's full Markdown via its paperbase://documents/{id} resource uri. "
-        + "Keyword + metadata search only — no semantic/vector retrieval.")]
+    [Description("Search Paperbase documents within a single document type by structured metadata "
+        + "and/or one or more extracted-field filters (all combined with AND). Returns up to 50 rows "
+        + "(id, uri, title, type, lifecycle, created-at, and the document's extracted field values); read a "
+        + "match's full Markdown via its paperbase://documents/{id} resource uri. Structured field/metadata "
+        + "search only — no keyword/full-text or semantic/vector retrieval. documentTypeCode is required; if the "
+        + "user has not said which document type to search, ask them first. Discover a type's filterable field "
+        + "names and data types via its paperbase://document-types/{code} resource.")]
     public static async Task<IReadOnlyList<DocumentSearchResultItem>> SearchAsync(
-        IDocumentRepository documentRepository,
-        IAuthorizationService authorizationService,
-        [Description("Substring matched against title, original file name, and Markdown body. Optional.")]
-        string? keyword = null,
-        [Description("Exact document type code to filter by (e.g. a classification result). Optional.")]
-        string? documentTypeCode = null,
+        IDocumentAppService documentAppService,
+        [Description("Required. The document type code to search within (e.g. a classification result like "
+            + "'contract.general'). Every search anchors to a single document type; a field value query needs it "
+            + "to resolve each field's data type. If unknown, ask the user which document type to search.")]
+        string documentTypeCode,
         [Description("Filter by lifecycle status. One of: Uploaded, Processing, Ready, Failed, Archived. Optional.")]
         string? lifecycleStatus = null,
-        [Description("Name of an extracted field to filter by; pair with fieldValue. Optional.")]
-        string? fieldName = null,
-        [Description("Exact value the extracted field must equal; pair with fieldName. Optional.")]
-        string? fieldValue = null,
+        [Description("Extracted-field filters, all combined with AND (every filter must match). Each entry "
+            + "names a field defined on the document type plus either an exact Value or an inclusive numeric/date "
+            + "Min/Max range. Each field's data type is resolved server-side. Omit for a metadata-only search. Optional.")]
+        IReadOnlyList<DocumentFieldFilter>? fieldFilters = null,
         [Description("Max rows to return (1-50). Defaults to 50.")]
         int? maxResultCount = null,
         CancellationToken cancellationToken = default)
     {
-        // fail-closed 安全门 #1：显式权限断言。MCP dispatch 不经 HTTP 边界 [Authorize]，方法体内断言是唯一防线。
-        await authorizationService.CheckAsync(PaperbasePermissions.Documents.Default);
-
         // 容错解析 lifecycle 过滤值——LLM 客户端通常传字符串名（"Ready"）。无法解析则当作"不过滤"
-        // （filter 缺失只会多返回结果，受 Take(N) 上限约束；不是安全门，权限 / 租户 / 上限仍生效）。
+        // （filter 缺失只会多返回结果，受结果上限约束；权限 / 租户 / 上限在 AppService 内仍生效）。
         DocumentLifecycleStatus? lifecycle = null;
         if (!string.IsNullOrWhiteSpace(lifecycleStatus)
             && Enum.TryParse<DocumentLifecycleStatus>(lifecycleStatus, ignoreCase: true, out var parsedLifecycle))
@@ -55,27 +59,72 @@ public sealed class DocumentSearchTool
             lifecycle = parsedLifecycle;
         }
 
-        // 仓储入口强制：显式 TenantId 谓词 + 结果集硬上限（fail-closed 安全门 #2 / #3）。
-        var documents = await documentRepository.SearchAsync(
-            keyword: keyword,
-            documentTypeCode: documentTypeCode,
-            lifecycleStatus: lifecycle,
-            fieldName: fieldName,
-            fieldValue: fieldValue,
-            maxResultCount: maxResultCount ?? DocumentConsts.MaxSearchResultCount,
-            cancellationToken: cancellationToken);
+        var input = new GetDocumentListInput
+        {
+            DocumentTypeCode = documentTypeCode,
+            LifecycleStatus = lifecycle,
+            FieldFilters = fieldFilters?.ToList(),
+            // 结果集硬上限 clamp 到 MaxSearchResultCount——MCP transport 关注点（保护 LLM context /
+            // 防 prompt-injection 诱导宽泛查询）。REST 列表走正常分页，不受此约束。
+            MaxResultCount = Math.Clamp(
+                maxResultCount ?? DocumentConsts.MaxSearchResultCount, 1, DocumentConsts.MaxSearchResultCount),
+            SkipCount = 0
+        };
 
-        return documents
+        // 委托 AppService 用例：权限断言（CheckPolicyAsync）、DTO 参数校验、字段定义解析、租户隔离、
+        // 字段值过滤都在内部统一执行。MCP dispatch 不经 HTTP [Authorize]，但 AppService 方法体内的
+        // CheckPolicyAsync 是真正的强制门，照常生效——这是 LLM 路径的权限防线。
+        var result = await documentAppService.GetListAsync(input);
+
+        return result.Items
             .Select(d => new DocumentSearchResultItem
             {
                 Uri = DocumentResourceUri.Format(d.Id),
                 Id = d.Id,
-                // fail-closed 安全门 #4：用户派生自由文本（title）经 PromptBoundary 包裹，防 indirect prompt injection。
+                // 用户派生自由文本（title）经 PromptBoundary 包裹，防 indirect prompt injection。
                 Title = PromptBoundary.WrapField(d.Title),
                 DocumentTypeCode = d.DocumentTypeCode,
                 LifecycleStatus = d.LifecycleStatus.ToString(),
-                CreationTime = d.CreationTime
+                CreationTime = d.CreationTime,
+                // 该文档的全部抽取字段值转 LLM-facing（String 包裹 / 结构化裸值 / null 跳过）。
+                ExtractedFields = ProjectFields(d.ExtractedFields)
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// 把文档的 ExtractedFields（原样 <see cref="JsonElement"/>）转成 LLM-facing 字符串：
+    /// String 类型值（用户派生自由文本）经 <c>PromptBoundary.WrapField</c> 包裹防 indirect prompt injection；
+    /// 数字 / 布尔等结构化值取裸文本——注入风险 ⟺ 值是 JSON 字符串，故仅 <see cref="JsonValueKind.String"/> 需包裹
+    /// （JSON 无原生 date 类型，日期以字符串存储会一并被包裹，冗余但无害）。
+    /// JSON null（LLM 抽取不符声明类型时的兜底值，见 <c>ExtractedFieldValueValidator</c>）跳过不投影——
+    /// 无有效值，避免投出误导性的字面 "null"。全部跳过 / 无字段 → 返回 null。
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? ProjectFields(
+        IReadOnlyDictionary<string, JsonElement>? fields)
+    {
+        if (fields is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var projected = new Dictionary<string, string>(fields.Count);
+        foreach (var pair in fields)
+        {
+            switch (pair.Value.ValueKind)
+            {
+                case JsonValueKind.Null:
+                case JsonValueKind.Undefined:
+                    continue;
+                case JsonValueKind.String:
+                    projected[pair.Key] = PromptBoundary.WrapField(pair.Value.GetString())!;
+                    break;
+                default:
+                    projected[pair.Key] = pair.Value.GetRawText();
+                    break;
+            }
+        }
+
+        return projected.Count > 0 ? projected : null;
     }
 }

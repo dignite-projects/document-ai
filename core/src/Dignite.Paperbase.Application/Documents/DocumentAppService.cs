@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -64,24 +63,67 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     {
         await CheckPolicyAsync(PaperbasePermissions.Documents.Default);
 
+        // ExtractedFields 字段值过滤器：把每个 FieldFilter 解析成带声明类型的 DocumentFieldQuery
+        // （FieldDefinition 跨聚合查询，属调用层职责）。任一字段未在该类型下定义 → loud fail
+        // （UnknownExtractedField，可纠正信号），不静默空。无 FieldFilters → null（仅元数据检索）。
+        // 输入结构校验（DocumentTypeCode 必填 / 数量 / 长度 / 每个 filter 至少一个值）已由 DTO 自动校验
+        // （AbpValidationException）兜在方法体之前。
+        var fieldQueries = await ResolveFieldQueriesAsync(input);
+
         // 回收站视图：需要 Restore 权限，且整个查询管道必须在 DataFilter.Disable<ISoftDelete> 作用域内
         if (input.IsDeleted == true)
         {
             await CheckPolicyAsync(PaperbasePermissions.Documents.Restore);
             using (DataFilter.Disable<ISoftDelete>())
             {
-                return await ExecuteListQueryAsync(input, onlyDeleted: true);
+                return await ExecuteListQueryAsync(input, onlyDeleted: true, fieldQueries);
             }
         }
 
-        return await ExecuteListQueryAsync(input, onlyDeleted: false);
+        return await ExecuteListQueryAsync(input, onlyDeleted: false, fieldQueries);
+    }
+
+    protected virtual async Task<List<DocumentFieldQuery>?> ResolveFieldQueriesAsync(GetDocumentListInput input)
+    {
+        if (input.FieldFilters is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        // DTO 校验已保证有 FieldFilters 时 DocumentTypeCode 非空、每个 filter 有 Name + 至少一个值。
+        var fieldQueries = new List<DocumentFieldQuery>(input.FieldFilters.Count);
+        foreach (var filter in input.FieldFilters)
+        {
+            var definition = await _fieldDefinitionRepository.FindByNameAsync(input.DocumentTypeCode!, filter.Name!);
+            if (definition == null)
+            {
+                throw new BusinessException(PaperbaseErrorCodes.UnknownExtractedField)
+                    .WithData("FieldName", filter.Name!)
+                    .WithData("DocumentTypeCode", input.DocumentTypeCode!);
+            }
+
+            fieldQueries.Add(new DocumentFieldQuery(
+                filter.Name!, definition.DataType, filter.Value, filter.Min, filter.Max));
+        }
+
+        return fieldQueries;
     }
 
     protected virtual async Task<PagedResultDto<DocumentListItemDto>> ExecuteListQueryAsync(
         GetDocumentListInput input,
-        bool onlyDeleted)
+        bool onlyDeleted,
+        List<DocumentFieldQuery>? fieldQueries)
     {
         var query = await _documentRepository.GetQueryableAsync();
+
+        // ExtractedFields 字段值过滤：动态 JSON 键查询 EF Core 10 无法 LINQ 翻译，下沉到仓储 raw SQL
+        // 取（锚定 DocumentTypeCode 的）匹配 Id 集合，再与本查询求交——保持 ApplyFilter 为元数据过滤单一来源。
+        if (fieldQueries is { Count: > 0 })
+        {
+            var matchedIds = await _documentRepository.GetFieldMatchedIdsAsync(input.DocumentTypeCode!, fieldQueries);
+            query = query.Where(d => matchedIds.Contains(d.Id));
+        }
+
         query = ApplyFilter(query, input);
         if (onlyDeleted)
         {
@@ -95,6 +137,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
 
         var documents = await AsyncExecuter.ToListAsync(query);
 
+        // ExtractedFields 由 Mapperly 直通映射（无条件全带；消费方按 DocumentTypeCode 决定如何呈现）。
         return new PagedResultDto<DocumentListItemDto>(
             totalCount,
             ObjectMapper.Map<List<Document>, List<DocumentListItemDto>>(documents));
@@ -115,14 +158,14 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
 
         // 文件柜归属校验（#194）：若指定 cabinetId，先断言 Cabinets 权限（fail-closed，与前端 canViewCabinets
         // gate 对称）——[Authorize(Documents.Upload)] 不覆盖 cabinet 归属，无此断言则无 Cabinets 权限者可绕过 UI
-        // 把文档归到隐藏柜。再校验柜存在且属当前层（显式 TenantId 谓词，
-        // 不依赖 ambient DataFilter）。柜正交于 pipeline——此处仅做上传时人工归属校验，后续 pipeline 不碰。
+        // 把文档归到隐藏柜。再校验柜存在（租户隔离由 ambient IMultiTenant 过滤器施加，跨租户 FindAsync 返回 null）。
+        // 柜正交于 pipeline——此处仅做上传时人工归属校验，后续 pipeline 不碰。
         if (input.CabinetId.HasValue)
         {
             await CheckPolicyAsync(PaperbasePermissions.Cabinets.Default);
 
             var cabinet = await _cabinetRepository.FindAsync(input.CabinetId.Value);
-            if (cabinet == null || cabinet.TenantId != CurrentTenant.Id)
+            if (cabinet == null)
             {
                 throw new BusinessException(PaperbaseErrorCodes.InvalidCabinetId)
                     .WithData("CabinetId", input.CabinetId.Value);
@@ -287,52 +330,6 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     }
 
     /// <summary>
-    /// 快速导出文档管理清单（固定列 CSV：ID / 类型 / 生命周期 / 文件名 / 内容类型 / 创建时间）——运维视角，零配置。
-    /// 与模板驱动的业务数据导出（<see cref="IExportTemplateAppService.ExportAsync"/>）受众不同：此处导"我系统里有哪些文档"，
-    /// 后者导"按业务格式抽取的字段值"。复用 <see cref="ExportFileBuilder"/> 统一 CSV 转义 / 公式注入中和 / UTF-8 BOM。
-    /// </summary>
-    [Authorize(PaperbasePermissions.Documents.Export)]
-    public virtual async Task<IRemoteStreamContent> GetExportAsync(GetDocumentListInput input)
-    {
-        // 显式租户谓词 — fail closed，不依赖 ambient DataFilter（CLAUDE.md "## 安全约定"）。
-        var tenantId = CurrentTenant.Id;
-        var query = (await _documentRepository.GetQueryableAsync())
-            .Where(d => d.TenantId == tenantId);
-        query = ApplyFilter(query, input);
-        query = ApplySorting(query, input.Sorting);
-
-        // 投影到匿名行（不物化 Markdown 大字段、不进 change tracker）+ 结果集硬上限（截断即可，
-        // 不同于模板导出对凭证完整性的 fail-fast 要求）。
-        var rows = await AsyncExecuter.ToListAsync(
-            query.Take(ExportTemplateConsts.MaxExportDocumentCount)
-                 .Select(d => new
-                 {
-                     d.Id,
-                     d.DocumentTypeCode,
-                     d.LifecycleStatus,
-                     d.FileOrigin.OriginalFileName,
-                     d.FileOrigin.ContentType,
-                     d.CreationTime
-                 }));
-
-        var headers = new[] { "Id", "DocumentTypeCode", "LifecycleStatus", "OriginalFileName", "ContentType", "CreationTime" };
-        var dataRows = rows
-            .Select(r => new string?[]
-            {
-                r.Id.ToString(),
-                r.DocumentTypeCode,
-                r.LifecycleStatus.ToString(),
-                r.OriginalFileName,
-                r.ContentType,
-                r.CreationTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)
-            })
-            .ToList();
-
-        var bytes = ExportFileBuilder.Build(ExportFormat.Csv, headers, dataRows);
-        return new RemoteStreamContent(new MemoryStream(bytes), "documents.csv", "text/csv");
-    }
-
-    /// <summary>
     /// 重试单条 pipeline。当前仅 <see cref="PipelineRunStatus.Failed"/> 可重试；
     /// Pending/Running 抛 <c>PipelineRetryInProgress</c>，Succeeded/Skipped 抛 <c>PipelineNotRetryable</c>。
     /// 重试先创建 Pending Run，再把带 PipelineRunId 的 BackgroundJob 入队。
@@ -347,16 +344,8 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
                 .WithData("PipelineCode", input.PipelineCode);
         }
 
+        // 租户隔离由 ambient IMultiTenant 过滤器施加——GetAsync 对跨租户 id 已抛 EntityNotFound。
         var document = await _documentRepository.GetAsync(id, includeDetails: true);
-
-        // 显式租户断言 + 软删除门：不依赖 ambient DataFilter。
-        if (document.TenantId != CurrentTenant.Id)
-        {
-            Logger.LogWarning(
-                "RetryPipelineAsync tenant mismatch: doc={DocumentId} docTenant={DocTenantId} currentTenant={CurrentTenantId}",
-                document.Id, document.TenantId, CurrentTenant.Id);
-            throw new EntityNotFoundException(typeof(Document), id);
-        }
 
         if (document.IsDeleted)
         {
@@ -398,16 +387,8 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     [Authorize(PaperbasePermissions.Documents.ConfirmClassification)]
     public virtual async Task<DocumentDto> UpdateExtractedFieldsAsync(Guid id, UpdateExtractedFieldsInput input)
     {
+        // 租户隔离由 ambient IMultiTenant 过滤器施加——GetAsync 对跨租户 id 已抛 EntityNotFound。
         var document = await _documentRepository.GetAsync(id, includeDetails: true);
-
-        // 显式租户断言 — fail closed，不依赖 ambient DataFilter。
-        if (document.TenantId != CurrentTenant.Id)
-        {
-            Logger.LogWarning(
-                "UpdateExtractedFieldsAsync tenant mismatch: doc={DocumentId} docTenant={DocTenantId} currentTenant={CurrentTenantId}",
-                document.Id, document.TenantId, CurrentTenant.Id);
-            throw new EntityNotFoundException(typeof(Document), id);
-        }
 
         // 字段定义挂在 DocumentType 下——未分类无从校验字段名。
         if (string.IsNullOrWhiteSpace(document.DocumentTypeCode))
@@ -430,7 +411,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
                     .WithData("DocumentTypeCode", document.DocumentTypeCode);
             }
 
-            if (!IsValidExtractedFieldValue(value, definition.DataType))
+            if (!ExtractedFieldValueValidator.IsValid(value, definition.DataType))
             {
                 throw new BusinessException(PaperbaseErrorCodes.InvalidExtractedFieldValue)
                     .WithData("FieldName", key)
@@ -543,8 +524,6 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             }
         }
 
-        query = DocumentQueryFilters.WhereKeyword(query, input.Keyword);
-
         return query;
     }
 
@@ -555,40 +534,5 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             "creationTime" => query.OrderBy(x => x.CreationTime),
             _ => query.OrderByDescending(x => x.CreationTime)
         };
-    }
-
-    private static bool IsValidExtractedFieldValue(JsonElement value, FieldDataType dataType)
-    {
-        return dataType switch
-        {
-            FieldDataType.String => value.ValueKind == JsonValueKind.String,
-            FieldDataType.Integer => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _),
-            FieldDataType.Decimal => value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out _),
-            FieldDataType.Boolean => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
-            FieldDataType.Date => IsValidDateString(value),
-            FieldDataType.DateTime => IsValidDateTimeString(value),
-            _ => false
-        };
-    }
-
-    private static bool IsValidDateString(JsonElement value)
-    {
-        return value.ValueKind == JsonValueKind.String &&
-               DateTime.TryParseExact(
-                   value.GetString(),
-                   "yyyy-MM-dd",
-                   CultureInfo.InvariantCulture,
-                   DateTimeStyles.None,
-                   out _);
-    }
-
-    private static bool IsValidDateTimeString(JsonElement value)
-    {
-        return value.ValueKind == JsonValueKind.String &&
-               DateTime.TryParse(
-                   value.GetString(),
-                   CultureInfo.InvariantCulture,
-                   DateTimeStyles.None,
-                   out _);
     }
 }

@@ -11,7 +11,6 @@ using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Volo.Abp.Authorization;
-using Volo.Abp.MultiTenancy;
 
 namespace Dignite.Paperbase.Mcp.Documents;
 
@@ -33,7 +32,6 @@ public sealed class DocumentResources
         string id,
         IDocumentRepository documentRepository,
         IAuthorizationService authorizationService,
-        ICurrentTenant currentTenant,
         CancellationToken cancellationToken = default)
     {
         // fail-closed 安全门 #1：显式权限断言。MCP dispatch 不经 HTTP 边界 [Authorize]，方法体内断言是唯一防线。
@@ -46,9 +44,8 @@ public sealed class DocumentResources
 
         var document = await documentRepository.FindAsync(documentId, includeDetails: false, cancellationToken);
 
-        // fail-closed 安全门 #2：显式 TenantId 谓词，不依赖 ambient DataFilter。
-        // 不存在 / 跨租户一律按"未找到"处理，避免泄漏存在性。
-        if (document is null || document.TenantId != currentTenant.Id)
+        // 租户隔离由 ambient IMultiTenant 过滤器施加：跨租户 id → FindAsync 返回 null，与"不存在"一并按"未找到"处理。
+        if (document is null)
         {
             throw new McpException($"Document not found: {id}");
         }

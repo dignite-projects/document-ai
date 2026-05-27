@@ -82,30 +82,36 @@ var response = await _chatClient.GetResponseAsync(messages, options, cancellatio
 
 ```csharp
 [McpTool("search-documents")]
-public async Task<string> SearchAsync(string keyword, IServiceProvider sp, CancellationToken ct)
+public async Task<string> SearchAsync(string documentTypeCode, string fieldName, string fieldValue, IServiceProvider sp, CancellationToken ct)
 {
     // 错误：直接把 AppService 方法的结果序列化返回
     // IDocumentAppService 的 [Authorize(Documents.Default)] 在 LLM 反射调用时不生效
     var appService = sp.GetRequiredService<IDocumentAppService>();
-    var result = await appService.GetListAsync(new GetDocumentListInput { Keyword = keyword });
+    var result = await appService.GetListAsync(new GetDocumentListInput { DocumentTypeCode = documentTypeCode });
     return JsonSerializer.Serialize(result);
 }
 ```
 
 **危害**：仅持有 MCP 端点访问凭据的客户端通过自然语言（"帮我查张三的合同"）即可拿到本无权访问的文档。LLM 是无意识的"权限提升通道"。
 
-### ❌ 错误写法 2：依赖 ABP `DataFilter` 做租户隔离
+### ❌ 错误写法 2：在 LLM 触发路径上禁用租户过滤器 / 把端点放在多租户中间件之外
 
 ```csharp
 public async Task<string> SearchAsync(string keyword)
 {
     await _authService.CheckAsync(DocumentPermissions.Default);
-    var q = await _repo.GetQueryableAsync();   // ← ambient filter 自动按 CurrentTenant.Id 过滤
-    return JsonSerializer.Serialize(await _executer.ToListAsync(q.Where(...).Take(20)));
+    // 错误：在 LLM 可达路径上禁用 IMultiTenant 全局过滤器
+    using (DataFilter.Disable<IMultiTenant>())
+    {
+        var q = await _repo.GetQueryableAsync();   // ← 此时不再按租户过滤，跨租户泄漏
+        return JsonSerializer.Serialize(await _executer.ToListAsync(q.Where(...).Take(20)));
+    }
 }
 ```
 
-**危害**：ambient `DataFilter` 是可读性辅助，不是安全边界。任何禁用 `DataFilter` 的代码路径（后台任务、非 HTTP 上下文、单元测试 helper）会让此工具跨租户返回数据。
+**澄清**：ABP 的 `IMultiTenant` 全局查询过滤器**就是**框架级租户边界——它由已认证主体（token 的 tenant 声明，经 `CurrentUserTenantResolveContributor` 解析，优先级最高、不可被 `__tenant` header 伪造）驱动，对所有查询默认生效，`FromSqlRaw` 经 EF Core 包成子查询后同样受约束。所以**正常路径依赖它即可，不需要手写 `TenantId` 谓词**——手写只是冗余，且在调用方刻意禁用过滤器时会静默把结果钳到 ambient 租户、无视其意图，还永久剥夺合法跨租户检索能力。
+
+**真正的反模式**是反过来击穿这条边界：在 LLM 触发路径上 `DataFilter.Disable<IMultiTenant>()` / `IgnoreQueryFilters()`（如上），或把 MCP / Webhook 端点映射在 `UseMultiTenancy()` 之外（租户解析不到 → 全部当 host 数据跑）。
 
 ### ❌ 错误写法 3：结果集无上限
 
@@ -161,11 +167,10 @@ private static async Task<string> SearchAsync(
     var authSvc = serviceProvider.GetRequiredService<IAuthorizationService>();
     await authSvc.CheckAsync(PaperbasePermissions.Documents.Default);
 
-    // 2. 显式租户谓词 — 不依赖 ambient DataFilter
-    var currentTenant = serviceProvider.GetRequiredService<ICurrentTenant>();
-    var tenantId = currentTenant.Id;
+    // 2. 租户隔离 — 交给 ABP 的 IMultiTenant 全局过滤器自动施加，不手写 TenantId 谓词，
+    //    更不要在此 Disable<IMultiTenant>() / IgnoreQueryFilters()
     var repo = serviceProvider.GetRequiredService<IDocumentRepository>();
-    var q = (await repo.GetQueryableAsync()).Where(d => d.TenantId == tenantId);
+    var q = await repo.GetQueryableAsync();   // ← 自动按已解析租户过滤
 
     // 3. 业务过滤 + 强制 Take(N)
     var executer = serviceProvider.GetRequiredService<IAsyncQueryableExecuter>();
@@ -192,7 +197,7 @@ private static async Task<string> SearchAsync(
 **关键要点回顾**：
 
 1. **`[Authorize]` 不够**——必须在方法体显式 `CheckAsync(Permission)`
-2. **`DataFilter` 不是安全边界**——必须显式 `Where(x => x.TenantId == tenantId)`
+2. **租户隔离交给框架过滤器**——ABP `IMultiTenant` 全局过滤器即租户边界（由已认证主体的 tenant 声明驱动，含 `FromSqlRaw` 路径）；不手写 `TenantId` 谓词，只需保证不在 LLM 路径上 `Disable<IMultiTenant>()` / `IgnoreQueryFilters()`
 3. **必须 `Take(N)`**——单次 tool 调用结果集硬上限，防止 prompt-injection 诱导宽泛查询
 4. **description / instructions 必须是编译期常量**——禁止拼用户字符串
 5. **不允许 raw SQL**——LLM 拼 SQL 在攻击面内
@@ -207,6 +212,6 @@ private static async Task<string> SearchAsync(
 - **Fail-closed 安全断言**——权限 + 租户 + 上限 + 不裸 SQL
 - **PromptBoundary**——用户派生自由文本进 prompt / LLM-facing 输出前必须包裹
 - **Description / Instructions 编译期常量**——禁止运行时拼用户字符串
-- **多租户隔离**——所有 Document / 衍生字段查询路径显式按 `CurrentTenant.Id` 过滤
+- **多租户隔离**——依赖 ABP `IMultiTenant` 全局过滤器（框架级边界，含 `FromSqlRaw`）；不手写谓词，唯一纪律是 LLM 路径不得禁用该过滤器
 
 新增任何 LLM 调用点时，按这 4 条做 self-review；`maf-workflow-reviewer` agent 在 PR 审查时也按此清单核对。

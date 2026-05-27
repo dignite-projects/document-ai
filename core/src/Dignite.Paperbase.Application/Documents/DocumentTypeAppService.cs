@@ -37,7 +37,7 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
 
     public virtual async Task<List<DocumentTypeDto>> GetDeletedAsync()
     {
-        // 显式 TenantId 谓词（不依赖 ambient DataFilter）+ 关闭 ISoftDelete 看到已删除行。
+        // 仅关闭 ISoftDelete 看到已删除行；租户隔离仍由 ambient IMultiTenant 过滤器施加。
         // 当前层回收站：Host admin（CurrentTenant.Id IS NULL）看 Host 类型；租户 admin 看自己租户。
         // Host 与 tenant 各自独立宇宙，不跨层。
         using (DataFilter.Disable<ISoftDelete>())
@@ -45,7 +45,7 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
             var queryable = await _repository.GetQueryableAsync();
             var list = await AsyncExecuter.ToListAsync(
                 queryable
-                    .Where(t => t.TenantId == CurrentTenant.Id && t.IsDeleted)
+                    .Where(t => t.IsDeleted)
                     .OrderByDescending(t => t.DeletionTime));
             return ObjectMapper.Map<List<DocumentType>, List<DocumentTypeDto>>(list);
         }
@@ -99,18 +99,12 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
     public virtual async Task DeleteAsync(Guid id)
     {
         var entity = await _repository.GetAsync(id);
-        if (entity.TenantId != CurrentTenant.Id)
-        {
-            throw new EntityNotFoundException(typeof(DocumentType), id);
-        }
 
         // Fail-closed：仍有文档引用此类型时阻止删除——强制租户先 reclassify 这些文档。
-        // 显式 TenantId 谓词，不依赖 ambient DataFilter（CLAUDE.md "## 安全约定"）。
+        // 租户隔离由 ambient IMultiTenant 过滤器施加（GetAsync 与 document 查询都自动按当前层过滤）。
         var documentQueryable = await _documentRepository.GetQueryableAsync();
         var inUse = await AsyncExecuter.AnyAsync(
-            documentQueryable.Where(d =>
-                d.TenantId == entity.TenantId &&
-                d.DocumentTypeCode == entity.TypeCode));
+            documentQueryable.Where(d => d.DocumentTypeCode == entity.TypeCode));
         if (inUse)
         {
             throw new BusinessException(PaperbaseErrorCodes.DocumentTypeInUse)

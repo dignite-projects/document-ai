@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Dignite.Paperbase.Mcp.Documents;
 
@@ -22,4 +23,11 @@ public sealed record DocumentSearchResultItem
     public required string LifecycleStatus { get; init; }
 
     public DateTime CreationTime { get; init; }
+
+    /// <summary>
+    /// 该文档的类型绑定字段抽取结果（LLM-facing）。key = 字段名（<c>FieldDefinition.Name</c>）；
+    /// value 为字符串——String 类型字段值经 <c>PromptBoundary.WrapField</c> 包裹（防 indirect prompt injection），
+    /// 数字 / 布尔等结构化值为裸字符串。文档无抽取字段（或全为 null）时为 null。
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? ExtractedFields { get; init; }
 }

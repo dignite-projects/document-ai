@@ -88,7 +88,6 @@
     "Document:BulkUpload": "Bulk Upload",
     "Document:BulkUploadResults": "Upload Results",
     "Document:BulkUploadFailed": "Bulk upload failed.",
-    "Document:ExportCsv": "Export CSV",
 
 
     "DocumentReviewStatus:PendingReview": "Pending Review",
@@ -108,7 +107,6 @@
     "Document:Review:ActionFailed": "Action failed.",
     "Document:Filter:AllStatuses": "All Statuses",
     "Document:Filter:AllTypes": "All Types",
-    "Document:SearchPlaceholder": "Search title / file name / content...",
     "Document:ExtractedFields": "Extracted Fields",
     "Document:FieldsUpdated": "Fields updated.",
     "Document:UpdateFailed": "Failed to update fields.",
@@ -218,6 +216,8 @@
     "Paperbase:DocumentNotClassified": "This document has no document type yet. Classify it before editing extracted fields.",
     "Paperbase:UnknownExtractedField": "Field '{FieldName}' is not defined on document type '{DocumentTypeCode}'.",
     "Paperbase:InvalidExtractedFieldValue": "Field '{FieldName}' on document type '{DocumentTypeCode}' must be a valid {DataType} value.",
+    "Paperbase:FieldTypeDoesNotSupportRange": "Field '{FieldName}' is of type {DataType}, which supports only equality matching, not range (min/max) queries.",
+    "Paperbase:InvalidExtractedFieldName": "Field name '{FieldName}' is not a valid extracted-field identifier.",
     "Permission:Documents.Templates": "Export Templates",
     "Permission:Documents.Templates.Create": "Create Export Templates",
     "Permission:Documents.Templates.Update": "Update Export Templates",

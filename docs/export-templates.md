@@ -56,7 +56,7 @@ JSON file export is intentionally **not** offered — programmatic consumers sho
 Two paths, both backed by the same `IExportTemplateAppService.ExportAsync`:
 
 - **Operator UI** — pick a template, select documents (checkbox) or apply a filter, download.
-- **API** — `POST` `ExportDocumentsInput { TemplateId, DocumentIds? | (LifecycleStatus, DocumentTypeCode, Keyword) }`. When `DocumentIds` is non-empty it wins; otherwise the filter applies.
+- **API** — `POST` `ExportDocumentsInput { TemplateId, DocumentIds? | (LifecycleStatus, DocumentTypeCode) }`. When `DocumentIds` is non-empty it wins; otherwise the filter applies.
 
 > EventBus-triggered export is **not** offered: a subscriber that already consumes the EventBus has the structured data — having Paperbase generate a file and hand it back closes no loop.
 

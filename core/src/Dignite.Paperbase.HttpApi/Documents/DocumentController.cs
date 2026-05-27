@@ -61,12 +61,6 @@ public class DocumentController : PaperbaseController, IDocumentAppService
         return _documentAppService.RestoreAsync(id);
     }
 
-    [HttpGet("export")]
-    public virtual Task<IRemoteStreamContent> GetExportAsync(GetDocumentListInput input)
-    {
-        return _documentAppService.GetExportAsync(input);
-    }
-
     [HttpPost("{id}/confirm-classification")]
     public virtual Task<DocumentDto> ConfirmClassificationAsync(Guid id, [FromBody] ConfirmClassificationInput input)
     {

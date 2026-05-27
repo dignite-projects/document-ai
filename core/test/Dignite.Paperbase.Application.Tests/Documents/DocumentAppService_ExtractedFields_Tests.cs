@@ -126,6 +126,28 @@ public class DocumentAppService_ExtractedFields_Tests
     }
 
     [Fact]
+    public async Task Should_Reject_DateTime_With_Timezone_Offset()
+    {
+        // DateTime 字段只接受无偏移 wall-clock——带偏移 / Z 的值与查询侧 datetime2 语义不一致，
+        // 操作员手改路径也应拒绝（与 LLM 抽取路径共用 ExtractedFieldValueValidator；Codex 评审 finding 2）。
+        var doc = CreateClassifiedDocument("host.contract");
+        StubGet(doc);
+        StubFields("host.contract", ("occurredAt", FieldDataType.DateTime));
+
+        var ex = await Should.ThrowAsync<BusinessException>(() =>
+            _appService.UpdateExtractedFieldsAsync(doc.Id, new UpdateExtractedFieldsInput
+            {
+                Fields = new Dictionary<string, JsonElement>
+                {
+                    ["occurredAt"] = JsonValue("2026-05-22T18:30:00+08:00")
+                }
+            }));
+
+        ex.Code.ShouldBe(PaperbaseErrorCodes.InvalidExtractedFieldValue);
+        ex.Data["FieldName"].ShouldBe("occurredAt");
+    }
+
+    [Fact]
     public async Task Should_Reject_When_Document_Not_Classified()
     {
         var doc = CreateDocument(); // DocumentTypeCode 为 null

@@ -18,7 +18,4 @@ public class ExportDocumentsInput
 
     [DynamicStringLength(typeof(DocumentConsts), nameof(DocumentConsts.MaxDocumentTypeCodeLength))]
     public string? DocumentTypeCode { get; set; }
-
-    [DynamicStringLength(typeof(DocumentConsts), nameof(DocumentConsts.MaxSearchKeywordLength))]
-    public string? Keyword { get; set; }
 }

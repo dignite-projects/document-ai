@@ -27,10 +27,6 @@
           <span class="badge bg-danger ms-1">{{ pendingReviewCount() }}</span>
         }
       </button>
-      <button class="btn btn-outline-success" (click)="exportCsv()" [disabled]="isExporting()">
-        <i class="fas fa-download me-1"></i>
-        {{ '::Document:ExportCsv' | abpLocalization }}
-      </button>
       <!-- Bulk upload -->
       <label class="btn btn-outline-primary mb-0" [class.disabled]="isBulkUploading()">
         <i class="fas fa-upload me-1"></i>
@@ -47,32 +43,6 @@
 
   <!-- Filters -->
   <div class="d-flex flex-wrap gap-2 mb-3">
-    <div class="input-group input-group-sm" style="max-width: 280px;">
-      <input
-        type="text"
-        class="form-control"
-        [ngModel]="keyword()"
-        (ngModelChange)="keyword.set($event)"
-        (keyup.enter)="applyKeyword()"
-        placeholder="{{ '::Document:SearchPlaceholder' | abpLocalization }}"
-      />
-      @if (keyword()) {
-        <button
-          class="btn btn-outline-secondary"
-          (click)="clearKeyword()"
-          title="{{ '::Cancel' | abpLocalization }}"
-        >
-          <i class="fas fa-times"></i>
-        </button>
-      }
-      <button
-        class="btn btn-outline-secondary"
-        (click)="applyKeyword()"
-        title="{{ '::Search' | abpLocalization }}"
-      >
-        <i class="fas fa-search"></i>
-      </button>
-    </div>
     <select
       class="form-select form-select-sm w-auto"
       [ngModel]="lifecycleFilter()"
@@ -165,6 +135,9 @@
               <th style="width: 48px"></th>
               <th>{{ '::Document:FileName' | abpLocalization }}</th>
               <th>{{ '::Document:Type' | abpLocalization }}</th>
+              @for (field of extractedFieldColumns(); track field.id) {
+                <th>{{ field.displayName }}</th>
+              }
               @if (canViewCabinets) {
                 <th>{{ '::Document:Cabinet' | abpLocalization }}</th>
               }
@@ -196,6 +169,9 @@
                     <span class="text-muted">—</span>
                   }
                 </td>
+                @for (field of extractedFieldColumns(); track field.id) {
+                  <td class="small">{{ doc.extractedFields?.[field.name] }}</td>
+                }
                 @if (canViewCabinets) {
                   <td>
                     @if (cabinetName(doc); as name) {

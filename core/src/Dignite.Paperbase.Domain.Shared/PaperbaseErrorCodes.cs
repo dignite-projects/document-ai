@@ -30,6 +30,8 @@ public static class PaperbaseErrorCodes
     public const string DocumentNotClassified = "Paperbase:DocumentNotClassified";
     public const string UnknownExtractedField = "Paperbase:UnknownExtractedField";
     public const string InvalidExtractedFieldValue = "Paperbase:InvalidExtractedFieldValue";
+    public const string FieldTypeDoesNotSupportRange = "Paperbase:FieldTypeDoesNotSupportRange";
+    public const string InvalidExtractedFieldName = "Paperbase:InvalidExtractedFieldName";
     public const string InvalidExportTemplateName = "Paperbase:InvalidExportTemplateName";
     public const string ExportTemplateNameAlreadyExists = "Paperbase:ExportTemplateNameAlreadyExists";
     public const string ExportTemplateRequiresColumn = "Paperbase:ExportTemplateRequiresColumn";

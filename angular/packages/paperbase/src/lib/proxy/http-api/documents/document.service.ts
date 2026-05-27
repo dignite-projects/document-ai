@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { EnvironmentService, RestService } from '@abp/ng.core';
+import { RestService } from '@abp/ng.core';
 import type { PagedResultDto } from '@abp/ng.core';
 import { Observable } from 'rxjs';
 import type { DocumentDto, DocumentListItemDto, GetDocumentListInput } from '../../documents/models';
@@ -7,7 +7,6 @@ import type { DocumentDto, DocumentListItemDto, GetDocumentListInput } from '../
 @Injectable({ providedIn: 'root' })
 export class DocumentService {
   private readonly rest = inject(RestService);
-  private readonly env = inject(EnvironmentService);
   private readonly apiName = 'Default';
   private readonly basePath = '/api/paperbase/documents';
 
@@ -29,7 +28,6 @@ export class DocumentService {
           lifecycleStatus: input.lifecycleStatus ?? undefined,
           documentTypeCode: input.documentTypeCode ?? undefined,
           reviewStatus: input.reviewStatus ?? undefined,
-          keyword: input.keyword ?? undefined,
           isDeleted: input.isDeleted ?? undefined,
           cabinetId: input.cabinetId ?? undefined,
         },
@@ -118,15 +116,4 @@ export class DocumentService {
       { method: 'GET', url: `${this.basePath}/${id}/blob`, responseType: 'blob' as any },
       { apiName: this.apiName }
     );
-
-  getExportUrl = (input: GetDocumentListInput): string => {
-    const params = new URLSearchParams();
-    if (input.lifecycleStatus != null) params.set('lifecycleStatus', String(input.lifecycleStatus));
-    if (input.documentTypeCode) params.set('documentTypeCode', input.documentTypeCode);
-    if (input.reviewStatus != null) params.set('reviewStatus', String(input.reviewStatus));
-    if (input.keyword) params.set('keyword', input.keyword);
-    if (input.cabinetId) params.set('cabinetId', input.cabinetId);
-    const qs = params.toString();
-    return `${this.env.getApiUrl(this.apiName)}${this.basePath}/export${qs ? '?' + qs : ''}`;
-  };
 }

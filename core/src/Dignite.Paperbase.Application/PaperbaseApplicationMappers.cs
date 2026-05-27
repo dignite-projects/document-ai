@@ -94,6 +94,7 @@ public partial class DocumentPipelineRunToDocumentPipelineRunDtoMapper : MapperB
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class DocumentToDocumentListItemDtoMapper : MapperBase<Document, DocumentListItemDto>
 {
+    // ExtractedFields（Document → DTO 同名 Dictionary<string, JsonElement>）由 Mapperly 自动映射，无需手填。
     public override partial DocumentListItemDto Map(Document source);
     public override partial void Map(Document source, DocumentListItemDto destination);
 }

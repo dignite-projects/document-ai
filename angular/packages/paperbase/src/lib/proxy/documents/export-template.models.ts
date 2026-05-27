@@ -46,5 +46,4 @@ export interface ExportDocumentsInput {
   documentIds?: string[];
   lifecycleStatus?: DocumentLifecycleStatus;
   documentTypeCode?: string;
-  keyword?: string;
 }

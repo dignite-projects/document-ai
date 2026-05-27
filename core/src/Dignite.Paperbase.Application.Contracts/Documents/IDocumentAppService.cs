@@ -22,8 +22,6 @@ public interface IDocumentAppService : IApplicationService
 
     Task RestoreAsync(Guid id);
 
-    Task<IRemoteStreamContent> GetExportAsync(GetDocumentListInput input);
-
     Task<DocumentDto> ConfirmClassificationAsync(Guid id, ConfirmClassificationInput input);
 
     /// <summary>

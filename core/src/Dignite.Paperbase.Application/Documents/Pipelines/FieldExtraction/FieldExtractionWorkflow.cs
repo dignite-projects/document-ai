@@ -22,7 +22,10 @@ namespace Dignite.Paperbase.Documents.Pipelines.FieldExtraction;
 /// <list type="bullet">
 ///   <item>所有字段一次调用提取，减少 LLM 往返 + 上下文重复</item>
 ///   <item>用 <c>ChatResponseFormat.Json</c> 限定输出为 JSON</item>
-///   <item>解析时按 <see cref="FieldDataType"/> 做类型转换（容错：转换失败的字段写 null + log）</item>
+///   <item>归一化由 prompt 要求 AI 按 <see cref="FieldDataType"/> 输出规范形（数字裸 JSON number、
+///         日期 ISO-8601 字符串、布尔 JSON true/false）；解析时再经 <see cref="ExtractedFieldValueValidator"/>
+///         严格校验（不符声明类型的值写 null + log）——保证 <c>ExtractedFields</c> 类型自洽
+///         （Issue #204：让 SearchAsync 的类型化查询建立在干净数据上）</item>
 ///   <item>所有字段的 prompt（包括 Host 来源）统一经 <c>PromptBoundary.WrapField</c> 包裹——
 ///         比 v1 区分 Host/Tenant 是否 wrap 更保守，无功能损失</item>
 /// </list>
@@ -90,10 +93,17 @@ public class FieldExtractionWorkflow : ITransientDependency
     /// </summary>
     private const string SystemInstructions =
         "You extract structured fields from a Markdown document. " +
-        "The first user message lists the fields to extract (schema). " +
+        "The first user message lists the fields to extract (schema), each annotated with its data type. " +
         "The second user message contains the document body. " +
         "Return JSON only with one key per requested field. " +
-        "When a field cannot be confidently extracted, set its value to null. " +
+        "Normalize each value to its declared data type: " +
+        "Integer and Decimal as bare JSON numbers (strip currency symbols, thousands separators, and units; " +
+        "use '.' as the decimal point and '-' for negatives); " +
+        "Date as an ISO-8601 \"YYYY-MM-DD\" JSON string; " +
+        "DateTime as an offset-free ISO-8601 \"YYYY-MM-DDThh:mm:ss\" JSON string (local wall-clock time, no timezone offset or trailing Z); " +
+        "Boolean as JSON true or false; " +
+        "String as the original text. " +
+        "When a field cannot be confidently extracted or normalized to its declared type, set its value to null. " +
         "The input document is provided as Markdown — treat headings, tables, and lists as semantic structure signals.";
 
     private static string BuildSchemaUserMessage(IReadOnlyList<FieldExtractionDescriptor> fields)
@@ -143,11 +153,21 @@ public class FieldExtractionWorkflow : ITransientDependency
                 continue;
             }
 
-            // 不在 Workflow 内做类型转换 —— JsonElement 是值的中间形态，
-            // 持久化到 Document.ExtractedFields（Dictionary<string, JsonElement>）单桶——
-            // 按 Document.TenantId 决定本文档跑哪层 FieldDefinition，结果落同一桶。
-            // 消费侧（REST API / 业务模块）按 FieldDefinition.DataType 反序列化。
-            // 这与 v1 在 Workflow 内做 typed coercion 不同：保留原始 JsonElement 避免双重转换 + 损失精度。
+            // 强校验：值必须符合声明的 FieldDataType（与操作员手改路径
+            // DocumentAppService.UpdateExtractedFieldsAsync 共用 ExtractedFieldValueValidator）。
+            // 归一化责任在 prompt（AI 输出规范形）；此处是兜底护栏，不做强制转换——
+            // 不符声明类型的值写 null + log，保证 Document.ExtractedFields 类型自洽
+            // （Issue #204 任务 2：让任务 3 的 JSON_VALUE 类型化查询建立在干净数据上）。
+            if (!ExtractedFieldValueValidator.IsValid(prop, field.DataType))
+            {
+                _logger.LogWarning(
+                    "Field extraction value for '{FieldName}' did not match declared type {DataType} (JSON kind {JsonValueKind}); storing null.",
+                    field.Name, field.DataType, prop.ValueKind);
+                result[field.Name] = null;
+                continue;
+            }
+
+            // 校验通过：保留原始 JsonElement（已是规范 JSON 类型），避免双重转换 + 精度损失。
             result[field.Name] = prop;
         }
 

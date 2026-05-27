@@ -25,6 +25,8 @@ import {
   DocumentService,
   DocumentTypeDto,
   DocumentTypeService,
+  FieldDefinitionDto,
+  FieldDefinitionService,
   GetDocumentListInput,
   PAPERBASE_PERMISSIONS,
 } from '@dignite/paperbase';
@@ -52,6 +54,7 @@ interface UploadResult {
 export class DocumentListComponent implements OnInit {
   private readonly documentService = inject(DocumentService);
   private readonly documentTypeService = inject(DocumentTypeService);
+  private readonly fieldDefinitionService = inject(FieldDefinitionService);
   private readonly cabinetService = inject(CabinetService);
   private readonly router = inject(Router);
   private readonly confirmation = inject(ConfirmationService);
@@ -71,7 +74,6 @@ export class DocumentListComponent implements OnInit {
 
   documents = signal<PagedResultDto<DocumentListItemDto>>({ totalCount: 0, items: [] });
   isLoading = signal(true);
-  isExporting = signal(false);
   isBulkUploading = signal(false);
   bulkUploadResults = signal<UploadResult[]>([]);
 
@@ -79,10 +81,15 @@ export class DocumentListComponent implements OnInit {
   typeFilter = signal<string>('');
   cabinetFilter = signal<string>('');
   lifecycleFilter = signal<DocumentLifecycleStatus | undefined>(undefined);
-  keyword = signal<string>('');
   confirmingDoc = signal<DocumentListItemDto | null>(null);
   documentTypes = signal<DocumentTypeDto[]>([]);
   cabinets = signal<CabinetDto[]>([]);
+  // Dynamic ExtractedFields columns — populated only while a single documentTypeCode
+  // filter is active (then the page shares one field schema). Empty for no-type /
+  // mixed-type views, so the columns disappear. Driven off the type's field
+  // definitions (not the union of extractedFields keys) so headers stay stable and
+  // friendly even for fields no document in the page happened to fill.
+  extractedFieldColumns = signal<FieldDefinitionDto[]>([]);
   selectedTypeCode = signal('');
   isConfirming = signal(false);
 
@@ -125,23 +132,12 @@ export class DocumentListComponent implements OnInit {
   onTypeFilterChange(value: string): void {
     this.typeFilter.set(value);
     this.page.set(0);
+    this.loadExtractedFieldColumns(value);
     this.loadList();
   }
 
   onCabinetFilterChange(value: string): void {
     this.cabinetFilter.set(value);
-    this.page.set(0);
-    this.loadList();
-  }
-
-  applyKeyword(): void {
-    this.page.set(0);
-    this.loadList();
-  }
-
-  clearKeyword(): void {
-    if (!this.keyword()) return;
-    this.keyword.set('');
     this.page.set(0);
     this.loadList();
   }
@@ -152,7 +148,6 @@ export class DocumentListComponent implements OnInit {
       cabinetId: this.cabinetFilter() || undefined,
       lifecycleStatus: this.lifecycleFilter(),
       reviewStatus: this.reviewStatusFilter(),
-      keyword: this.keyword().trim() || undefined,
     };
   }
 
@@ -181,6 +176,25 @@ export class DocumentListComponent implements OnInit {
   cabinetName(doc: DocumentListItemDto): string | null {
     if (!doc.cabinetId) return null;
     return this.cabinets().find(c => c.id === doc.cabinetId)?.displayName ?? null;
+  }
+
+  // Load the selected type's field definitions and turn them into dynamic columns
+  // (ordered by displayOrder). Cleared when no single type is selected. Errors fall
+  // back to no columns rather than breaking the list (mirrors loadDocumentTypes).
+  private loadExtractedFieldColumns(typeCode: string): void {
+    if (!typeCode) {
+      this.extractedFieldColumns.set([]);
+      return;
+    }
+    this.fieldDefinitionService.getByDocumentType(typeCode)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: fields =>
+          this.extractedFieldColumns.set(
+            [...fields].sort((a, b) => a.displayOrder - b.displayOrder),
+          ),
+        error: () => this.extractedFieldColumns.set([]),
+      });
   }
 
   private loadList(): void {
@@ -246,11 +260,6 @@ export class DocumentListComponent implements OnInit {
           input.value = '';
         },
       });
-  }
-
-  exportCsv(): void {
-    const url = this.documentService.getExportUrl(this.buildFilter());
-    window.open(url, '_blank');
   }
 
   delete(doc: DocumentListItemDto, event: Event): void {
