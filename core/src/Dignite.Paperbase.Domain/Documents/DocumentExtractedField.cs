@@ -14,9 +14,9 @@ namespace Dignite.Paperbase.Documents;
 /// 一行一个字段值。复合主键 <c>(DocumentId, FieldDefinitionId)</c> 即字段集自然键（Issue #207）——
 /// 内部用不可变 <see cref="FieldDefinitionId"/> 关联产生该值的 <see cref="FieldDefinition"/>，
 /// 不再冗余字段名 / TypeCode 字符串；<see cref="FieldDefinition.Name"/> rename 不级联本表。同文档同字段唯一，
-/// 整组重建 / 操作员手改走 reconcile（同字段原地更新），不留重复行。值按 <see cref="DataType"/> 落到对应类型化列
-/// （<see cref="StringValue"/> / <see cref="IntegerValue"/> / …），让 <c>GetFieldMatchedIdsAsync</c> 用普通列比较
-/// （等值 + 范围）跨任意关系型数据库可移植——不再依赖 SQL Server <c>JSON_VALUE</c> / <c>TRY_CONVERT</c> 方言。
+/// 整组重建 / 操作员手改走 reconcile（同字段原地更新），不留重复行。值按写入时的 <c>FieldDataType</c> 落到对应类型化列
+/// （<see cref="StringValue"/> / <see cref="IntegerValue"/> / …）——类型由所引用的 <see cref="FieldDefinition"/> 决定、<b>不在本行持久化</b>（#208），
+/// 让 <c>GetFieldMatchedIdsAsync</c> 用普通列比较（等值 + 范围）跨任意关系型数据库可移植——不再依赖 SQL Server <c>JSON_VALUE</c> / <c>TRY_CONVERT</c> 方言。
 /// </para>
 /// <para>
 /// 出口 DTO / MCP / REST 的 <c>ExtractedFields</c> 字典 key（即字段名）由读路径 join <see cref="FieldDefinition"/>
@@ -41,10 +41,8 @@ public class DocumentExtractedField : Entity, IMultiTenant
     /// <summary>产生该字段值的 <see cref="FieldDefinition"/>.Id（内部关联 / 查询索引键，#207）。</summary>
     public virtual Guid FieldDefinitionId { get; private set; }
 
-    /// <summary>值写入时该字段的数据类型（写入时事实，记录值落在哪个 typed column；非对 FieldDefinition 的引用，读 typed column 时无需 join）。</summary>
-    public virtual FieldDataType DataType { get; private set; }
-
-    // 类型化值列——按 DataType 取用其一，其余为 null。普通列即可建 B-tree 索引、支持等值 + 范围。
+    // 类型化值列——按字段类型取用其一，其余为 null（类型由 FieldDefinition 决定、不在本行持久化，#208）。
+    // 普通列即可建 B-tree 索引、支持等值 + 范围。
     public virtual string? StringValue { get; private set; }
     public virtual bool? BooleanValue { get; private set; }
     public virtual long? IntegerValue { get; private set; }
@@ -71,8 +69,6 @@ public class DocumentExtractedField : Entity, IMultiTenant
     /// </summary>
     internal void SetValue(DocumentFieldValue value)
     {
-        DataType = value.DataType;
-
         StringValue = null;
         BooleanValue = null;
         IntegerValue = null;
@@ -109,8 +105,9 @@ public class DocumentExtractedField : Entity, IMultiTenant
     /// <summary>
     /// 从类型化列重建规范 <see cref="JsonElement"/>——DTO / MCP / REST 出口的 <c>ExtractedFields</c> 字典即时组装时使用
     /// （wire-format 与旧 JSON 列保持兼容）。是 <see cref="SetValue"/> 的逆向，往返一致。
+    /// <paramref name="dataType"/> 由调用方从该行所引用的 <see cref="FieldDefinition"/> 提供（类型不在本行持久化，#208）。
     /// </summary>
-    public JsonElement ToJsonElement() => DataType switch
+    public JsonElement ToJsonElement(FieldDataType dataType) => dataType switch
     {
         FieldDataType.String => JsonSerializer.SerializeToElement(StringValue),
         FieldDataType.Integer => JsonSerializer.SerializeToElement(IntegerValue),
@@ -118,9 +115,9 @@ public class DocumentExtractedField : Entity, IMultiTenant
         FieldDataType.Boolean => JsonSerializer.SerializeToElement(BooleanValue),
         FieldDataType.Date => JsonSerializer.SerializeToElement(DateValue?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
         FieldDataType.DateTime => JsonSerializer.SerializeToElement(DateTimeValue?.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)),
-        // 与 SetValue 的 default 分支对称：未知 DataType loud fail，绝不吐 Undefined 毒值（否则组装进 DTO 后
+        // 与 SetValue 的 default 分支对称：未知类型 loud fail，绝不吐 Undefined 毒值（否则组装进 DTO 后
         // 序列化响应会抛 "Cannot write a JsonElement with ValueKind Undefined"，整篇文档读取 500）。
-        _ => throw new ArgumentOutOfRangeException(nameof(DataType), DataType, "Unsupported field data type.")
+        _ => throw new ArgumentOutOfRangeException(nameof(dataType), dataType, "Unsupported field data type.")
     };
 
     public override object[] GetKeys() => new object[] { DocumentId, FieldDefinitionId };

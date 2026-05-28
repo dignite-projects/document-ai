@@ -139,7 +139,6 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
                         .Select(f => new ExtractedFieldProjection
                         {
                             FieldDefinitionId = f.FieldDefinitionId,
-                            DataType = f.DataType,
                             StringValue = f.StringValue,
                             BooleanValue = f.BooleanValue,
                             IntegerValue = f.IntegerValue,
@@ -158,6 +157,21 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
                 .WithData("max", limit);
         }
 
+        // #208：字段类型不在字段值行持久化——按模板列 FieldDefinitionId 一次性 load FieldDefinition 拿 DataType，
+        // 供 FieldValueToString 渲染 typed 列。穿透 soft-delete（列可能引用已归档字段）；有界（= 列数）。
+        var columnFieldIds = template.Columns.Select(c => c.FieldDefinitionId).Distinct().ToList();
+        var fieldDataTypes = new Dictionary<Guid, FieldDataType>();
+        if (columnFieldIds.Count > 0)
+        {
+            using (DataFilter.Disable<ISoftDelete>())
+            {
+                foreach (var f in await _fieldDefinitionRepository.GetListAsync(f => columnFieldIds.Contains(f.Id)))
+                {
+                    fieldDataTypes[f.Id] = f.DataType;
+                }
+            }
+        }
+
         // 固定系统字段列在前，模板配置的抽取字段列在后（#207）。
         var headers = new List<string>(SystemFieldHeaders);
         headers.AddRange(template.Columns.Select(c => c.ColumnName));
@@ -173,7 +187,7 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
                 cells[3] = r.Title;
                 for (var i = 0; i < template.Columns.Count; i++)
                 {
-                    cells[systemCount + i] = GetExtractedValue(r, template.Columns[i].FieldDefinitionId);
+                    cells[systemCount + i] = GetExtractedValue(r, template.Columns[i].FieldDefinitionId, fieldDataTypes);
                 }
                 return cells;
             })
@@ -298,14 +312,21 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
         }
     }
 
-    private static string? GetExtractedValue(ExportProjection d, Guid fieldDefinitionId)
+    private static string? GetExtractedValue(
+        ExportProjection d, Guid fieldDefinitionId, IReadOnlyDictionary<Guid, FieldDataType> fieldDataTypes)
     {
         var field = d.ExtractedFields.FirstOrDefault(f => f.FieldDefinitionId == fieldDefinitionId);
-        return field == null ? null : FieldValueToString(field);
+        if (field == null || !fieldDataTypes.TryGetValue(fieldDefinitionId, out var dataType))
+        {
+            return null;
+        }
+
+        return FieldValueToString(field, dataType);
     }
 
-    // 按 DataType 渲染类型化列为单元格字符串（InvariantCulture，与 DocumentExtractedField.ToJsonElement 的规范形一致）。
-    private static string? FieldValueToString(ExtractedFieldProjection f) => f.DataType switch
+    // 按字段类型渲染类型化列为单元格字符串（InvariantCulture，与 DocumentExtractedField.ToJsonElement 的规范形一致）。
+    // 类型来自 FieldDefinition.DataType（#208：不在字段值行持久化）。
+    private static string? FieldValueToString(ExtractedFieldProjection f, FieldDataType dataType) => dataType switch
     {
         FieldDataType.String => f.StringValue,
         FieldDataType.Integer => f.IntegerValue?.ToString(CultureInfo.InvariantCulture),

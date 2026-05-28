@@ -60,8 +60,12 @@ public class DocumentReadAssembly_Tests : PaperbaseEntityFrameworkCoreTestBase
             var query = await _documentRepository.WithDetailsAsync(d => d.ExtractedFieldValues);
             var doc = (await query.Where(d => d.Id == id).ToListAsync()).Single();
 
+            // #208：字段类型由 FieldDefinition 决定（不在字段值行持久化）；读路径 join 取 DataType 后重建 JSON。
+            var types = (await _fieldDefinitionRepository.GetListAsync()).ToDictionary(f => f.Id, f => f.DataType);
+
             // typed-column → 规范 JSON 往返（key 用 FieldDefinitionId；字段名解析是 App 层 join，不在此层断言）。
-            var fields = doc.ExtractedFieldValues.ToDictionary(f => f.FieldDefinitionId, f => f.ToJsonElement());
+            var fields = doc.ExtractedFieldValues.ToDictionary(
+                f => f.FieldDefinitionId, f => f.ToJsonElement(types[f.FieldDefinitionId]));
 
             fields.Count.ShouldBe(6);
             fields[FieldId("amount")].GetDecimal().ShouldBe(1000.50m);

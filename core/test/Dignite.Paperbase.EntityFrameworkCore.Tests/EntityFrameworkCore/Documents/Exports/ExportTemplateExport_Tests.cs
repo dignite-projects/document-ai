@@ -21,8 +21,8 @@ namespace Dignite.Paperbase.EntityFrameworkCore.Documents;
 ///   <item>typed child 行（#206）经投影 + FieldValueToString 正确渲染（含 Decimal / Date）</item>
 ///   <item>over-cap fail-fast（fetch Max+1，超限抛错而非静默截断）</item>
 /// </list>
-/// 注：导出按 FieldDefinitionId 匹配列、渲染存储的 ColumnName，不解析字段名，故无需 seed FieldDefinition 行
-/// （文档字段值与模板列共用同一 FieldDefinitionId Guid 即可）。
+/// 注：导出按 FieldDefinitionId 匹配列、渲染存储的 ColumnName；字段类型由 FieldDefinition.DataType 决定（#208，
+/// 不在字段值行持久化），故导出会按模板列 join FieldDefinition 取 DataType——本测试经 SeedSchemaAsync seed 这些字段定义行。
 /// </summary>
 public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
 {

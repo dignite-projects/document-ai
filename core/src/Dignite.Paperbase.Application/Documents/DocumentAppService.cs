@@ -600,10 +600,11 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     }
 
     /// <summary>
-    /// 一次性解析这批文档涉及的全部 DocumentTypeId → TypeCode 与 FieldDefinitionId → Name 映射。
+    /// 一次性解析这批文档涉及的全部 DocumentTypeId → TypeCode 与 FieldDefinitionId → (Name, DataType) 映射。
     /// 穿透 soft-delete（已归档类型 / 字段仍可解析）；IMultiTenant 仍按 ambient 租户隔离（这批文档同属一层）。
+    /// DataType 随 Name 一并取出（#208：字段类型由 FieldDefinition 决定、不在字段值行持久化），供 <see cref="DocumentExtractedField.ToJsonElement"/> 重建出口 JSON。
     /// </summary>
-    protected virtual async Task<(Dictionary<Guid, string> TypeCodes, Dictionary<Guid, string> FieldNames)>
+    protected virtual async Task<(Dictionary<Guid, string> TypeCodes, Dictionary<Guid, (string Name, FieldDataType DataType)> Fields)>
         ResolveReferenceMapsAsync(IReadOnlyCollection<Document> documents)
     {
         var typeIds = documents
@@ -618,7 +619,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             .ToList();
 
         var typeCodes = new Dictionary<Guid, string>();
-        var fieldNames = new Dictionary<Guid, string>();
+        var fields = new Dictionary<Guid, (string Name, FieldDataType DataType)>();
 
         using (DataFilter.Disable<ISoftDelete>())
         {
@@ -634,32 +635,34 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             {
                 foreach (var f in await _fieldDefinitionRepository.GetListAsync(f => fieldIds.Contains(f.Id)))
                 {
-                    fieldNames[f.Id] = f.Name;
+                    fields[f.Id] = (f.Name, f.DataType);
                 }
             }
         }
 
-        return (typeCodes, fieldNames);
+        return (typeCodes, fields);
     }
 
     private static string? ResolveTypeCode(Guid? documentTypeId, IReadOnlyDictionary<Guid, string> typeCodes)
         => documentTypeId.HasValue && typeCodes.TryGetValue(documentTypeId.Value, out var code) ? code : null;
 
     private static Dictionary<string, JsonElement>? AssembleExtractedFields(
-        IReadOnlyCollection<DocumentExtractedField> fields, IReadOnlyDictionary<Guid, string> fieldNames)
+        IReadOnlyCollection<DocumentExtractedField> values,
+        IReadOnlyDictionary<Guid, (string Name, FieldDataType DataType)> fieldDefs)
     {
-        if (fields.Count == 0)
+        if (values.Count == 0)
         {
             return null;
         }
 
-        var dict = new Dictionary<string, JsonElement>(fields.Count, StringComparer.Ordinal);
-        foreach (var f in fields)
+        var dict = new Dictionary<string, JsonElement>(values.Count, StringComparer.Ordinal);
+        foreach (var v in values)
         {
             // FK RESTRICT 保证被引用字段定义不会被硬删；软删的由穿透 join 解析。极端缺失则跳过（不吐半成品 key）。
-            if (fieldNames.TryGetValue(f.FieldDefinitionId, out var name))
+            // 出口 JSON 类型由 FieldDefinition.DataType 决定（#208：不在字段值行持久化）。
+            if (fieldDefs.TryGetValue(v.FieldDefinitionId, out var def))
             {
-                dict[name] = f.ToJsonElement();
+                dict[def.Name] = v.ToJsonElement(def.DataType);
             }
         }
 

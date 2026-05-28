@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Dignite.Paperbase.Documents.Fields;
 
 namespace Dignite.Paperbase.Documents.Exports;
 
@@ -23,11 +22,10 @@ internal sealed class ExportProjection
     public List<ExtractedFieldProjection> ExtractedFields { get; init; } = new();
 }
 
-/// <summary>单个类型绑定字段值的 typed 投影——导出按 <see cref="DataType"/> 渲染对应列的单元格字符串，按 <see cref="FieldDefinitionId"/> 匹配模板列（#207）。</summary>
+/// <summary>单个类型绑定字段值的 typed 投影——导出按字段类型（来自 FieldDefinition.DataType，#208）渲染对应列的单元格字符串，按 <see cref="FieldDefinitionId"/> 匹配模板列（#207）。</summary>
 internal sealed class ExtractedFieldProjection
 {
     public Guid FieldDefinitionId { get; init; }
-    public FieldDataType DataType { get; init; }
     public string? StringValue { get; init; }
     public bool? BooleanValue { get; init; }
     public long? IntegerValue { get; init; }

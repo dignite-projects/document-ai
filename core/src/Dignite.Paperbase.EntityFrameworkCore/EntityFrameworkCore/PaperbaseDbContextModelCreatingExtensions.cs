@@ -110,7 +110,7 @@ public static class PaperbaseDbContextModelCreatingExtensions
             // DocumentId 同时是指向 Document 聚合根的外键（identifying relationship）。
             b.HasKey(x => new { x.DocumentId, x.FieldDefinitionId });
 
-            b.Property(x => x.DataType).IsRequired();
+            // 字段类型不在本行持久化（#208）：由所引用 FieldDefinition.DataType 决定，读 / 导出路径已 load 该实体。
             // StringValue 不限长（nvarchar(max) / text）：忠实存储，不截断；故不进索引键。
             // DecimalValue 用 precision(38,6)（32 位整数 + 6 位小数）——覆盖任何现实抽取数值（金额 / 比率 / 百分比）
             // 而不溢出 / 截断；EF 默认 decimal(18,2) 会静默把 >2 位小数四舍五入，丢精度。precision 跨库可移植（provider 各自映射）。
