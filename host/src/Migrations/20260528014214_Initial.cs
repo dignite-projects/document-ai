@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Dignite.Paperbase.Host.Migrations
 {
     /// <inheritdoc />
-    public partial class Slice0_Initial : Migration
+    public partial class Initial : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -83,21 +83,6 @@ namespace Dignite.Paperbase.Host.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "AbpBlobContainers",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    Name = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
-                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
-                    ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_AbpBlobContainers", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "AbpClaimTypes",
                 columns: table => new
                 {
@@ -116,6 +101,41 @@ namespace Dignite.Paperbase.Host.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_AbpClaimTypes", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "AbpEventInbox",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    MessageId = table.Column<string>(type: "nvarchar(450)", nullable: false),
+                    EventName = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    EventData = table.Column<byte[]>(type: "varbinary(max)", nullable: false),
+                    CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    Status = table.Column<int>(type: "int", nullable: false),
+                    HandledTime = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    RetryCount = table.Column<int>(type: "int", nullable: false),
+                    NextRetryTime = table.Column<DateTime>(type: "datetime2", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AbpEventInbox", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "AbpEventOutbox",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    EventName = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    EventData = table.Column<byte[]>(type: "varbinary(max)", nullable: false),
+                    CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AbpEventOutbox", x => x.Id);
                 });
 
             migrationBuilder.CreateTable(
@@ -508,16 +528,12 @@ namespace Dignite.Paperbase.Host.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "PaperbaseChatConversations",
+                name: "PaperbaseCabinets",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    Title = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
-                    DocumentId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    DocumentTypeCode = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: true),
-                    TopK = table.Column<int>(type: "int", nullable: true),
-                    MinScore = table.Column<double>(type: "float", nullable: true),
+                    DisplayName = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
                     ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false),
                     CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false),
@@ -530,86 +546,72 @@ namespace Dignite.Paperbase.Host.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_PaperbaseChatConversations", x => x.Id);
+                    table.PrimaryKey("PK_PaperbaseCabinets", x => x.Id);
                 });
 
             migrationBuilder.CreateTable(
-                name: "PaperbaseContracts",
+                name: "PaperbaseDocumentTypes",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    DocumentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    TypeCode = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    DisplayName = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    ConfidenceThreshold = table.Column<double>(type: "float", nullable: false),
+                    Priority = table.Column<int>(type: "int", nullable: false),
+                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false),
+                    CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CreatorId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    LastModificationTime = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    LastModifierId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    IsDeleted = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
+                    DeleterId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    DeletionTime = table.Column<DateTime>(type: "datetime2", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PaperbaseDocumentTypes", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "PaperbaseExportTemplates",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    Name = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    Format = table.Column<int>(type: "int", nullable: false),
+                    DocumentTypeCode = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: true),
+                    Columns = table.Column<string>(type: "json", nullable: false),
+                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false),
+                    CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CreatorId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    LastModificationTime = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    LastModifierId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    IsDeleted = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
+                    DeleterId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    DeletionTime = table.Column<DateTime>(type: "datetime2", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PaperbaseExportTemplates", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "PaperbaseFieldDefinitions",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
                     DocumentTypeCode = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
-                    Title = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: true),
-                    ContractNumber = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: true),
-                    PartyAName = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: true),
-                    PartyBName = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: true),
-                    CounterpartyName = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: true),
-                    SignedDate = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    EffectiveDate = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    ExpirationDate = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    TotalAmount = table.Column<decimal>(type: "decimal(18,2)", nullable: true),
-                    Currency = table.Column<string>(type: "nvarchar(8)", maxLength: 8, nullable: true),
-                    AutoRenewal = table.Column<bool>(type: "bit", nullable: true),
-                    TerminationNoticeDays = table.Column<int>(type: "int", nullable: true),
-                    GoverningLaw = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: true),
-                    Summary = table.Column<string>(type: "nvarchar(2000)", maxLength: 2000, nullable: true),
-                    Status = table.Column<int>(type: "int", nullable: false),
-                    ExtractionConfidence = table.Column<double>(type: "float", nullable: true),
-                    NeedsReview = table.Column<bool>(type: "bit", nullable: false),
-                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
-                    ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false),
-                    CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    CreatorId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    LastModificationTime = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    LastModifierId = table.Column<Guid>(type: "uniqueidentifier", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_PaperbaseContracts", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "PaperbaseDocumentRelations",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    SourceDocumentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    TargetDocumentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    Description = table.Column<string>(type: "nvarchar(512)", maxLength: 512, nullable: false),
-                    Source = table.Column<int>(type: "int", nullable: false),
-                    Confidence = table.Column<double>(type: "float", nullable: true),
-                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
-                    ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false),
-                    CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    CreatorId = table.Column<Guid>(type: "uniqueidentifier", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_PaperbaseDocumentRelations", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "PaperbaseDocuments",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    OriginalFileBlobName = table.Column<string>(type: "nvarchar(512)", maxLength: 512, nullable: false),
-                    SourceType = table.Column<int>(type: "int", nullable: false),
-                    FileOrigin_UploadedByUserName = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
-                    FileOrigin_OriginalFileName = table.Column<string>(type: "nvarchar(512)", maxLength: 512, nullable: true),
-                    FileOrigin_ContentType = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
-                    FileOrigin_ContentHash = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
-                    FileOrigin_FileSize = table.Column<long>(type: "bigint", nullable: false),
-                    DocumentTypeCode = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: true),
-                    LifecycleStatus = table.Column<int>(type: "int", nullable: false),
-                    ReviewStatus = table.Column<int>(type: "int", nullable: false),
-                    ExtractedText = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    ClassificationConfidence = table.Column<double>(type: "float", nullable: false),
-                    ClassificationReason = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    Name = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    DisplayName = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    Prompt = table.Column<string>(type: "nvarchar(1024)", maxLength: 1024, nullable: false),
+                    DataType = table.Column<int>(type: "int", nullable: false),
+                    DisplayOrder = table.Column<int>(type: "int", nullable: false),
+                    IsRequired = table.Column<bool>(type: "bit", nullable: false),
                     ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false),
                     CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false),
@@ -622,7 +624,7 @@ namespace Dignite.Paperbase.Host.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_PaperbaseDocuments", x => x.Id);
+                    table.PrimaryKey("PK_PaperbaseFieldDefinitions", x => x.Id);
                 });
 
             migrationBuilder.CreateTable(
@@ -671,29 +673,6 @@ namespace Dignite.Paperbase.Host.Migrations
                         name: "FK_AbpEntityChanges_AbpAuditLogs_AuditLogId",
                         column: x => x.AuditLogId,
                         principalTable: "AbpAuditLogs",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "AbpBlobs",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    ContainerId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    Name = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
-                    Content = table.Column<byte[]>(type: "varbinary(max)", maxLength: 2147483647, nullable: true),
-                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
-                    ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_AbpBlobs", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_AbpBlobs_AbpBlobContainers_ContainerId",
-                        column: x => x.ContainerId,
-                        principalTable: "AbpBlobContainers",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -927,52 +906,46 @@ namespace Dignite.Paperbase.Host.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "PaperbaseChatMessages",
+                name: "PaperbaseDocuments",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    ConversationId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    Role = table.Column<int>(type: "int", nullable: false),
-                    Content = table.Column<string>(type: "nvarchar(4000)", maxLength: 4000, nullable: false),
-                    CitationsJson = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    ClientTurnId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_PaperbaseChatMessages", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_PaperbaseChatMessages_PaperbaseChatConversations_ConversationId",
-                        column: x => x.ConversationId,
-                        principalTable: "PaperbaseChatConversations",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "PaperbaseDocumentPipelineRuns",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    DocumentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    PipelineCode = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
-                    Status = table.Column<int>(type: "int", nullable: false),
-                    AttemptNumber = table.Column<int>(type: "int", nullable: false),
-                    StartedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    CompletedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    StatusMessage = table.Column<string>(type: "nvarchar(2048)", maxLength: 2048, nullable: true)
+                    OriginalFileBlobName = table.Column<string>(type: "nvarchar(512)", maxLength: 512, nullable: false),
+                    SourceType = table.Column<int>(type: "int", nullable: false),
+                    FileOrigin_UploadedByUserName = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    FileOrigin_OriginalFileName = table.Column<string>(type: "nvarchar(512)", maxLength: 512, nullable: true),
+                    FileOrigin_ContentType = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    FileOrigin_ContentHash = table.Column<string>(type: "nvarchar(64)", maxLength: 64, nullable: false),
+                    FileOrigin_FileSize = table.Column<long>(type: "bigint", nullable: false),
+                    CabinetId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    DocumentTypeCode = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: true),
+                    LifecycleStatus = table.Column<int>(type: "int", nullable: false),
+                    ReviewStatus = table.Column<int>(type: "int", nullable: false),
+                    Markdown = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    Title = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: true),
+                    ClassificationConfidence = table.Column<double>(type: "float", nullable: false),
+                    ClassificationReason = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    Language = table.Column<string>(type: "nvarchar(16)", maxLength: 16, nullable: true),
+                    ExtractedFields = table.Column<string>(type: "json", nullable: true),
+                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    ConcurrencyStamp = table.Column<string>(type: "nvarchar(40)", maxLength: 40, nullable: false),
+                    CreationTime = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CreatorId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    LastModificationTime = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    LastModifierId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    IsDeleted = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
+                    DeleterId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    DeletionTime = table.Column<DateTime>(type: "datetime2", nullable: true)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_PaperbaseDocumentPipelineRuns", x => x.Id);
+                    table.PrimaryKey("PK_PaperbaseDocuments", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_PaperbaseDocumentPipelineRuns_PaperbaseDocuments_DocumentId",
-                        column: x => x.DocumentId,
-                        principalTable: "PaperbaseDocuments",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        name: "FK_PaperbaseDocuments_PaperbaseCabinets_CabinetId",
+                        column: x => x.CabinetId,
+                        principalTable: "PaperbaseCabinets",
+                        principalColumn: "Id");
                 });
 
             migrationBuilder.CreateTable(
@@ -1032,6 +1005,32 @@ namespace Dignite.Paperbase.Host.Migrations
                         principalColumn: "Id");
                 });
 
+            migrationBuilder.CreateTable(
+                name: "PaperbaseDocumentPipelineRuns",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    ExtraProperties = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    TenantId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
+                    DocumentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    PipelineCode = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    Status = table.Column<int>(type: "int", nullable: false),
+                    AttemptNumber = table.Column<int>(type: "int", nullable: false),
+                    StartedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CompletedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    StatusMessage = table.Column<string>(type: "nvarchar(2048)", maxLength: 2048, nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PaperbaseDocumentPipelineRuns", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_PaperbaseDocumentPipelineRuns_PaperbaseDocuments_DocumentId",
+                        column: x => x.DocumentId,
+                        principalTable: "PaperbaseDocuments",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
             migrationBuilder.CreateIndex(
                 name: "IX_AbpAuditLogActions_AuditLogId",
                 table: "AbpAuditLogActions",
@@ -1058,21 +1057,6 @@ namespace Dignite.Paperbase.Host.Migrations
                 columns: new[] { "IsAbandoned", "NextTryTime" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_AbpBlobContainers_TenantId_Name",
-                table: "AbpBlobContainers",
-                columns: new[] { "TenantId", "Name" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_AbpBlobs_ContainerId",
-                table: "AbpBlobs",
-                column: "ContainerId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_AbpBlobs_TenantId_ContainerId_Name",
-                table: "AbpBlobs",
-                columns: new[] { "TenantId", "ContainerId", "Name" });
-
-            migrationBuilder.CreateIndex(
                 name: "IX_AbpEntityChanges_AuditLogId",
                 table: "AbpEntityChanges",
                 column: "AuditLogId");
@@ -1086,6 +1070,21 @@ namespace Dignite.Paperbase.Host.Migrations
                 name: "IX_AbpEntityPropertyChanges_EntityChangeId",
                 table: "AbpEntityPropertyChanges",
                 column: "EntityChangeId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AbpEventInbox_MessageId",
+                table: "AbpEventInbox",
+                column: "MessageId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AbpEventInbox_Status_CreationTime",
+                table: "AbpEventInbox",
+                columns: new[] { "Status", "CreationTime" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AbpEventOutbox_CreationTime",
+                table: "AbpEventOutbox",
+                column: "CreationTime");
 
             migrationBuilder.CreateIndex(
                 name: "IX_AbpFeatureGroups_Name",
@@ -1299,42 +1298,11 @@ namespace Dignite.Paperbase.Host.Migrations
                 column: "ReferenceId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseChatConversations_TenantId_CreatorId_CreationTime",
-                table: "PaperbaseChatConversations",
-                columns: new[] { "TenantId", "CreatorId", "CreationTime" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseChatMessages_ConversationId_ClientTurnId",
-                table: "PaperbaseChatMessages",
-                columns: new[] { "ConversationId", "ClientTurnId" },
+                name: "IX_PaperbaseCabinets_TenantId_DisplayName",
+                table: "PaperbaseCabinets",
+                columns: new[] { "TenantId", "DisplayName" },
                 unique: true,
-                filter: "[ClientTurnId] IS NOT NULL");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseChatMessages_ConversationId_CreationTime",
-                table: "PaperbaseChatMessages",
-                columns: new[] { "ConversationId", "CreationTime" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseContracts_CounterpartyName",
-                table: "PaperbaseContracts",
-                column: "CounterpartyName");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseContracts_DocumentId",
-                table: "PaperbaseContracts",
-                column: "DocumentId",
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseContracts_ExpirationDate",
-                table: "PaperbaseContracts",
-                column: "ExpirationDate");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseContracts_Status",
-                table: "PaperbaseContracts",
-                column: "Status");
+                filter: "IsDeleted = 0");
 
             migrationBuilder.CreateIndex(
                 name: "IX_PaperbaseDocumentPipelineRuns_DocumentId_PipelineCode_AttemptNumber",
@@ -1342,14 +1310,9 @@ namespace Dignite.Paperbase.Host.Migrations
                 columns: new[] { "DocumentId", "PipelineCode", "AttemptNumber" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseDocumentRelations_SourceDocumentId",
-                table: "PaperbaseDocumentRelations",
-                column: "SourceDocumentId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PaperbaseDocumentRelations_TargetDocumentId",
-                table: "PaperbaseDocumentRelations",
-                column: "TargetDocumentId");
+                name: "IX_PaperbaseDocuments_CabinetId",
+                table: "PaperbaseDocuments",
+                column: "CabinetId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_PaperbaseDocuments_CreationTime",
@@ -1370,6 +1333,32 @@ namespace Dignite.Paperbase.Host.Migrations
                 name: "IX_PaperbaseDocuments_ReviewStatus",
                 table: "PaperbaseDocuments",
                 column: "ReviewStatus");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PaperbaseDocumentTypes_TenantId_TypeCode",
+                table: "PaperbaseDocumentTypes",
+                columns: new[] { "TenantId", "TypeCode" },
+                unique: true,
+                filter: "IsDeleted = 0");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PaperbaseExportTemplates_TenantId_Name",
+                table: "PaperbaseExportTemplates",
+                columns: new[] { "TenantId", "Name" },
+                unique: true,
+                filter: "IsDeleted = 0");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PaperbaseFieldDefinitions_TenantId_DocumentTypeCode",
+                table: "PaperbaseFieldDefinitions",
+                columns: new[] { "TenantId", "DocumentTypeCode" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PaperbaseFieldDefinitions_TenantId_DocumentTypeCode_Name",
+                table: "PaperbaseFieldDefinitions",
+                columns: new[] { "TenantId", "DocumentTypeCode", "Name" },
+                unique: true,
+                filter: "IsDeleted = 0");
         }
 
         /// <inheritdoc />
@@ -1385,13 +1374,16 @@ namespace Dignite.Paperbase.Host.Migrations
                 name: "AbpBackgroundJobs");
 
             migrationBuilder.DropTable(
-                name: "AbpBlobs");
-
-            migrationBuilder.DropTable(
                 name: "AbpClaimTypes");
 
             migrationBuilder.DropTable(
                 name: "AbpEntityPropertyChanges");
+
+            migrationBuilder.DropTable(
+                name: "AbpEventInbox");
+
+            migrationBuilder.DropTable(
+                name: "AbpEventOutbox");
 
             migrationBuilder.DropTable(
                 name: "AbpFeatureGroups");
@@ -1466,19 +1458,16 @@ namespace Dignite.Paperbase.Host.Migrations
                 name: "OpenIddictTokens");
 
             migrationBuilder.DropTable(
-                name: "PaperbaseChatMessages");
-
-            migrationBuilder.DropTable(
-                name: "PaperbaseContracts");
-
-            migrationBuilder.DropTable(
                 name: "PaperbaseDocumentPipelineRuns");
 
             migrationBuilder.DropTable(
-                name: "PaperbaseDocumentRelations");
+                name: "PaperbaseDocumentTypes");
 
             migrationBuilder.DropTable(
-                name: "AbpBlobContainers");
+                name: "PaperbaseExportTemplates");
+
+            migrationBuilder.DropTable(
+                name: "PaperbaseFieldDefinitions");
 
             migrationBuilder.DropTable(
                 name: "AbpEntityChanges");
@@ -1496,9 +1485,6 @@ namespace Dignite.Paperbase.Host.Migrations
                 name: "OpenIddictAuthorizations");
 
             migrationBuilder.DropTable(
-                name: "PaperbaseChatConversations");
-
-            migrationBuilder.DropTable(
                 name: "PaperbaseDocuments");
 
             migrationBuilder.DropTable(
@@ -1506,6 +1492,9 @@ namespace Dignite.Paperbase.Host.Migrations
 
             migrationBuilder.DropTable(
                 name: "OpenIddictApplications");
+
+            migrationBuilder.DropTable(
+                name: "PaperbaseCabinets");
         }
     }
 }

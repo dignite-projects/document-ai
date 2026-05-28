@@ -24,7 +24,7 @@ namespace Dignite.Paperbase.Host.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("Dignite.Paperbase.Documents.Cabinet", b =>
+            modelBuilder.Entity("Dignite.Paperbase.Documents.Cabinets.Cabinet", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -198,53 +198,7 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.ToTable("PaperbaseDocuments", (string)null);
                 });
 
-            modelBuilder.Entity("Dignite.Paperbase.Documents.DocumentPipelineRun", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("AttemptNumber")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ExtraProperties")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)")
-                        .HasColumnName("ExtraProperties");
-
-                    b.Property<string>("PipelineCode")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
-                    b.Property<DateTime>("StartedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.Property<string>("StatusMessage")
-                        .HasMaxLength(2048)
-                        .HasColumnType("nvarchar(2048)");
-
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("TenantId");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DocumentId", "PipelineCode", "AttemptNumber");
-
-                    b.ToTable("PaperbaseDocumentPipelineRuns", (string)null);
-                });
-
-            modelBuilder.Entity("Dignite.Paperbase.Documents.DocumentType", b =>
+            modelBuilder.Entity("Dignite.Paperbase.Documents.DocumentTypes.DocumentType", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -321,7 +275,7 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.ToTable("PaperbaseDocumentTypes", (string)null);
                 });
 
-            modelBuilder.Entity("Dignite.Paperbase.Documents.ExportTemplate", b =>
+            modelBuilder.Entity("Dignite.Paperbase.Documents.Exports.ExportTemplate", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -398,7 +352,7 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.ToTable("PaperbaseExportTemplates", (string)null);
                 });
 
-            modelBuilder.Entity("Dignite.Paperbase.Documents.FieldDefinition", b =>
+            modelBuilder.Entity("Dignite.Paperbase.Documents.Fields.FieldDefinition", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -488,6 +442,52 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasFilter("IsDeleted = 0");
 
                     b.ToTable("PaperbaseFieldDefinitions", (string)null);
+                });
+
+            modelBuilder.Entity("Dignite.Paperbase.Documents.Pipelines.DocumentPipelineRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AttemptNumber")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<string>("PipelineCode")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("StatusMessage")
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("TenantId");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId", "PipelineCode", "AttemptNumber");
+
+                    b.ToTable("PaperbaseDocumentPipelineRuns", (string)null);
                 });
 
             modelBuilder.Entity("Volo.Abp.AuditLogging.AuditLog", b =>
@@ -2375,7 +2375,7 @@ namespace Dignite.Paperbase.Host.Migrations
 
             modelBuilder.Entity("Dignite.Paperbase.Documents.Document", b =>
                 {
-                    b.HasOne("Dignite.Paperbase.Documents.Cabinet", null)
+                    b.HasOne("Dignite.Paperbase.Documents.Cabinets.Cabinet", null)
                         .WithMany()
                         .HasForeignKey("CabinetId")
                         .OnDelete(DeleteBehavior.NoAction);
@@ -2419,7 +2419,7 @@ namespace Dignite.Paperbase.Host.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("Dignite.Paperbase.Documents.DocumentPipelineRun", b =>
+            modelBuilder.Entity("Dignite.Paperbase.Documents.Pipelines.DocumentPipelineRun", b =>
                 {
                     b.HasOne("Dignite.Paperbase.Documents.Document", null)
                         .WithMany("PipelineRuns")
