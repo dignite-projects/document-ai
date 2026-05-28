@@ -22,6 +22,9 @@ namespace Dignite.Paperbase.Documents;
 [DependsOn(typeof(PaperbaseApplicationTestModule))]
 public class DocumentClassificationJobTestModule : AbpModule
 {
+    // 已知 Id 让测试断言 doc.DocumentTypeId == ContractTypeId（#207：分类结果是内部 Id）。
+    public static readonly Guid ContractTypeId = Guid.NewGuid();
+
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
@@ -30,7 +33,7 @@ public class DocumentClassificationJobTestModule : AbpModule
 
         // 字段架构 v2：候选集来自 IDocumentTypeRepository（DB），按 Document.TenantId 精确匹配单层
         var contractType = new DocumentType(
-            Guid.NewGuid(),
+            ContractTypeId,
             tenantId: null,
             typeCode: "contract.general",
             displayName: "合同",
@@ -101,7 +104,7 @@ public class DocumentClassificationBackgroundJob_Tests
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
-        doc.DocumentTypeCode.ShouldBe("contract.general");
+        doc.DocumentTypeId.ShouldBe(DocumentClassificationJobTestModule.ContractTypeId);
         doc.ClassificationConfidence.ShouldBe(0.92);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.None);
 
@@ -137,7 +140,7 @@ public class DocumentClassificationBackgroundJob_Tests
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
-        doc.DocumentTypeCode.ShouldBeNull();
+        doc.DocumentTypeId.ShouldBeNull();
         doc.ClassificationConfidence.ShouldBe(0);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
 
@@ -167,7 +170,7 @@ public class DocumentClassificationBackgroundJob_Tests
         var run = doc.GetLatestRun(PaperbasePipelines.Classification);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
-        doc.DocumentTypeCode.ShouldBeNull();
+        doc.DocumentTypeId.ShouldBeNull();
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
     }
 
@@ -196,7 +199,7 @@ public class DocumentClassificationBackgroundJob_Tests
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
-        doc.DocumentTypeCode.ShouldBeNull();
+        doc.DocumentTypeId.ShouldBeNull();
         doc.ClassificationConfidence.ShouldBe(0);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
 
@@ -247,7 +250,7 @@ public class DocumentClassificationBackgroundJob_Tests
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
-        doc.DocumentTypeCode.ShouldBeNull();
+        doc.DocumentTypeId.ShouldBeNull();
         doc.ClassificationConfidence.ShouldBe(0);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
 
@@ -273,7 +276,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         await _job.ExecuteAsync(new DocumentClassificationJobArgs { DocumentId = doc.Id });
 
-        doc.DocumentTypeCode.ShouldBeNull();
+        doc.DocumentTypeId.ShouldBeNull();
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
 
         await _eventBus.DidNotReceive().PublishAsync(

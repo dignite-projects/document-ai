@@ -10,7 +10,9 @@ using Microsoft.AspNetCore.Authorization;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Volo.Abp;
 using Volo.Abp.Authorization;
+using Volo.Abp.Data;
 
 namespace Dignite.Paperbase.Mcp.Documents;
 
@@ -31,6 +33,8 @@ public sealed class DocumentResources
     public static async Task<ResourceContents> ReadAsync(
         string id,
         IDocumentRepository documentRepository,
+        IDocumentTypeRepository documentTypeRepository,
+        IDataFilter dataFilter,
         IAuthorizationService authorizationService,
         CancellationToken cancellationToken = default)
     {
@@ -50,11 +54,22 @@ public sealed class DocumentResources
             throw new McpException($"Document not found: {id}");
         }
 
+        // 解析 DocumentTypeId → TypeCode（#207；穿透 soft-delete，已归档类型也透出 type code）。资源内容 wire-format 不变。
+        string? documentTypeCode = null;
+        if (document.DocumentTypeId.HasValue)
+        {
+            using (dataFilter.Disable<ISoftDelete>())
+            {
+                var type = await documentTypeRepository.FindAsync(document.DocumentTypeId.Value, includeDetails: false, cancellationToken);
+                documentTypeCode = type?.TypeCode;
+            }
+        }
+
         return new TextResourceContents
         {
             Uri = DocumentResourceUri.Format(document.Id),
             MimeType = "text/markdown",
-            Text = BuildPayload(document)
+            Text = BuildPayload(document, documentTypeCode)
         };
     }
 
@@ -64,14 +79,14 @@ public sealed class DocumentResources
     /// 防 indirect prompt injection——与检索 tool 包裹 Title 同源（否则攻击者把注入放正文即可绕过）。
     /// header 字段（type / lifecycle / language…）是系统受控值，留在 boundary 外。
     /// </summary>
-    private static string BuildPayload(Document document)
+    private static string BuildPayload(Document document, string? documentTypeCode)
     {
         var sb = new StringBuilder();
         sb.Append("<!-- paperbase document metadata\n");
         sb.Append($"id: {document.Id}\n");
-        if (!string.IsNullOrEmpty(document.DocumentTypeCode))
+        if (!string.IsNullOrEmpty(documentTypeCode))
         {
-            sb.Append($"type: {document.DocumentTypeCode}\n");
+            sb.Append($"type: {documentTypeCode}\n");
         }
         sb.Append($"lifecycle: {document.LifecycleStatus}\n");
         if (!string.IsNullOrEmpty(document.Language))

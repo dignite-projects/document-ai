@@ -2,7 +2,6 @@ using System;
 using System.Globalization;
 using System.Text.Json;
 using Dignite.Paperbase.Documents.Fields;
-using Volo.Abp;
 using Volo.Abp.Domain.Entities;
 using Volo.Abp.MultiTenancy;
 
@@ -12,10 +11,16 @@ namespace Dignite.Paperbase.Documents;
 /// 类型绑定字段的<b>字段值行</b>（字段架构 v2）——<see cref="Document"/> 聚合的 child entity，
 /// 字段值查询与持久化的<b>唯一</b> truth source（替代旧的 <c>Document.ExtractedFields</c> JSON 列，Issue #206）。
 /// <para>
-/// 一行一个字段值。复合主键 <c>(DocumentId, Name)</c> 即字段集自然键——同文档同名字段唯一，
-/// 整组重建 / 操作员手改走 reconcile（同名原地更新），不留重复行。值按 <see cref="DataType"/> 落到对应类型化列
+/// 一行一个字段值。复合主键 <c>(DocumentId, FieldDefinitionId)</c> 即字段集自然键（Issue #207）——
+/// 内部用不可变 <see cref="FieldDefinitionId"/> 关联产生该值的 <see cref="FieldDefinition"/>，
+/// 不再冗余字段名 / TypeCode 字符串；<see cref="FieldDefinition.Name"/> rename 不级联本表。同文档同字段唯一，
+/// 整组重建 / 操作员手改走 reconcile（同字段原地更新），不留重复行。值按 <see cref="DataType"/> 落到对应类型化列
 /// （<see cref="StringValue"/> / <see cref="IntegerValue"/> / …），让 <c>GetFieldMatchedIdsAsync</c> 用普通列比较
 /// （等值 + 范围）跨任意关系型数据库可移植——不再依赖 SQL Server <c>JSON_VALUE</c> / <c>TRY_CONVERT</c> 方言。
+/// </para>
+/// <para>
+/// 出口 DTO / MCP / REST 的 <c>ExtractedFields</c> 字典 key（即字段名）由读路径 join <see cref="FieldDefinition"/>
+/// 投影获取（穿透 soft-delete，#207）——本行不存字段名快照（CLAUDE.md / #207 "不引入 snapshot 字段"）。
 /// </para>
 /// <para>
 /// 隔离约定（CLAUDE.md "## 安全约定" + Issue #206 复核护栏）：
@@ -33,12 +38,10 @@ public class DocumentExtractedField : Entity, IMultiTenant
 
     public virtual Guid DocumentId { get; private set; }
 
-    /// <summary>冗余存父文档当前 <see cref="Document.DocumentTypeCode"/>，仅用于 <c>(TenantId, DocumentTypeCode, Name)</c> 索引局部性；reconcile 时随聚合根同步。</summary>
-    public virtual string DocumentTypeCode { get; private set; } = default!;
+    /// <summary>产生该字段值的 <see cref="FieldDefinition"/>.Id（内部关联 / 查询索引键，#207）。</summary>
+    public virtual Guid FieldDefinitionId { get; private set; }
 
-    /// <summary>字段名，等同 <c>FieldDefinition.Name</c>（与复合键的 Name 分量一致）。</summary>
-    public virtual string Name { get; private set; } = default!;
-
+    /// <summary>值写入时该字段的数据类型（写入时事实，记录值落在哪个 typed column；非对 FieldDefinition 的引用，读 typed column 时无需 join）。</summary>
     public virtual FieldDataType DataType { get; private set; }
 
     // 类型化值列——按 DataType 取用其一，其余为 null。普通列即可建 B-tree 索引、支持等值 + 范围。
@@ -53,22 +56,21 @@ public class DocumentExtractedField : Entity, IMultiTenant
     {
     }
 
-    internal DocumentExtractedField(Guid documentId, Guid? tenantId, string documentTypeCode, DocumentFieldValue value)
+    internal DocumentExtractedField(Guid documentId, Guid? tenantId, DocumentFieldValue value)
     {
         DocumentId = documentId;
         TenantId = tenantId;
-        Name = value.Name;
-        SetValue(documentTypeCode, value);
+        FieldDefinitionId = value.FieldDefinitionId;
+        SetValue(value);
     }
 
     /// <summary>
-    /// 原地写入 / 更新值（reconcile 时对同名字段调用）。把规范 JSON（已由 App 层 <c>ExtractedFieldValueValidator</c>
+    /// 原地写入 / 更新值（reconcile 时对同字段调用）。把规范 JSON（已由 App 层 <c>ExtractedFieldValueValidator</c>
     /// 校验与 <paramref name="value"/>.DataType 对齐）拆进对应类型化列；先清空所有值列再按类型回填，
-    /// 保证类型切换（如同名字段在新文档类型下换了 DataType）不残留旧列值。
+    /// 保证类型切换（如同字段在新文档类型下换了 DataType）不残留旧列值。
     /// </summary>
-    internal void SetValue(string documentTypeCode, DocumentFieldValue value)
+    internal void SetValue(DocumentFieldValue value)
     {
-        DocumentTypeCode = documentTypeCode;
         DataType = value.DataType;
 
         StringValue = null;
@@ -121,5 +123,5 @@ public class DocumentExtractedField : Entity, IMultiTenant
         _ => throw new ArgumentOutOfRangeException(nameof(DataType), DataType, "Unsupported field data type.")
     };
 
-    public override object[] GetKeys() => new object[] { DocumentId, Name };
+    public override object[] GetKeys() => new object[] { DocumentId, FieldDefinitionId };
 }

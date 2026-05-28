@@ -86,7 +86,8 @@ public class DocumentAppService_Delete_Tests
             Arg.Is<DocumentDeletedEto>(e =>
                 e.DocumentId == doc.Id &&
                 e.TenantId == doc.TenantId &&
-                e.DocumentTypeCode == doc.DocumentTypeCode),
+                // 未分类文档 → DocumentTypeId 为 null → ETO 解析出的 DocumentTypeCode 为 null（#207）。
+                e.DocumentTypeCode == null),
             Arg.Any<bool>());
     }
 
@@ -111,7 +112,8 @@ public class DocumentAppService_Delete_Tests
             Arg.Is<DocumentRestoredEto>(e =>
                 e.DocumentId == doc.Id &&
                 e.TenantId == doc.TenantId &&
-                e.DocumentTypeCode == doc.DocumentTypeCode),
+                // 未分类文档 → DocumentTypeId 为 null → ETO 解析出的 DocumentTypeCode 为 null（#207）。
+                e.DocumentTypeCode == null),
             Arg.Any<bool>());
     }
 

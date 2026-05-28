@@ -13,8 +13,10 @@ public class CreateExportTemplateDto
 
     public ExportFormat Format { get; set; } = ExportFormat.Csv;
 
+    /// <summary>限定的文档类型（#207 收敛为 ExtractedField-only 列后必填——列引用该类型下的字段定义）。</summary>
+    [Required]
     [DynamicStringLength(typeof(DocumentTypeConsts), nameof(DocumentTypeConsts.MaxTypeCodeLength))]
-    public string? DocumentTypeCode { get; set; }
+    public string DocumentTypeCode { get; set; } = default!;
 
     [Required]
     [MinLength(1)]

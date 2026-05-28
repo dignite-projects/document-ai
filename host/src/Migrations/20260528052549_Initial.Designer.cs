@@ -13,7 +13,7 @@ using Volo.Abp.EntityFrameworkCore;
 namespace Dignite.Paperbase.Host.Migrations
 {
     [DbContext(typeof(PaperbaseHostDbContext))]
-    [Migration("20260528035222_Initial")]
+    [Migration("20260528052549_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
@@ -131,9 +131,8 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("DeletionTime");
 
-                    b.Property<string>("DocumentTypeCode")
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                    b.Property<Guid?>("DocumentTypeId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("ExtraProperties")
                         .IsRequired()
@@ -189,11 +188,13 @@ namespace Dignite.Paperbase.Host.Migrations
 
                     b.HasIndex("CreationTime");
 
-                    b.HasIndex("DocumentTypeCode");
+                    b.HasIndex("DocumentTypeId");
 
                     b.HasIndex("LifecycleStatus");
 
                     b.HasIndex("ReviewStatus");
+
+                    b.HasIndex("TenantId", "DocumentTypeId");
 
                     b.ToTable("PaperbaseDocuments", (string)null);
                 });
@@ -203,9 +204,8 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.Property<Guid>("DocumentId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Name")
-                        .HasMaxLength(64)
-                        .HasColumnType("nvarchar(64)");
+                    b.Property<Guid>("FieldDefinitionId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<bool?>("BooleanValue")
                         .HasColumnType("bit");
@@ -223,11 +223,6 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasPrecision(38, 6)
                         .HasColumnType("decimal(38,6)");
 
-                    b.Property<string>("DocumentTypeCode")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
                     b.Property<long?>("IntegerValue")
                         .HasColumnType("bigint");
 
@@ -238,9 +233,17 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("TenantId");
 
-                    b.HasKey("DocumentId", "Name");
+                    b.HasKey("DocumentId", "FieldDefinitionId");
 
-                    b.HasIndex("TenantId", "DocumentTypeCode", "Name");
+                    b.HasIndex("FieldDefinitionId");
+
+                    b.HasIndex("TenantId", "FieldDefinitionId", "DateTimeValue", "DocumentId");
+
+                    b.HasIndex("TenantId", "FieldDefinitionId", "DateValue", "DocumentId");
+
+                    b.HasIndex("TenantId", "FieldDefinitionId", "DecimalValue", "DocumentId");
+
+                    b.HasIndex("TenantId", "FieldDefinitionId", "IntegerValue", "DocumentId");
 
                     b.ToTable("PaperbaseDocumentExtractedFields", (string)null);
                 });
@@ -355,9 +358,8 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("DeletionTime");
 
-                    b.Property<string>("DocumentTypeCode")
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                    b.Property<Guid>("DocumentTypeId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("ExtraProperties")
                         .IsRequired()
@@ -391,6 +393,8 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasColumnName("TenantId");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DocumentTypeId");
 
                     b.HasIndex("TenantId", "Name")
                         .IsUnique()
@@ -439,10 +443,8 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.Property<int>("DisplayOrder")
                         .HasColumnType("int");
 
-                    b.Property<string>("DocumentTypeCode")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                    b.Property<Guid>("DocumentTypeId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("ExtraProperties")
                         .IsRequired()
@@ -482,9 +484,11 @@ namespace Dignite.Paperbase.Host.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "DocumentTypeCode");
+                    b.HasIndex("DocumentTypeId");
 
-                    b.HasIndex("TenantId", "DocumentTypeCode", "Name")
+                    b.HasIndex("TenantId", "DocumentTypeId");
+
+                    b.HasIndex("TenantId", "DocumentTypeId", "Name")
                         .IsUnique()
                         .HasFilter("IsDeleted = 0");
 
@@ -2427,6 +2431,11 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasForeignKey("CabinetId")
                         .OnDelete(DeleteBehavior.NoAction);
 
+                    b.HasOne("Dignite.Paperbase.Documents.DocumentTypes.DocumentType", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentTypeId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.OwnsOne("Dignite.Paperbase.Documents.FileOrigin", "FileOrigin", b1 =>
                         {
                             b1.Property<Guid>("DocumentId")
@@ -2472,6 +2481,30 @@ namespace Dignite.Paperbase.Host.Migrations
                         .WithMany("ExtractedFieldValues")
                         .HasForeignKey("DocumentId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Dignite.Paperbase.Documents.Fields.FieldDefinition", null)
+                        .WithMany()
+                        .HasForeignKey("FieldDefinitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Dignite.Paperbase.Documents.Exports.ExportTemplate", b =>
+                {
+                    b.HasOne("Dignite.Paperbase.Documents.DocumentTypes.DocumentType", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Dignite.Paperbase.Documents.Fields.FieldDefinition", b =>
+                {
+                    b.HasOne("Dignite.Paperbase.Documents.DocumentTypes.DocumentType", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

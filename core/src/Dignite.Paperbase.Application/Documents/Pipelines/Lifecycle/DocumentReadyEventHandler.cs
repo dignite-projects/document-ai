@@ -22,17 +22,20 @@ public class DocumentReadyEventHandler
     : ILocalEventHandler<DocumentLifecycleStatusChangedEvent>, ITransientDependency
 {
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentTypeRepository _documentTypeRepository;
     private readonly IDistributedEventBus _distributedEventBus;
     private readonly IClock _clock;
     private readonly ILogger<DocumentReadyEventHandler> _logger;
 
     public DocumentReadyEventHandler(
         IDocumentRepository documentRepository,
+        IDocumentTypeRepository documentTypeRepository,
         IDistributedEventBus distributedEventBus,
         IClock clock,
         ILogger<DocumentReadyEventHandler> logger)
     {
         _documentRepository = documentRepository;
+        _documentTypeRepository = documentTypeRepository;
         _distributedEventBus = distributedEventBus;
         _clock = clock;
         _logger = logger;
@@ -54,17 +57,26 @@ public class DocumentReadyEventHandler
             return;
         }
 
+        // ETO 仍携带 DocumentTypeCode 字符串（出口契约不变）——由内部 DocumentTypeId 解析（#207）。
+        // Ready 文档必有已确认类型（DeriveLifecycle 闸门），且 DeleteAsync 阻止删除在用类型，故类型必活跃。
+        string? documentTypeCode = null;
+        if (document.DocumentTypeId.HasValue)
+        {
+            var type = await _documentTypeRepository.FindAsync(document.DocumentTypeId.Value);
+            documentTypeCode = type?.TypeCode;
+        }
+
         await _distributedEventBus.PublishAsync(
             new DocumentReadyEto
             {
                 DocumentId = document.Id,
                 TenantId = document.TenantId,
                 EventTime = _clock.Now,
-                DocumentTypeCode = document.DocumentTypeCode
+                DocumentTypeCode = documentTypeCode
             });
 
         _logger.LogInformation(
             "Document {DocumentId} reached Ready lifecycle; DocumentReadyEto enqueued (type={DocTypeCode}).",
-            document.Id, document.DocumentTypeCode);
+            document.Id, documentTypeCode);
     }
 }

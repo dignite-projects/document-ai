@@ -34,6 +34,7 @@ public class FieldExtractionEventHandler
     : IDistributedEventHandler<DocumentClassifiedEto>, ITransientDependency
 {
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentTypeRepository _documentTypeRepository;
     private readonly IFieldDefinitionRepository _fieldDefinitionRepository;
     private readonly FieldExtractionWorkflow _workflow;
     private readonly IDistributedEventBus _distributedEventBus;
@@ -44,6 +45,7 @@ public class FieldExtractionEventHandler
 
     public FieldExtractionEventHandler(
         IDocumentRepository documentRepository,
+        IDocumentTypeRepository documentTypeRepository,
         IFieldDefinitionRepository fieldDefinitionRepository,
         FieldExtractionWorkflow workflow,
         IDistributedEventBus distributedEventBus,
@@ -53,6 +55,7 @@ public class FieldExtractionEventHandler
         ILogger<FieldExtractionEventHandler> logger)
     {
         _documentRepository = documentRepository;
+        _documentTypeRepository = documentTypeRepository;
         _fieldDefinitionRepository = fieldDefinitionRepository;
         _workflow = workflow;
         _distributedEventBus = distributedEventBus;
@@ -74,13 +77,26 @@ public class FieldExtractionEventHandler
         // 上下文中 ICurrentTenant 不一定自动还原。
         using (_currentTenant.Change(eventData.TenantId))
         {
-            // 阶段 1：短 UoW 只读字段定义（按 Document.TenantId 精确匹配单层）。
+            // 阶段 1：短 UoW —— 解析事件携带的 TypeCode → 内部 DocumentTypeId（#207），并按该 Id 读字段定义（单层）。
             // 显式 dispose 让该 UoW 完全退出，再进入阶段 2 的外部 LLM 调用。
+            Guid documentTypeId;
             List<FieldDefinition> definitions;
             using (var readUow = _unitOfWorkManager.Begin(requiresNew: true))
             {
-                definitions = await _fieldDefinitionRepository.GetForExtractionAsync(
-                    eventData.DocumentTypeCode);
+                var typeDef = await _documentTypeRepository.FindByTypeCodeAsync(eventData.DocumentTypeCode);
+                if (typeDef == null)
+                {
+                    // 事件携带的类型码在当前层解析不到（类型在飞行期间被重命名 / 删除，罕见）——跳过，等新分类事件触发。
+                    _logger.LogWarning(
+                        "DocumentClassifiedEto type code {TypeCode} not resolvable in tenant {TenantId} " +
+                        "(renamed/deleted in-flight?); field extraction skipped for doc {DocumentId}.",
+                        eventData.DocumentTypeCode, eventData.TenantId, eventData.DocumentId);
+                    await readUow.CompleteAsync();
+                    return;
+                }
+
+                documentTypeId = typeDef.Id;
+                definitions = await _fieldDefinitionRepository.GetForExtractionAsync(documentTypeId);
                 await readUow.CompleteAsync();
             }
 
@@ -94,10 +110,10 @@ public class FieldExtractionEventHandler
 
                 var blankDocument = await _documentRepository.FindAsync(eventData.DocumentId, includeDetails: true);
                 // 仅当文档仍存在、同租户、且当前类型仍是本事件的类型（非 reclassify race 的 stale 事件）才清空，
-                // 避免用 stale 事件误删后续分类写入的字段。
+                // 避免用 stale 事件误删后续分类写入的字段。按内部 DocumentTypeId 比较（#207）。
                 if (blankDocument != null
                     && blankDocument.TenantId == eventData.TenantId
-                    && string.Equals(blankDocument.DocumentTypeCode, eventData.DocumentTypeCode, StringComparison.Ordinal)
+                    && blankDocument.DocumentTypeId == documentTypeId
                     && blankDocument.ExtractedFieldValues.Count > 0)
                 {
                     blankDocument.SetFields(Array.Empty<DocumentFieldValue>());
@@ -110,7 +126,7 @@ public class FieldExtractionEventHandler
             }
 
             var descriptors = definitions.Select(d => new FieldExtractionDescriptor(
-                d.Name, d.Prompt, d.DataType, d.IsRequired)).ToList();
+                d.Id, d.Name, d.Prompt, d.DataType, d.IsRequired)).ToList();
 
             string markdown;
             using (var documentReadUow = _unitOfWorkManager.Begin(requiresNew: true))
@@ -133,12 +149,13 @@ public class FieldExtractionEventHandler
                     return;
                 }
 
-                // 在 LLM 调用前先做一次 stale 事件防护，避免对已经重分类的文档做无意义外部调用。
-                if (!string.Equals(readDocument.DocumentTypeCode, eventData.DocumentTypeCode, StringComparison.Ordinal))
+                // 在 LLM 调用前先做一次 stale 事件防护，避免对已经重分类的文档做无意义外部调用。按内部 DocumentTypeId 比较（#207）。
+                if (readDocument.DocumentTypeId != documentTypeId)
                 {
                     _logger.LogInformation(
-                        "Stale DocumentClassifiedEto before field extraction: event typeCode={EventTypeCode} document typeCode={DocTypeCode} doc={DocumentId}.",
-                        eventData.DocumentTypeCode, readDocument.DocumentTypeCode, eventData.DocumentId);
+                        "Stale DocumentClassifiedEto before field extraction: event typeCode={EventTypeCode} (typeId={EventTypeId}) " +
+                        "document typeId={DocTypeId} doc={DocumentId}.",
+                        eventData.DocumentTypeCode, documentTypeId, readDocument.DocumentTypeId, eventData.DocumentId);
                     return;
                 }
 
@@ -191,23 +208,23 @@ public class FieldExtractionEventHandler
             // 在飞行期间操作员 reclassify 过，本事件已 stale。继续抽取会用旧 schema 污染
             // ExtractedFields（出现"TypeCode=invoice 但 ExtractedFields 来自 contract schema"
             // 的脏状态）。安全做法：丢弃本事件，等新分类事件触发新一轮抽取。
-            if (!string.Equals(document.DocumentTypeCode, eventData.DocumentTypeCode, StringComparison.Ordinal))
+            if (document.DocumentTypeId != documentTypeId)
             {
                 _logger.LogInformation(
-                    "Stale DocumentClassifiedEto: event typeCode={EventTypeCode} document typeCode={DocTypeCode} doc={DocumentId}. " +
+                    "Stale DocumentClassifiedEto: event typeCode={EventTypeCode} (typeId={EventTypeId}) document typeId={DocTypeId} doc={DocumentId}. " +
                     "Likely reclassified between publish and consume; discarding to avoid writing fields against an outdated schema.",
-                    eventData.DocumentTypeCode, document.DocumentTypeCode, eventData.DocumentId);
+                    eventData.DocumentTypeCode, documentTypeId, document.DocumentTypeId, eventData.DocumentId);
                 return;
             }
 
-            // 非空字段构造 typed DocumentFieldValue（DataType 来自 descriptor，源自 FieldDefinition）——
-            // 整组替换字段值集合（单层，无分桶；reconcile 删旧 / 改同名 / 增新）。
+            // 非空字段构造 typed DocumentFieldValue（FieldDefinitionId + DataType 来自 descriptor，源自 FieldDefinition）——
+            // 整组替换字段值集合（单层，无分桶；reconcile 删旧 / 改同字段 / 增新）。LLM 输出按 Name（prompt schema key）回取。
             var fieldValues = new List<DocumentFieldValue>();
             foreach (var d in descriptors)
             {
                 if (extracted.TryGetValue(d.Name, out var value) && value.HasValue)
                 {
-                    fieldValues.Add(new DocumentFieldValue(d.Name, d.DataType, value.Value));
+                    fieldValues.Add(new DocumentFieldValue(d.FieldDefinitionId, d.DataType, value.Value));
                 }
             }
 

@@ -9,40 +9,23 @@ This is the concrete demonstration of the channel's "enable, don't do" philosoph
 ## How it works
 
 ```
-ExportTemplate (Name, Format, optional DocumentTypeCode, Columns[])
+ExportTemplate (Name, Format, DocumentTypeId, Columns[])      // DocumentTypeId required (#207)
         │
         ▼
-ExportAsync(TemplateId, DocumentIds? | Filter)
-        │   explicit TenantId predicate  ──►  count > limit ? → fail (ExportDocumentLimitExceeded)
+ExportAsync(TemplateId, DocumentIds? | LifecycleStatus filter)
+        │   ambient IMultiTenant filter + narrow to template's type  ──►  count > limit ? → fail (ExportDocumentLimitExceeded)
         ▼
-documents ──► per-column value projection ──► ExportFileBuilder ──► CSV / XLSX stream
-                     │
-                     ├─ SourceKind=System    → Document top-level column (whitelisted key)
-                     └─ SourceKind=Extracted → DocumentExtractedField row where Name = key  (key = FieldDefinition.Name)
+documents ──► fixed system columns + per-extracted-column projection ──► ExportFileBuilder ──► CSV / XLSX stream
 ```
 
-Each `ExportColumn` carries `{ SourceKind, Key, ColumnName, Order }`. The `SourceKind` abstracts away the three kinds of fields:
+The output is **fixed system fields first, then the template's extracted-field columns** (#207):
 
-- **`System`** — a system-common field computed by the pipeline. `Key` must be one of the whitelisted names (see below). These map to `Document`'s top-level typed columns.
-- **`Extracted`** — a type-bound field. `Key` is the `FieldDefinition.Name`; the value is read from the document's `DocumentExtractedField` row whose `Name` equals `key` (issue #206), rendered from its typed column per the field's `DataType`. Host fields and tenant fields need no distinction here — a document only ever carries one layer's extraction result (field architecture v2's "two layers mutually exclusive"), so keys never collide.
+- **Fixed system fields** — always emitted, not configurable: `SourceType`, `LifecycleStatus`, `ReviewStatus`, `Title`. These are Paperbase's stable metadata contract; tenants don't configure them the way they configure business fields.
+- **Extracted-field columns** — each `ExportColumn` references one type-bound field. Internally the column stores the **immutable `FieldDefinitionId`** (so renaming `FieldDefinition.Name` doesn't break the template — #207); the API submits and returns the field `Name`, resolved at save/read time against the template's document type. The value comes from the document's `DocumentExtractedField` row matched by `FieldDefinitionId` (issue #206), rendered from its typed column per the field's `DataType`. Host fields and tenant fields need no distinction here — a document only ever carries one layer's extraction result (field architecture v2's "two layers mutually exclusive"), so fields never collide.
 
-`ColumnName` is the header text written to the file (Unicode is allowed, so Japanese/Chinese headers like `金額` work; control characters are rejected). `Order` sorts columns ascending.
+Each `ExportColumn` (API shape) carries `{ FieldName, ColumnName, Order }`. `ColumnName` is the header text written to the file (Unicode is allowed, so Japanese/Chinese headers like `金額` work; control characters are rejected). `Order` sorts the extracted columns ascending.
 
-## Whitelisted system fields
-
-`ExportColumn` with `SourceKind=System` accepts only these keys (`ExportSystemFields`):
-
-| Key | Source |
-|---|---|
-| `Id` | `Document.Id` |
-| `Title` | `Document.Title` |
-| `DocumentTypeCode` | classification result |
-| `LifecycleStatus` / `ReviewStatus` | pipeline state |
-| `Language` / `OcrConfidence` / `ClassificationConfidence` | OCR / classification metadata |
-| `CreationTime` | upload timestamp |
-| `OriginalFileName` / `ContentType` / `FileSize` | `Document.FileOrigin` |
-
-`Markdown` (the full body — too large for a cell; pull it via REST if needed) and `ClassificationReason` (an AI explanation, not document data) are deliberately **excluded**.
+Because every column is a type-bound field, a template is inherently type-scoped: `DocumentTypeId` (submitted/returned as `DocumentTypeCode`) is **required**, and the export only ever covers documents of that type.
 
 ## Formats
 
@@ -56,13 +39,13 @@ JSON file export is intentionally **not** offered — programmatic consumers sho
 Two paths, both backed by the same `IExportTemplateAppService.ExportAsync`:
 
 - **Operator UI** — pick a template, select documents (checkbox) or apply a filter, download.
-- **API** — `POST` `ExportDocumentsInput { TemplateId, DocumentIds? | (LifecycleStatus, DocumentTypeCode) }`. When `DocumentIds` is non-empty it wins; otherwise the filter applies.
+- **API** — `POST` `ExportDocumentsInput { TemplateId, DocumentIds? | LifecycleStatus }`. When `DocumentIds` is non-empty it wins; otherwise the `LifecycleStatus` filter applies. The document type is **not** an input — it's fixed by the template (#207).
 
 > EventBus-triggered export is **not** offered: a subscriber that already consumes the EventBus has the structured data — having Paperbase generate a file and hand it back closes no loop.
 
 ## Limits & safety
 
-- **Tenant isolation** is enforced with an explicit `TenantId` predicate in the query (not ambient `DataFilter`), per the `CLAUDE.md` security conventions.
+- **Tenant isolation** is enforced by ABP's ambient `IMultiTenant` global filter on the `Documents` query (issue #206), per the `CLAUDE.md` security conventions.
 - **Per-export document cap** (`ExportTemplateConsts.MaxExportDocumentCount`, default 10000): if the selection matches more rows than the cap, the export **fails** (`ExportDocumentLimitExceeded`) rather than silently truncating — for accounting data, dropping vouchers is more dangerous than an error. Narrow the filter or select fewer documents.
 - Permissions: managing templates needs `Paperbase.Documents.Templates.*`; running an export needs `Paperbase.Documents.Export`.
 
@@ -70,14 +53,14 @@ Two paths, both backed by the same `IExportTemplateAppService.ExportAsync`:
 
 Paperbase ships nothing freee-specific. You compose the format from your own type-bound fields.
 
-Suppose a tenant has an `invoice` document type with tenant fields `issue_date`, `amount`, `partner_name` (defined via `IFieldDefinitionAppService`, extracted automatically after classification). freee's deal-import CSV wants columns `発生日,金額,取引先`. Configure one template:
+Suppose a tenant has an `invoice` document type with tenant fields `issue_date`, `amount`, `partner_name` (defined via `IFieldDefinitionAppService`, extracted automatically after classification). Configure one template referencing those fields by name:
 
-| SourceKind | Key | ColumnName | Order |
-|---|---|---|---|
-| `Extracted` | `issue_date` | `発生日` | 0 |
-| `Extracted` | `amount` | `金額` | 1 |
-| `Extracted` | `partner_name` | `取引先` | 2 |
+| FieldName | ColumnName | Order |
+|---|---|---|
+| `issue_date` | `発生日` | 0 |
+| `amount` | `金額` | 1 |
+| `partner_name` | `取引先` | 2 |
 
-Set `Format = Csv` and `DocumentTypeCode = invoice` (so the template only applies to invoices). At month-end, filter the document list to the invoices you want and export — you get a CSV whose header row and column order match what freee expects, ready to import.
+Set `Format = Csv` and `DocumentTypeCode = invoice` (required — the template is type-scoped). At month-end, filter the document list to the invoices you want and export. The CSV's header row is the **four fixed system columns** (`SourceType,LifecycleStatus,ReviewStatus,Title`) followed by your configured columns (`発生日,金額,取引先`); a downstream importer that wants only the business columns ignores or strips the leading system columns.
 
 The same mechanism produces a Yayoi 仕訳日記帳 layout, a Yonyou voucher CSV, or any other ingest format: define the fields, map them to the target column names, pick the order. If a target format needs a value Paperbase doesn't capture, add a `FieldDefinition` for it — the channel still doesn't *know* what freee is, it just lets you describe the shape.

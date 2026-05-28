@@ -65,12 +65,13 @@ public class EfCoreDocumentRepository
     }
 
     public virtual async Task<List<Guid>> GetFieldMatchedIdsAsync(
-        string documentTypeCode,
+        Guid documentTypeId,
         IReadOnlyList<DocumentFieldQuery> fieldQueries,
         CancellationToken cancellationToken = default)
     {
         // 调用层（DocumentAppService.GetListAsync）仅在有字段过滤器时调用，且已校验 documentTypeCode 必填、
-        // 字段数量 / 长度 / 至少一个值（DTO + AppService 层，loud AbpValidationException）。此处防御空入参。
+        // 字段数量 / 长度 / 至少一个值（DTO + AppService 层，loud AbpValidationException），并已把 documentTypeCode /
+        // fieldName 解析为内部 Id。此处防御空入参。
         if (fieldQueries is not { Count: > 0 })
         {
             return new List<Guid>();
@@ -79,21 +80,33 @@ public class EfCoreDocumentRepository
         var dbSet = await GetDbSetAsync();
 
         // 字段值过滤从 Documents 聚合根起手——租户（IMultiTenant）+ 软删（ISoftDelete）全局过滤器按 ambient 状态
-        // 自动施加（Issue #206：不再禁用过滤器、不手写 TenantId 谓词）。documentTypeCode 锚定单一类型
-        // （字段值离开类型无确定含义）。每个字段过滤编译成一个 ExtractedFieldValues.Any（EXISTS），多字段之间
-        // AND（结构化检索惯例：不同字段互相收窄）。普通列比较（= / 范围），跨任意关系型数据库可移植——
-        // 不再依赖 SQL Server JSON_VALUE / TRY_CONVERT / raw SQL，注入面归零。
-        var query = dbSet.Where(d => d.DocumentTypeCode == documentTypeCode);
+        // 自动施加（Issue #206：不再禁用过滤器、不手写 TenantId 谓词）。documentTypeId 锚定单一类型
+        // （字段值离开类型无确定含义）。每个字段过滤编译成一个 ExtractedFieldValues.Any（EXISTS，按 FieldDefinitionId
+        // 匹配 child），多字段之间 AND（结构化检索惯例：不同字段互相收窄）。普通列比较（= / 范围），跨任意关系型
+        // 数据库可移植——不再依赖 SQL Server JSON_VALUE / TRY_CONVERT / raw SQL，注入面归零。
+        var query = dbSet.Where(d => d.DocumentTypeId == documentTypeId);
 
         foreach (var fieldQuery in fieldQueries)
         {
-            query = ApplyFieldValueFilter(query, documentTypeCode, fieldQuery);
+            query = ApplyFieldValueFilter(query, fieldQuery);
         }
 
         return await query
             .AsNoTracking()
             .Select(d => d.Id)
             .ToListAsync(GetCancellationToken(cancellationToken));
+    }
+
+    public virtual async Task<bool> AnyExtractedFieldValueAsync(
+        Guid fieldDefinitionId,
+        CancellationToken cancellationToken = default)
+    {
+        // 直接扫 child DbSet（不经聚合根）——查"是否还有任何字段值引用此 FieldDefinition"。
+        // 不受父 Document 的 ISoftDelete 约束（child 无 ISoftDelete，自身 DbSet 不施加父过滤器）：软删文档的字段行
+        // 仍在、恢复后复活，故一并计入。IMultiTenant 仍按 ambient 租户隔离（字段定义在当前层）。
+        var dbContext = await GetDbContextAsync();
+        return await dbContext.Set<DocumentExtractedField>()
+            .AnyAsync(f => f.FieldDefinitionId == fieldDefinitionId, GetCancellationToken(cancellationToken));
     }
 
     /// <summary>
@@ -109,16 +122,17 @@ public class EfCoreDocumentRepository
     /// </summary>
     private static IQueryable<Document> ApplyFieldValueFilter(
         IQueryable<Document> query,
-        string documentTypeCode,
         DocumentFieldQuery fieldQuery)
     {
+        // 内部按 FieldDefinitionId 匹配 child 行（#207，不再按字段名字符串）。FieldName 仅用于错误信息（可读诊断）。
+        var fieldDefinitionId = fieldQuery.FieldDefinitionId;
         var name = fieldQuery.FieldName;
 
         // fail-closed：等值 / 区间至少给其一。全空是残缺查询——loud fail（与 DocumentFieldQuery 契约一致），
         // 绝不退化成「该类型全捞」。调用层 DTO 已校验，此处是直连仓储的纵深防御。
         if (fieldQuery.FieldValue == null && fieldQuery.FieldValueMin == null && fieldQuery.FieldValueMax == null)
         {
-            throw InvalidValue(name, documentTypeCode, fieldQuery.FieldDataType);
+            throw InvalidValue(name, fieldQuery.FieldDataType);
         }
 
         var isRange = fieldQuery.FieldValue == null
@@ -133,7 +147,7 @@ public class EfCoreDocumentRepository
                 }
                 var stringValue = fieldQuery.FieldValue!;
                 return query.Where(d => d.ExtractedFieldValues
-                    .Any(f => f.Name == name && f.StringValue == stringValue));
+                    .Any(f => f.FieldDefinitionId == fieldDefinitionId && f.StringValue == stringValue));
 
             case FieldDataType.Boolean:
                 if (isRange)
@@ -142,49 +156,49 @@ public class EfCoreDocumentRepository
                 }
                 if (!bool.TryParse(fieldQuery.FieldValue, out var boolValue))
                 {
-                    throw InvalidValue(name, documentTypeCode, fieldQuery.FieldDataType);
+                    throw InvalidValue(name, fieldQuery.FieldDataType);
                 }
                 return query.Where(d => d.ExtractedFieldValues
-                    .Any(f => f.Name == name && f.BooleanValue == boolValue));
+                    .Any(f => f.FieldDefinitionId == fieldDefinitionId && f.BooleanValue == boolValue));
 
             case FieldDataType.Integer:
             {
-                var (min, max) = ParseRange(fieldQuery, documentTypeCode, ParseLong);
+                var (min, max) = ParseRange(fieldQuery, ParseLong);
                 return query.Where(d => d.ExtractedFieldValues.Any(f =>
-                    f.Name == name
+                    f.FieldDefinitionId == fieldDefinitionId
                     && (min == null || f.IntegerValue >= min)
                     && (max == null || f.IntegerValue <= max)));
             }
 
             case FieldDataType.Decimal:
             {
-                var (min, max) = ParseRange(fieldQuery, documentTypeCode, ParseDecimal);
+                var (min, max) = ParseRange(fieldQuery, ParseDecimal);
                 return query.Where(d => d.ExtractedFieldValues.Any(f =>
-                    f.Name == name
+                    f.FieldDefinitionId == fieldDefinitionId
                     && (min == null || f.DecimalValue >= min)
                     && (max == null || f.DecimalValue <= max)));
             }
 
             case FieldDataType.Date:
             {
-                var (min, max) = ParseRange(fieldQuery, documentTypeCode, ParseDate);
+                var (min, max) = ParseRange(fieldQuery, ParseDate);
                 return query.Where(d => d.ExtractedFieldValues.Any(f =>
-                    f.Name == name
+                    f.FieldDefinitionId == fieldDefinitionId
                     && (min == null || f.DateValue >= min)
                     && (max == null || f.DateValue <= max)));
             }
 
             case FieldDataType.DateTime:
             {
-                var (min, max) = ParseRange(fieldQuery, documentTypeCode, ParseDateTime);
+                var (min, max) = ParseRange(fieldQuery, ParseDateTime);
                 return query.Where(d => d.ExtractedFieldValues.Any(f =>
-                    f.Name == name
+                    f.FieldDefinitionId == fieldDefinitionId
                     && (min == null || f.DateTimeValue >= min)
                     && (max == null || f.DateTimeValue <= max)));
             }
 
             default:
-                throw InvalidValue(name, documentTypeCode, fieldQuery.FieldDataType);
+                throw InvalidValue(name, fieldQuery.FieldDataType);
         }
     }
 
@@ -193,13 +207,13 @@ public class EfCoreDocumentRepository
     /// （任一可空）。任一入参解析失败抛 <see cref="PaperbaseErrorCodes.InvalidExtractedFieldValue"/>（loud）。
     /// </summary>
     private static (T? Min, T? Max) ParseRange<T>(
-        DocumentFieldQuery fieldQuery, string documentTypeCode, Func<string, T?> parse)
+        DocumentFieldQuery fieldQuery, Func<string, T?> parse)
         where T : struct
     {
         if (fieldQuery.FieldValue != null)
         {
             var value = parse(fieldQuery.FieldValue)
-                ?? throw InvalidValue(fieldQuery.FieldName, documentTypeCode, fieldQuery.FieldDataType);
+                ?? throw InvalidValue(fieldQuery.FieldName, fieldQuery.FieldDataType);
             return (value, value);
         }
 
@@ -208,12 +222,12 @@ public class EfCoreDocumentRepository
         if (fieldQuery.FieldValueMin != null)
         {
             min = parse(fieldQuery.FieldValueMin)
-                ?? throw InvalidValue(fieldQuery.FieldName, documentTypeCode, fieldQuery.FieldDataType);
+                ?? throw InvalidValue(fieldQuery.FieldName, fieldQuery.FieldDataType);
         }
         if (fieldQuery.FieldValueMax != null)
         {
             max = parse(fieldQuery.FieldValueMax)
-                ?? throw InvalidValue(fieldQuery.FieldName, documentTypeCode, fieldQuery.FieldDataType);
+                ?? throw InvalidValue(fieldQuery.FieldName, fieldQuery.FieldDataType);
         }
         return (min, max);
     }
@@ -242,9 +256,8 @@ public class EfCoreDocumentRepository
             .WithData("FieldName", fieldName)
             .WithData("DataType", dataType.ToString());
 
-    private static BusinessException InvalidValue(string fieldName, string documentTypeCode, FieldDataType dataType) =>
+    private static BusinessException InvalidValue(string fieldName, FieldDataType dataType) =>
         new BusinessException(PaperbaseErrorCodes.InvalidExtractedFieldValue)
             .WithData("FieldName", fieldName)
-            .WithData("DocumentTypeCode", documentTypeCode)
             .WithData("DataType", dataType.ToString());
 }

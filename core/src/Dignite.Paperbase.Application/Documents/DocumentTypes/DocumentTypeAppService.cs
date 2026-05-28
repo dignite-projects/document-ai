@@ -91,7 +91,23 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
             throw new EntityNotFoundException(typeof(DocumentType), id);
         }
 
-        entity.Update(input.DisplayName, input.ConfidenceThreshold, input.Priority);
+        // 重命名解锁（#207）：仅在 TypeCode 变化时判重（同层 (TenantId, TypeCode) 唯一；含软删占用，避免恢复冲突）。
+        // 内部关联（Document / FieldDefinition / ExportTemplate）已用本类型的不可变 Id，rename 不级联这些表。
+        if (!string.Equals(input.TypeCode, entity.TypeCode, StringComparison.Ordinal))
+        {
+            DocumentType? conflict;
+            using (DataFilter.Disable<ISoftDelete>())
+            {
+                conflict = await _repository.FindByTypeCodeAsync(input.TypeCode);
+            }
+            if (conflict != null)
+            {
+                throw new BusinessException(PaperbaseErrorCodes.DocumentTypeCodeAlreadyExists)
+                    .WithData("TypeCode", input.TypeCode);
+            }
+        }
+
+        entity.Update(input.TypeCode, input.DisplayName, input.ConfidenceThreshold, input.Priority);
         await _repository.UpdateAsync(entity, autoSave: true);
         return ObjectMapper.Map<DocumentType, DocumentTypeDto>(entity);
     }
@@ -100,20 +116,21 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
     {
         var entity = await _repository.GetAsync(id);
 
-        // Fail-closed：仍有文档引用此类型时阻止删除——强制租户先 reclassify 这些文档。
+        // Fail-closed：仍有文档引用此类型时阻止删除——强制租户先 reclassify 这些文档。按内部 DocumentTypeId 判定（#207）。
         // 租户隔离由 ambient IMultiTenant 过滤器施加（GetAsync 与 document 查询都自动按当前层过滤）。
+        // 注：软删除走 UPDATE 不触发 FK；此应用层闸门 + DocumentType→Document 无 FK，故这里显式拦在用类型。
         var documentQueryable = await _documentRepository.GetQueryableAsync();
         var inUse = await AsyncExecuter.AnyAsync(
-            documentQueryable.Where(d => d.DocumentTypeCode == entity.TypeCode));
+            documentQueryable.Where(d => d.DocumentTypeId == entity.Id));
         if (inUse)
         {
             throw new BusinessException(PaperbaseErrorCodes.DocumentTypeInUse)
                 .WithData("TypeCode", entity.TypeCode);
         }
 
-        // 级联软删除：同 (TenantId, TypeCode) 下的 FieldDefinition 随 DocumentType 一并下线，
+        // 级联软删除：同类型（DocumentTypeId）下的 FieldDefinition 随 DocumentType 一并下线，
         // 否则会留下孤儿字段定义且未来重建同 TypeCode 时无法复用同名字段。
-        var fields = await _fieldDefinitionRepository.GetByDocumentTypeAsync(entity.TypeCode);
+        var fields = await _fieldDefinitionRepository.GetByDocumentTypeAsync(entity.Id);
         if (fields.Count > 0)
         {
             await _fieldDefinitionRepository.DeleteManyAsync(fields);
@@ -164,7 +181,7 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
             var deletedFields = await AsyncExecuter.ToListAsync(
                 fieldQueryable.Where(f =>
                     f.TenantId == entity.TenantId &&
-                    f.DocumentTypeCode == entity.TypeCode &&
+                    f.DocumentTypeId == entity.Id &&
                     f.IsDeleted));
 
             foreach (var field in deletedFields)
@@ -172,7 +189,7 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
                 var nameConflict = await AsyncExecuter.AnyAsync(
                     fieldQueryable.Where(f =>
                         f.TenantId == entity.TenantId &&
-                        f.DocumentTypeCode == entity.TypeCode &&
+                        f.DocumentTypeId == entity.Id &&
                         f.Name == field.Name &&
                         !f.IsDeleted));
                 if (nameConflict)

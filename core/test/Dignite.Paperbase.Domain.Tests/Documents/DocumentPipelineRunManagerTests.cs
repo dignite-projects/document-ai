@@ -165,7 +165,7 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
         await _manager.CompleteClassificationWithLowConfidenceAsync(doc, classRun, "AI confidence too low");
 
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
-        doc.DocumentTypeCode.ShouldBeNull();
+        doc.DocumentTypeId.ShouldBeNull();
         doc.LifecycleStatus.ShouldBe(DocumentLifecycleStatus.Processing);
     }
 
@@ -186,9 +186,10 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
 
         // 人工确认
         var run2 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
-        await _manager.CompleteManualClassificationAsync(doc, run2, CreateContractType());
+        var contractType = CreateContractType();
+        await _manager.CompleteManualClassificationAsync(doc, run2, contractType);
 
-        doc.DocumentTypeCode.ShouldBe("contract.general");
+        doc.DocumentTypeId.ShouldBe(contractType.Id);
         doc.ClassificationConfidence.ShouldBe(1.0);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.Reviewed);
 
@@ -213,10 +214,11 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
 
         // 重试自动分类成功 → 高置信度路径必须清空 ClassificationReason
         var run2 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
-        await _manager.CompleteClassificationAsync(doc, run2, CreateContractType(), 0.95);
+        var contractType = CreateContractType();
+        await _manager.CompleteClassificationAsync(doc, run2, contractType, 0.95);
 
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.None);
-        doc.DocumentTypeCode.ShouldBe("contract.general");
+        doc.DocumentTypeId.ShouldBe(contractType.Id);
         doc.ClassificationConfidence.ShouldBe(0.95);
         doc.ClassificationReason.ShouldBeNull(); // 高置信度路径固定清空
     }
@@ -232,9 +234,10 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
 
         // 第一次：高置信度分类成功
         var run1 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
-        await _manager.CompleteClassificationAsync(doc, run1, CreateContractType(), 0.92);
+        var contractType = CreateContractType();
+        await _manager.CompleteClassificationAsync(doc, run1, contractType, 0.92);
 
-        doc.DocumentTypeCode.ShouldBe("contract.general");
+        doc.DocumentTypeId.ShouldBe(contractType.Id);
         doc.ClassificationConfidence.ShouldBe(0.92);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.None);
 
@@ -242,8 +245,8 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
         var run2 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
         await _manager.CompleteClassificationWithLowConfidenceAsync(doc, run2, "AI confidence too low");
 
-        // 历史 TypeCode/Confidence 必须清空，避免外部读到「类型已确定 + 待审核」自相矛盾
-        doc.DocumentTypeCode.ShouldBeNull();
+        // 历史 TypeId/Confidence 必须清空，避免外部读到「类型已确定 + 待审核」自相矛盾
+        doc.DocumentTypeId.ShouldBeNull();
         doc.ClassificationConfidence.ShouldBe(0);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
         doc.ClassificationReason.ShouldBe("AI confidence too low");

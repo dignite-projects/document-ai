@@ -14,17 +14,19 @@ namespace Dignite.Paperbase.Documents.Fields;
 ///   <item><c>TenantId != null</c> → 租户字段定义（租户 admin 通过 IFieldDefinitionAppService 自助 CRUD）</item>
 /// </list>
 /// Host 与 tenant 各自独立宇宙——字段抽取按 Document.TenantId 严格匹配单层，不跨层混合。
-/// 唯一约束 <c>(TenantId, DocumentTypeCode, Name)</c>：同层同类型下字段名不重复；跨层同名是合法的两行。
+/// 唯一约束 <c>(TenantId, DocumentTypeId, Name)</c>：同层同类型下字段名不重复；跨层同名是合法的两行。
 /// <para>
-/// <see cref="DocumentTypeCode"/> 字符串引用 <see cref="DocumentType.TypeCode"/>，按 DDD reference-by-id 原则不加 navigation。
-/// 父类型必须存在于同层（同 TenantId）；不存在"租户字段挂在 Host 类型上"的关系。
+/// <see cref="DocumentTypeId"/> 引用 <see cref="DocumentType"/>.Id（内部不可变关联，#207），按 DDD reference-by-id 原则不加 navigation。
+/// 父类型必须存在于同层（同 TenantId）；不存在"租户字段挂在 Host 类型上"的关系。父类型硬删由 FK RESTRICT 阻止。
 /// </para>
 /// <para>
 /// <see cref="Name"/> 与 <see cref="DisplayName"/> 的职责分离（对齐 <see cref="DocumentType"/> 的
 /// <c>TypeCode</c> + <c>DisplayName</c>）：
 /// <list type="bullet">
-///   <item><see cref="Name"/>：机器标识符，ASCII 白名单，<strong>immutable</strong>——作为 LLM prompt JSON schema key、
-///   <c>Document.ExtractedFields</c> 的字典 key、下游消费方依赖的契约 ID；rename 破坏向后兼容</item>
+///   <item><see cref="Name"/>：机器标识符，ASCII 白名单，<strong>外部契约 key</strong>——作为 LLM prompt JSON schema key、
+///   <c>Document.ExtractedFields</c> 的字典 key、下游消费方依赖的契约 ID。#207 起 <strong>可由 admin 重命名</strong>
+///   （内部关联改用 <see cref="DocumentExtractedField.FieldDefinitionId"/> / <see cref="ExportColumn.FieldDefinitionId"/>，
+///   rename 不级联数据行），但仍执行 regex 白名单 + 同层同类型唯一约束，rename 是契约级变更（UI 应给警示）</item>
 ///   <item><see cref="DisplayName"/>：人类可读展示名，Unicode，<strong>可改</strong>——仅 UI / API 文档使用，
 ///   <strong>不进 LLM prompt</strong>（避免 prompt injection 面 + Name+Prompt 已足够告诉模型抽什么）</item>
 /// </list>
@@ -47,12 +49,14 @@ public class FieldDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public virtual Guid? TenantId { get; private set; }
 
-    public virtual string DocumentTypeCode { get; private set; } = default!;
+    /// <summary>父文档类型内部关联——引用 <see cref="DocumentType"/>.Id（reference-by-id，无 navigation；#207）。</summary>
+    public virtual Guid DocumentTypeId { get; private set; }
 
     /// <summary>
-    /// 字段名。**Immutable**——只在构造时通过 <see cref="ValidateName"/> 写入，<see cref="Update"/> 路径不重设。
-    /// 设计意图：Name 进 LLM prompt schema、作为抽取结果字典的 JSON 键、被下游业务消费方依赖；
-    /// rename 会破坏向后兼容。需要"换名"请新建字段并迁移数据。
+    /// 字段名（机器标识符 / 外部契约 key）。#207 起<b>可重命名</b>——内部关联已改用
+    /// <see cref="DocumentExtractedField.FieldDefinitionId"/> / <see cref="ExportColumn.FieldDefinitionId"/>，
+    /// rename 不级联字段值行 / 导出列。仍由 <see cref="ValidateName"/> 执行 regex 白名单，并由 AppService 保证
+    /// 同层同类型唯一；rename 是契约级变更（进 LLM prompt schema、作为 ExtractedFields 字典 key、被下游消费方依赖，UI 应警示）。
     /// </summary>
     public virtual string Name { get; private set; } = default!;
 
@@ -77,7 +81,7 @@ public class FieldDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
     public FieldDefinition(
         Guid id,
         Guid? tenantId,
-        string documentTypeCode,
+        Guid documentTypeId,
         string name,
         string displayName,
         string prompt,
@@ -87,7 +91,7 @@ public class FieldDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         : base(id)
     {
         TenantId = tenantId;
-        DocumentTypeCode = Check.NotNullOrWhiteSpace(documentTypeCode, nameof(documentTypeCode), FieldDefinitionConsts.MaxDocumentTypeCodeLength);
+        DocumentTypeId = Check.NotDefaultOrNull<Guid>(documentTypeId, nameof(documentTypeId));
         Name = ValidateName(name);
         DisplayName = ValidateDisplayName(displayName);
         Prompt = Check.NotNullOrWhiteSpace(prompt, nameof(prompt), FieldDefinitionConsts.MaxPromptLength);
@@ -96,8 +100,14 @@ public class FieldDefinition : FullAuditedAggregateRoot<Guid>, IMultiTenant
         IsRequired = isRequired;
     }
 
-    public void Update(string displayName, string prompt, FieldDataType dataType, int displayOrder, bool isRequired)
+    /// <summary>
+    /// 更新字段定义。<paramref name="name"/> 是机器契约 key——#207 起允许重命名（仍执行 <see cref="ValidateName"/>
+    /// regex 白名单；同层同类型唯一性由 AppService 校验）。<paramref name="dataType"/> 变更约束（对已有抽取值的字段禁止改类型，
+    /// 防 typed-column 错位）由 AppService 在调用前断言（跨聚合存在性检查，不在实体层）。
+    /// </summary>
+    public void Update(string name, string displayName, string prompt, FieldDataType dataType, int displayOrder, bool isRequired)
     {
+        Name = ValidateName(name);
         DisplayName = ValidateDisplayName(displayName);
         Prompt = Check.NotNullOrWhiteSpace(prompt, nameof(prompt), FieldDefinitionConsts.MaxPromptLength);
         DataType = dataType;

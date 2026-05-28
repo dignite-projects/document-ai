@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Documents;
+using Dignite.Paperbase.Documents.Exports;
 using Dignite.Paperbase.Documents.Fields;
 using Shouldly;
 using Volo.Abp;
@@ -14,16 +15,21 @@ using Xunit;
 namespace Dignite.Paperbase.EntityFrameworkCore.Documents;
 
 /// <summary>
-/// ExportTemplateAppService.ExportAsync 集成测试（SQLite 真实 EF）：
+/// ExportTemplateAppService.ExportAsync 集成测试（SQLite 真实 EF，#207）：
 /// <list type="bullet">
-///   <item>DocumentExtractedField typed child 行（Issue #206）能否被 Select 投影到非实体类型并正确渲染单元格</item>
+///   <item>固定系统字段（SourceType / LifecycleStatus / ReviewStatus / Title）始终在前，模板抽取列（按 FieldDefinitionId 匹配）在后</item>
+///   <item>typed child 行（#206）经投影 + FieldValueToString 正确渲染（含 Decimal / Date）</item>
 ///   <item>over-cap fail-fast（fetch Max+1，超限抛错而非静默截断）</item>
 /// </list>
+/// 注：导出按 FieldDefinitionId 匹配列、渲染存储的 ColumnName，不解析字段名，故无需 seed FieldDefinition 行
+/// （文档字段值与模板列共用同一 FieldDefinitionId Guid 即可）。
 /// </summary>
 public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
 {
     private readonly IExportTemplateAppService _appService;
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentTypeRepository _documentTypeRepository;
+    private readonly IFieldDefinitionRepository _fieldDefinitionRepository;
     private readonly IExportTemplateRepository _templateRepository;
     private readonly IGuidGenerator _guidGenerator;
 
@@ -31,27 +37,48 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
     {
         _appService = GetRequiredService<IExportTemplateAppService>();
         _documentRepository = GetRequiredService<IDocumentRepository>();
+        _documentTypeRepository = GetRequiredService<IDocumentTypeRepository>();
+        _fieldDefinitionRepository = GetRequiredService<IFieldDefinitionRepository>();
         _templateRepository = GetRequiredService<IExportTemplateRepository>();
         _guidGenerator = GetRequiredService<IGuidGenerator>();
     }
 
+    // FK RESTRICT 真实生效（#207）：Document.DocumentTypeId / ExportTemplate.DocumentTypeId → DocumentType，
+    // DocumentExtractedField.FieldDefinitionId → FieldDefinition。插入前先 seed 父行（ExportColumn 内的 FieldDefinitionId
+    // 在序列化 JSON 内无 FK，但文档字段值有，故按文档字段值 seed）。
+    private async Task SeedSchemaAsync(Guid typeId, params DocumentFieldValue[] fields)
+    {
+        await _documentTypeRepository.InsertAsync(
+            new DocumentType(typeId, null, "t" + typeId.ToString("N"), "Type"), autoSave: true);
+        foreach (var f in fields)
+        {
+            await _fieldDefinitionRepository.InsertAsync(
+                new FieldDefinition(
+                    f.FieldDefinitionId, null, typeId,
+                    name: "f" + f.FieldDefinitionId.ToString("N"),
+                    displayName: "field", prompt: "extract", dataType: f.DataType),
+                autoSave: true);
+        }
+    }
+
     [Fact]
-    public async Task Export_Should_Project_System_And_Extracted_Columns_From_Db()
+    public async Task Export_Should_Emit_Fixed_System_Fields_Then_Extracted_Columns()
     {
         var templateId = _guidGenerator.Create();
+        var typeId = _guidGenerator.Create();
+        var amountFieldId = _guidGenerator.Create();
+        var partnerFieldId = _guidGenerator.Create();
 
         await WithUnitOfWorkAsync(async () =>
         {
+            var fields = new[]
+            {
+                new DocumentFieldValue(amountFieldId, FieldDataType.String, Json("1000")),
+                new DocumentFieldValue(partnerFieldId, FieldDataType.String, Json("Acme")),
+            };
+            await SeedSchemaAsync(typeId, fields);
             await _documentRepository.InsertAsync(
-                CreateDocument(
-                    _guidGenerator.Create(),
-                    "host.invoice",
-                    "Invoice A",
-                    new Dictionary<string, JsonElement>
-                    {
-                        ["amount"] = Json("1000"),
-                        ["partner"] = Json("Acme"),
-                    }),
+                CreateDocument(_guidGenerator.Create(), typeId, "Invoice A", fields),
                 autoSave: true);
 
             await _templateRepository.InsertAsync(
@@ -60,12 +87,11 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                     tenantId: null,
                     name: "Invoice Export",
                     format: ExportFormat.Csv,
-                    documentTypeCode: "host.invoice",
+                    documentTypeId: typeId,
                     new[]
                     {
-                        new ExportColumn(ExportColumnSourceKind.System, ExportSystemFields.Title, "标题", 0),
-                        new ExportColumn(ExportColumnSourceKind.Extracted, "amount", "金额", 1),
-                        new ExportColumn(ExportColumnSourceKind.Extracted, "partner", "对方", 2),
+                        new ExportColumn(amountFieldId, "金额", 0),
+                        new ExportColumn(partnerFieldId, "对方", 1),
                     }),
                 autoSave: true);
         });
@@ -78,35 +104,32 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
             csv = await reader.ReadToEndAsync();
         });
 
-        // 表头按列定义顺序，Extracted 列从 json 投影正确取值。
-        csv.ShouldContain("标题,金额,对方");
-        csv.ShouldContain("Invoice A,1000,Acme");
+        // 固定系统字段列在前（SourceType / LifecycleStatus / ReviewStatus / Title），模板抽取列在后。
+        csv.ShouldContain("SourceType,LifecycleStatus,ReviewStatus,Title,金额,对方");
+        // 新建文档默认 LifecycleStatus=Uploaded、ReviewStatus=None、SourceType=Digital。
+        csv.ShouldContain("Digital,Uploaded,None,Invoice A,1000,Acme");
     }
 
     [Fact]
     public async Task Export_Should_Render_Typed_Decimal_And_Date_Fields()
     {
-        // 覆盖非 String 字段经 typed child 投影 + FieldValueToString 的导出渲染（#206 审查补漏：
-        // 旧测试全部字段按 String 落库，未验证 Decimal / Date 列的单元格渲染）。
+        // 覆盖非 String 字段经 typed child 投影 + FieldValueToString 的导出渲染。
         var templateId = _guidGenerator.Create();
-        var docId = _guidGenerator.Create();
+        var typeId = _guidGenerator.Create();
+        var amountFieldId = _guidGenerator.Create();
+        var issuedFieldId = _guidGenerator.Create();
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var doc = new Document(
-                docId,
-                tenantId: null,
-                originalFileBlobName: $"blobs/{docId:N}.pdf",
-                sourceType: SourceType.Digital,
-                fileOrigin: new FileOrigin("test-user", "application/pdf", $"{Guid.NewGuid():N}{Guid.NewGuid():N}", 1024, "f.pdf"));
-            typeof(Document).GetProperty(nameof(Document.DocumentTypeCode))!.SetValue(doc, "host.invoice");
-            typeof(Document).GetProperty(nameof(Document.Title))!.SetValue(doc, "Invoice T");
-            doc.SetFields(new[]
+            var fields = new[]
             {
-                new DocumentFieldValue("amount", FieldDataType.Decimal, JsonSerializer.SerializeToElement(1234.5m)),
-                new DocumentFieldValue("issued", FieldDataType.Date, JsonSerializer.SerializeToElement("2024-03-09")),
-            });
-            await _documentRepository.InsertAsync(doc, autoSave: true);
+                new DocumentFieldValue(amountFieldId, FieldDataType.Decimal, JsonSerializer.SerializeToElement(1234.5m)),
+                new DocumentFieldValue(issuedFieldId, FieldDataType.Date, JsonSerializer.SerializeToElement("2024-03-09")),
+            };
+            await SeedSchemaAsync(typeId, fields);
+            await _documentRepository.InsertAsync(
+                CreateDocument(_guidGenerator.Create(), typeId, "Invoice T", fields),
+                autoSave: true);
 
             await _templateRepository.InsertAsync(
                 new ExportTemplate(
@@ -114,11 +137,11 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                     tenantId: null,
                     name: "Typed Invoice",
                     format: ExportFormat.Csv,
-                    documentTypeCode: "host.invoice",
+                    documentTypeId: typeId,
                     new[]
                     {
-                        new ExportColumn(ExportColumnSourceKind.Extracted, "amount", "金额", 0),
-                        new ExportColumn(ExportColumnSourceKind.Extracted, "issued", "日期", 1),
+                        new ExportColumn(amountFieldId, "金额", 0),
+                        new ExportColumn(issuedFieldId, "日期", 1),
                     }),
                 autoSave: true);
         });
@@ -144,13 +167,15 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
         try
         {
             var templateId = _guidGenerator.Create();
+            var typeId = _guidGenerator.Create();
 
             await WithUnitOfWorkAsync(async () =>
             {
+                await SeedSchemaAsync(typeId);   // 文档无字段值，仅需 seed 父类型供 Document/Template FK。
                 for (var i = 0; i < 3; i++)
                 {
                     await _documentRepository.InsertAsync(
-                        CreateDocument(_guidGenerator.Create(), "host.invoice", $"Doc {i}", fields: null),
+                        CreateDocument(_guidGenerator.Create(), typeId, $"Doc {i}", fields: null),
                         autoSave: true);
                 }
 
@@ -160,8 +185,8 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                         tenantId: null,
                         name: "Capped",
                         format: ExportFormat.Csv,
-                        documentTypeCode: null,
-                        new[] { new ExportColumn(ExportColumnSourceKind.System, ExportSystemFields.Title, "T", 0) }),
+                        documentTypeId: typeId,
+                        new[] { new ExportColumn(_guidGenerator.Create(), "T", 0) }),
                     autoSave: true);
             });
 
@@ -178,11 +203,83 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
         }
     }
 
+    [Fact]
+    public async Task Template_Crud_Resolves_FieldName_To_FieldDefinitionId_And_Back()
+    {
+        // #207：模板列以 FieldName 提交 → AppService 按 (DocumentTypeId, name) 解析为 FieldDefinitionId 持久化；
+        // 读回时 join 当前 FieldDefinition.Name。覆盖 MapColumnsAsync + FillTemplateDtosAsync。
+        var typeId = _guidGenerator.Create();
+        var fieldId = _guidGenerator.Create();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _documentTypeRepository.InsertAsync(
+                new DocumentType(typeId, null, "contract.general", "Contract"), autoSave: true);
+            await _fieldDefinitionRepository.InsertAsync(
+                new FieldDefinition(fieldId, null, typeId, "amount", "Amount", "extract", FieldDataType.Decimal),
+                autoSave: true);
+        });
+
+        Guid templateId = default;
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var created = await _appService.CreateAsync(new CreateExportTemplateDto
+            {
+                Name = "Contract Export",
+                Format = ExportFormat.Csv,
+                DocumentTypeCode = "contract.general",
+                Columns = new List<ExportColumnInput>
+                {
+                    new() { FieldName = "amount", ColumnName = "金额", Order = 0 }
+                }
+            });
+
+            templateId = created.Id;
+            created.DocumentTypeCode.ShouldBe("contract.general");
+            created.Columns.ShouldHaveSingleItem();
+            created.Columns[0].FieldDefinitionId.ShouldBe(fieldId);   // 解析为内部 Id
+            created.Columns[0].FieldName.ShouldBe("amount");          // join 回当前名
+            created.Columns[0].ColumnName.ShouldBe("金额");
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var got = await _appService.GetAsync(templateId);
+            got.DocumentTypeCode.ShouldBe("contract.general");
+            got.Columns[0].FieldDefinitionId.ShouldBe(fieldId);
+            got.Columns[0].FieldName.ShouldBe("amount");
+        });
+    }
+
+    [Fact]
+    public async Task Template_Create_Rejects_Unknown_FieldName()
+    {
+        var typeId = _guidGenerator.Create();
+        await WithUnitOfWorkAsync(() => _documentTypeRepository.InsertAsync(
+            new DocumentType(typeId, null, "contract.general", "Contract"), autoSave: true));
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            // 该类型下无 "ghost" 字段 → loud fail（UnknownExtractedField）。
+            var ex = await Should.ThrowAsync<BusinessException>(() => _appService.CreateAsync(new CreateExportTemplateDto
+            {
+                Name = "Bad",
+                Format = ExportFormat.Csv,
+                DocumentTypeCode = "contract.general",
+                Columns = new List<ExportColumnInput>
+                {
+                    new() { FieldName = "ghost", ColumnName = "X", Order = 0 }
+                }
+            }));
+            ex.Code.ShouldBe(PaperbaseErrorCodes.UnknownExtractedField);
+        });
+    }
+
     private static Document CreateDocument(
         Guid id,
-        string typeCode,
+        Guid documentTypeId,
         string title,
-        Dictionary<string, JsonElement>? fields)
+        IEnumerable<DocumentFieldValue>? fields)
     {
         var document = new Document(
             id,
@@ -196,14 +293,13 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                 fileSize: 1024,
                 originalFileName: "f.pdf"));
 
-        // DocumentTypeCode / Title 为 private setter——测试用反射模拟"已分类 + 已提取标题"。
-        typeof(Document).GetProperty(nameof(Document.DocumentTypeCode))!.SetValue(document, typeCode);
+        // DocumentTypeId / Title 为 private setter——测试用反射模拟"已分类 + 已提取标题"。
+        typeof(Document).GetProperty(nameof(Document.DocumentTypeId))!.SetValue(document, documentTypeId);
         typeof(Document).GetProperty(nameof(Document.Title))!.SetValue(document, title);
 
         if (fields != null)
         {
-            // 导出测试只关心单元格渲染——把全部字段当 String 落库（与下方 Json(...) 存 JSON 字符串一致）。
-            document.SetFields(fields.Select(f => new DocumentFieldValue(f.Key, FieldDataType.String, f.Value)));
+            document.SetFields(fields);
         }
 
         return document;

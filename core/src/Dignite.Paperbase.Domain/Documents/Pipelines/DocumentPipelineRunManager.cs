@@ -138,7 +138,7 @@ public class DocumentPipelineRunManager : DomainService
         double confidenceScore)
     {
         Check.NotNull(typeDef, nameof(typeDef));
-        document.ApplyAutomaticClassificationResult(typeDef.TypeCode, confidenceScore);
+        document.ApplyAutomaticClassificationResult(typeDef.Id, confidenceScore);
         return CompleteAsync(document, run);
     }
 
@@ -182,7 +182,7 @@ public class DocumentPipelineRunManager : DomainService
         DocumentType typeDef)
     {
         Check.NotNull(typeDef, nameof(typeDef));
-        document.ConfirmClassification(typeDef.TypeCode);
+        document.ConfirmClassification(typeDef.Id);
         return CompleteAsync(document, run);
     }
 
@@ -237,7 +237,7 @@ public class DocumentPipelineRunManager : DomainService
 
         if (derivedStatus != DocumentLifecycleStatus.Failed &&
             allSucceeded &&
-            !string.IsNullOrWhiteSpace(document.DocumentTypeCode))
+            document.DocumentTypeId.HasValue)
         {
             derivedStatus = DocumentLifecycleStatus.Ready;
         }

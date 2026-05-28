@@ -81,15 +81,37 @@ public class FieldDefinitionTests
     {
         var def = CreateDefinition("amount", "Amount");
         Should.Throw<BusinessException>(() =>
-                def.Update("Bad\nName", "Extract", FieldDataType.String, 0, false))
+                def.Update("amount", "Bad\nName", "Extract", FieldDataType.String, 0, false))
             .Code.ShouldBe(PaperbaseErrorCodes.InvalidFieldDefinitionDisplayName);
+    }
+
+    [Fact]
+    public void Update_Should_Allow_Name_Rename()
+    {
+        // #207：解锁 Name 重命名——内部关联改用不可变 FieldDefinitionId，rename 不再被实体层禁止。
+        var def = CreateDefinition("amt", "Amount");
+        def.Name.ShouldBe("amt");
+
+        def.Update("total_amount", "Amount", "Extract", FieldDataType.String, 0, false);
+
+        def.Name.ShouldBe("total_amount");
+    }
+
+    [Fact]
+    public void Update_Should_Still_Validate_Name_Format()
+    {
+        // rename 解锁不等于跳过 regex 白名单——非法 Name 仍被拒。
+        var def = CreateDefinition("amount", "Amount");
+        Should.Throw<BusinessException>(() =>
+                def.Update("bad name", "Amount", "Extract", FieldDataType.String, 0, false))
+            .Code.ShouldBe(PaperbaseErrorCodes.InvalidFieldDefinitionName);
     }
 
     private static FieldDefinition CreateDefinition(string name, string displayName = "Amount") =>
         new(
             id: Guid.NewGuid(),
             tenantId: null,
-            documentTypeCode: "contract.general",
+            documentTypeId: Guid.NewGuid(),
             name: name,
             displayName: displayName,
             prompt: "Extract the value.",

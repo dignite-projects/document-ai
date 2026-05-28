@@ -19,6 +19,7 @@ public class DocumentReadyEventHandlerTestModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
+        context.Services.AddSingleton(Substitute.For<IDocumentTypeRepository>());
         context.Services.AddSingleton(Substitute.For<IDistributedEventBus>());
     }
 }
@@ -32,12 +33,14 @@ public class DocumentReadyEventHandler_Tests
 {
     private readonly DocumentReadyEventHandler _handler;
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentTypeRepository _documentTypeRepository;
     private readonly IDistributedEventBus _eventBus;
 
     public DocumentReadyEventHandler_Tests()
     {
         _handler = GetRequiredService<DocumentReadyEventHandler>();
         _documentRepository = GetRequiredService<IDocumentRepository>();
+        _documentTypeRepository = GetRequiredService<IDocumentTypeRepository>();
         _eventBus = GetRequiredService<IDistributedEventBus>();
     }
 
@@ -46,6 +49,10 @@ public class DocumentReadyEventHandler_Tests
     {
         var doc = CreateDocument(documentTypeCode: "contract.general");
         SetupDocumentRepository(doc);
+        // #207：handler 由 DocumentTypeId 解析 TypeCode 填进 ETO。
+        _documentTypeRepository
+            .FindAsync(TypeId("contract.general"), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new DocumentType(TypeId("contract.general"), null, "contract.general", "Contract"));
 
         var evt = new DocumentLifecycleStatusChangedEvent(
             doc.Id, DocumentLifecycleStatus.Processing, DocumentLifecycleStatus.Ready);
@@ -114,13 +121,16 @@ public class DocumentReadyEventHandler_Tests
 
         if (!string.IsNullOrEmpty(documentTypeCode))
         {
-            // 走 internal 通道写入 DocumentTypeCode（高置信度路径）
+            // 走 internal 通道写入 DocumentTypeId（高置信度路径；#207 分类结果是内部 Id）
             typeof(Document)
                 .GetMethod("ApplyAutomaticClassificationResult",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
-                .Invoke(doc, [documentTypeCode, 0.99]);
+                .Invoke(doc, [TypeId(documentTypeCode), 0.99]);
         }
 
         return doc;
     }
+
+    private static Guid TypeId(string typeCode)
+        => new(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes("type:" + typeCode)));
 }

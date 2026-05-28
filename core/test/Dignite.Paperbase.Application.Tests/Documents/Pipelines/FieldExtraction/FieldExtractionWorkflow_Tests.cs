@@ -36,7 +36,7 @@ public class FieldExtractionWorkflow_Tests
     }
 
     private static FieldExtractionDescriptor Field(string name, FieldDataType type)
-        => new(name, $"Extract {name}.", type, false);
+        => new(System.Guid.NewGuid(), name, $"Extract {name}.", type, false);
 
     [Fact]
     public async Task Keeps_values_matching_declared_type()

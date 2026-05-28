@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Documents.Cabinets;
+using Dignite.Paperbase.Documents.DocumentTypes;
 using Dignite.Paperbase.Documents.Pipelines;
 using Volo.Abp;
 using Volo.Abp.Domain.Entities.Auditing;
@@ -32,10 +33,14 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     public virtual Guid? CabinetId { get; private set; }
 
     /// <summary>
-    /// 文档类型标识（由分类流水线 Run 成功后写入）。
+    /// 文档类型内部关联（由分类流水线 Run 成功后写入）。引用 <see cref="DocumentType"/>.Id（DDD reference-by-id，无导航属性）。
     /// null 表示当前没有已确认/可用的文档类型；是否等待人工确认由 <see cref="ReviewStatus"/> 表达。
+    /// <para>
+    /// 内部用不可变 Id 关联（#207）——外部 wire-format（REST / MCP / ETO）仍输出 <c>DocumentTypeCode</c> 字符串，
+    /// 由读路径 join <see cref="DocumentType"/> 解析当前（或软删后最后已知）TypeCode。TypeCode rename 不再级联本表。
+    /// </para>
     /// </summary>
-    public virtual string? DocumentTypeCode { get; private set; }
+    public virtual Guid? DocumentTypeId { get; private set; }
 
     /// <summary>
     /// 文档宏观生命周期状态。
@@ -179,45 +184,46 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     }
 
     /// <summary>
-    /// 整组替换类型绑定字段值（字段架构 v2 / Issue #206）。<c>FieldExtractionEventHandler</c> 在分类完成后调用，
+    /// 整组替换类型绑定字段值（字段架构 v2 / Issue #206 + #207）。<c>FieldExtractionEventHandler</c> 在分类完成后调用，
     /// 操作员手改（<c>UpdateExtractedFieldsAsync</c>）亦走此路径；传空集合清空全部字段行。
-    /// 调用方提交该文档当前的全部字段值（已校验值类型与 <see cref="DocumentFieldValue.DataType"/> 对齐）。
+    /// 调用方提交该文档当前的全部字段值（已校验值类型与 <see cref="DocumentFieldValue.DataType"/> 对齐，
+    /// 且每个 <see cref="DocumentFieldValue.FieldDefinitionId"/> 解析自该文档所属层 / 类型下的 <c>FieldDefinition</c>）。
     /// <para>
-    /// 用 <b>reconcile</b> 而非 clear+add：同名字段<b>原地更新</b>、消失的删除、新增的插入。
-    /// 原因——复合主键 <c>(DocumentId, Name)</c> 下，clear+add 会在单次 SaveChanges 内对同名字段
-    /// 产生 delete+insert 同键，触发唯一冲突 / EF 操作排序风险（操作员把 <c>amount=100</c> 改 <c>200</c> 即同名替换）。
+    /// 用 <b>reconcile</b> 而非 clear+add：同字段（按 <see cref="DocumentFieldValue.FieldDefinitionId"/>）<b>原地更新</b>、
+    /// 消失的删除、新增的插入。原因——复合主键 <c>(DocumentId, FieldDefinitionId)</c> 下，clear+add 会在单次 SaveChanges 内
+    /// 对同键产生 delete+insert，触发唯一冲突 / EF 操作排序风险（操作员把 <c>amount=100</c> 改 <c>200</c> 即同字段替换）。
     /// </para>
     /// 原子状态变更，无需经 DomainService 中转（与 <see cref="SetMarkdown"/> 等必须与 pipeline 完成事务组合的 internal setter 不同）。
-    /// <b>前置条件</b>：<see cref="DocumentTypeCode"/> 非空（字段挂在文档类型下；两条调用路径均在分类完成后调用）。
+    /// <b>前置条件</b>：<see cref="DocumentTypeId"/> 非空（字段挂在文档类型下；两条调用路径均在分类完成后调用）。
     /// </summary>
     public void SetFields(IEnumerable<DocumentFieldValue>? values)
     {
         var incoming = values?.ToList() ?? new List<DocumentFieldValue>();
 
         _extractedFieldValues.RemoveAll(existing =>
-            incoming.All(v => !string.Equals(v.Name, existing.Name, StringComparison.Ordinal)));
+            incoming.All(v => v.FieldDefinitionId != existing.FieldDefinitionId));
 
         foreach (var value in incoming)
         {
             var existing = _extractedFieldValues.FirstOrDefault(
-                f => string.Equals(f.Name, value.Name, StringComparison.Ordinal));
+                f => f.FieldDefinitionId == value.FieldDefinitionId);
             if (existing != null)
             {
-                existing.SetValue(DocumentTypeCode!, value);
+                existing.SetValue(value);
             }
             else
             {
-                _extractedFieldValues.Add(new DocumentExtractedField(Id, TenantId, DocumentTypeCode!, value));
+                _extractedFieldValues.Add(new DocumentExtractedField(Id, TenantId, value));
             }
         }
     }
 
     // 高置信度路径：ClassificationReason 必须为 null，与 RequestClassificationReview 路径区分。
     internal void ApplyAutomaticClassificationResult(
-        string documentTypeCode,
+        Guid documentTypeId,
         double classificationConfidence)
     {
-        DocumentTypeCode = Check.NotNullOrWhiteSpace(documentTypeCode, nameof(documentTypeCode));
+        DocumentTypeId = Check.NotDefaultOrNull<Guid>(documentTypeId, nameof(documentTypeId));
         ClassificationConfidence = Check.Range(classificationConfidence, nameof(classificationConfidence), 0d, 1d);
         ClassificationReason = null;
         ReviewStatus = DocumentReviewStatus.None;
@@ -228,15 +234,15 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     /// </summary>
     internal void RequestClassificationReview(string? reason = null)
     {
-        DocumentTypeCode = null;
+        DocumentTypeId = null;
         ClassificationConfidence = 0;
         ClassificationReason = reason;
         ReviewStatus = DocumentReviewStatus.PendingReview;
     }
 
-    internal void ConfirmClassification(string documentTypeCode)
+    internal void ConfirmClassification(Guid documentTypeId)
     {
-        DocumentTypeCode = Check.NotNullOrWhiteSpace(documentTypeCode, nameof(documentTypeCode));
+        DocumentTypeId = Check.NotDefaultOrNull<Guid>(documentTypeId, nameof(documentTypeId));
         ClassificationConfidence = 1.0;
         ReviewStatus = DocumentReviewStatus.Reviewed;
         ClassificationReason = null;

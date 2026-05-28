@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Dignite.Paperbase.Documents.DocumentTypes;
 using Volo.Abp;
 using Volo.Abp.Domain.Entities.Auditing;
 using Volo.Abp.MultiTenancy;
@@ -27,10 +28,13 @@ public class ExportTemplate : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
     public virtual ExportFormat Format { get; private set; }
 
-    /// <summary>限定适用的文档类型（引用 <see cref="DocumentType.TypeCode"/>）；null = 不限类型。存在性由 AppService 校验。</summary>
-    public virtual string? DocumentTypeCode { get; private set; }
+    /// <summary>
+    /// 限定适用的文档类型（引用 <see cref="DocumentType"/>.Id，#207）。导出列收敛为 ExtractedField-only 后模板必然类型绑定
+    /// （列引用该类型下的字段定义），故此关联<b>必填</b>。存在性由 AppService 校验，被引用类型硬删由 FK RESTRICT 阻止。
+    /// </summary>
+    public virtual Guid DocumentTypeId { get; private set; }
 
-    /// <summary>列定义（按 Order 升序）。整体存 native <c>json</c> 列，无单列查询需求，不开子表。</summary>
+    /// <summary>列定义（按 Order 升序）。整体序列化进大文本列（#206 后由 native json 降级），无单列查询需求，不开子表。</summary>
     public virtual IReadOnlyList<ExportColumn> Columns { get; private set; } = new List<ExportColumn>();
 
     protected ExportTemplate() { }
@@ -40,26 +44,26 @@ public class ExportTemplate : FullAuditedAggregateRoot<Guid>, IMultiTenant
         Guid? tenantId,
         string name,
         ExportFormat format,
-        string? documentTypeCode,
+        Guid documentTypeId,
         IReadOnlyList<ExportColumn> columns)
         : base(id)
     {
         TenantId = tenantId;
         Name = ValidateName(name);
         Format = format;
-        DocumentTypeCode = NormalizeDocumentTypeCode(documentTypeCode);
+        DocumentTypeId = Check.NotDefaultOrNull<Guid>(documentTypeId, nameof(documentTypeId));
         SetColumns(columns);
     }
 
     public void Update(
         string name,
         ExportFormat format,
-        string? documentTypeCode,
+        Guid documentTypeId,
         IReadOnlyList<ExportColumn> columns)
     {
         Name = ValidateName(name);
         Format = format;
-        DocumentTypeCode = NormalizeDocumentTypeCode(documentTypeCode);
+        DocumentTypeId = Check.NotDefaultOrNull<Guid>(documentTypeId, nameof(documentTypeId));
         SetColumns(columns);
     }
 
@@ -103,7 +107,4 @@ public class ExportTemplate : FullAuditedAggregateRoot<Guid>, IMultiTenant
 
         return name;
     }
-
-    private static string? NormalizeDocumentTypeCode(string? documentTypeCode)
-        => string.IsNullOrWhiteSpace(documentTypeCode) ? null : documentTypeCode.Trim();
 }

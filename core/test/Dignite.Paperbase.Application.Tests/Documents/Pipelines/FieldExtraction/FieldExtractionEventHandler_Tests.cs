@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Abstractions.Documents;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents;
+using Dignite.Paperbase.Documents.DocumentTypes;
+using Dignite.Paperbase.Documents.Fields;
 using Dignite.Paperbase.Documents.Pipelines.FieldExtraction;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,6 +30,7 @@ public class FieldExtractionEventHandlerTestModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
+        context.Services.AddSingleton(Substitute.For<IDocumentTypeRepository>());
         context.Services.AddSingleton(Substitute.For<IFieldDefinitionRepository>());
         context.Services.AddSingleton(Substitute.For<IDistributedEventBus>());
 
@@ -46,15 +51,15 @@ public class FieldExtractionEventHandlerTestModule : AbpModule
 ///   <item>**Cross-tenant 防护**：事件 TenantId 与 Document.TenantId 不一致时丢弃（防 DataFilter disable 路径泄漏）</item>
 ///   <item>**ETO 契约**：FieldsExtractedEto 在空字段 / 有字段两条路径下都按 outbox 语义发布</item>
 /// </list>
-/// LLM 调用通过 <see cref="FieldExtractionWorkflow"/> 的 ForPartsOf mock 截获，
-/// 不涉及真实 LLM；UoW 三段式（<c>.claude/rules/background-jobs.md</c>）在单元层面用 NSubstitute
-/// 模拟无法真实验证（mock 不模拟 ABP UoW frame），EF 集成测试覆盖。
+/// #207：handler 先把事件携带的 DocumentTypeCode 解析为内部 DocumentTypeId（FindByTypeCodeAsync），再按 Id 读字段定义
+/// 与做 stale/cross-tenant 守卫；测试用 name/code → 稳定 Guid 派生保证 mock 一致。
 /// </summary>
 public class FieldExtractionEventHandler_Tests
     : PaperbaseApplicationTestBase<FieldExtractionEventHandlerTestModule>
 {
     private readonly FieldExtractionEventHandler _handler;
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentTypeRepository _documentTypeRepository;
     private readonly IFieldDefinitionRepository _fieldDefinitionRepository;
     private readonly FieldExtractionWorkflow _workflow;
     private readonly IDistributedEventBus _eventBus;
@@ -63,6 +68,7 @@ public class FieldExtractionEventHandler_Tests
     {
         _handler = GetRequiredService<FieldExtractionEventHandler>();
         _documentRepository = GetRequiredService<IDocumentRepository>();
+        _documentTypeRepository = GetRequiredService<IDocumentTypeRepository>();
         _fieldDefinitionRepository = GetRequiredService<IFieldDefinitionRepository>();
         _workflow = GetRequiredService<FieldExtractionWorkflow>();
         _eventBus = GetRequiredService<IDistributedEventBus>();
@@ -85,15 +91,16 @@ public class FieldExtractionEventHandler_Tests
         await _eventBus.DidNotReceive().PublishAsync(
             Arg.Any<FieldsExtractedEto>(), Arg.Any<bool>(), Arg.Any<bool>());
         await _fieldDefinitionRepository.DidNotReceive().GetForExtractionAsync(
-            Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<Guid>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task No_Field_Definitions_Publishes_Empty_FieldsExtractedEto()
     {
         var docId = Guid.NewGuid();
+        SetupType("contract.general");
         _fieldDefinitionRepository
-            .GetForExtractionAsync("contract.general", Arg.Any<CancellationToken>())
+            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition>());
 
         var evt = new DocumentClassifiedEto
@@ -129,15 +136,16 @@ public class FieldExtractionEventHandler_Tests
         var doc = CreateDocument(tenantId: null, typeCode: "blank.type");
         doc.SetFields(new[]
         {
-            new DocumentFieldValue("amount", FieldDataType.Decimal, JsonDocument.Parse("100").RootElement)
+            new DocumentFieldValue(FieldId("amount"), FieldDataType.Decimal, JsonDocument.Parse("100").RootElement)
         });
         doc.ExtractedFieldValues.ShouldNotBeEmpty();
 
+        SetupType("blank.type");
         _documentRepository
             .FindAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(doc);
         _fieldDefinitionRepository
-            .GetForExtractionAsync("blank.type", Arg.Any<CancellationToken>())
+            .GetForExtractionAsync(TypeId("blank.type"), Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition>());
 
         var evt = new DocumentClassifiedEto
@@ -162,9 +170,10 @@ public class FieldExtractionEventHandler_Tests
     public async Task Missing_Document_Logs_And_Returns_Without_Publishing()
     {
         var docId = Guid.NewGuid();
+        SetupType("contract.general");
         var defs = new List<FieldDefinition> { CreateFieldDefinition("contract.general", "amount") };
         _fieldDefinitionRepository
-            .GetForExtractionAsync("contract.general", Arg.Any<CancellationToken>())
+            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(defs);
         _workflow
             .ExtractAsync(
@@ -200,11 +209,12 @@ public class FieldExtractionEventHandler_Tests
         var eventTenant = Guid.NewGuid();
         var docTenant = Guid.NewGuid();   // 不同租户
         var doc = CreateDocument(tenantId: docTenant, typeCode: "contract.general");
+        SetupType("contract.general");
         _documentRepository
             .FindAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(doc);
         _fieldDefinitionRepository
-            .GetForExtractionAsync("contract.general", Arg.Any<CancellationToken>())
+            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition> { CreateFieldDefinition("contract.general", "amount", tenantId: eventTenant) });
         _workflow
             .ExtractAsync(
@@ -234,17 +244,18 @@ public class FieldExtractionEventHandler_Tests
     [Fact]
     public async Task Stale_TypeCode_From_Reclassify_Race_Is_Discarded()
     {
-        // Reclassify race 防护——核心新增安全约束：
+        // Reclassify race 防护——核心安全约束：
         // 事件载荷 DocumentTypeCode=contract.general，但 Document 当前已被操作员
-        // reclassify 成 invoice.general。继续抽取会用旧 schema (contract) 写入
-        // ExtractedFields，造成"TypeCode=invoice 但字段来自 contract"的脏状态。
+        // reclassify 成 invoice.general（DocumentTypeId 不同）。继续抽取会用旧 schema (contract) 写入
+        // ExtractedFields，造成"TypeId=invoice 但字段来自 contract"的脏状态。
         // 正确做法：丢弃 stale 事件，等新分类事件触发新一轮抽取。
         var doc = CreateDocument(tenantId: null, typeCode: "invoice.general");
+        SetupType("contract.general");
         _documentRepository
             .FindAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(doc);
         _fieldDefinitionRepository
-            .GetForExtractionAsync("contract.general", Arg.Any<CancellationToken>())
+            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition> { CreateFieldDefinition("contract.general", "amount") });
         _workflow
             .ExtractAsync(
@@ -258,13 +269,13 @@ public class FieldExtractionEventHandler_Tests
             DocumentId = doc.Id,
             TenantId = null,
             EventTime = DateTime.UtcNow,
-            DocumentTypeCode = "contract.general",   // ← stale typeCode
+            DocumentTypeCode = "contract.general",   // ← stale typeCode（resolves to a different typeId than doc）
             ClassificationConfidence = 0.92
         };
 
         await _handler.HandleEventAsync(staleEvent);
 
-        // 关键断言：不能把基于 contract schema 抽取的字段写入 Document（现在 typeCode=invoice）
+        // 关键断言：不能把基于 contract schema 抽取的字段写入 Document（现在 typeId=invoice）
         doc.ExtractedFieldValues.ShouldBeEmpty();
         await _documentRepository.DidNotReceive().UpdateAsync(
             Arg.Any<Document>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
@@ -276,6 +287,7 @@ public class FieldExtractionEventHandler_Tests
     public async Task Happy_Path_Writes_Fields_And_Publishes_FieldsExtractedEto()
     {
         var doc = CreateDocument(tenantId: null, typeCode: "contract.general");
+        SetupType("contract.general");
         _documentRepository
             .FindAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(doc);
@@ -288,7 +300,7 @@ public class FieldExtractionEventHandler_Tests
             CreateFieldDefinition("contract.general", "date", FieldDataType.Date)
         };
         _fieldDefinitionRepository
-            .GetForExtractionAsync("contract.general", Arg.Any<CancellationToken>())
+            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(defs);
         _workflow
             .ExtractAsync(
@@ -313,11 +325,12 @@ public class FieldExtractionEventHandler_Tests
 
         await _handler.HandleEventAsync(evt);
 
-        var names = doc.ExtractedFieldValues.Select(f => f.Name).ToList();
-        names.Count.ShouldBe(2);   // null 值不入字段集
-        names.ShouldContain("amount");
-        names.ShouldContain("party");
-        names.ShouldNotContain("date");
+        // 字段值按 FieldDefinitionId 写入（#207）；null 值不入字段集。
+        var fieldIds = doc.ExtractedFieldValues.Select(f => f.FieldDefinitionId).ToList();
+        fieldIds.Count.ShouldBe(2);
+        fieldIds.ShouldContain(FieldId("amount"));
+        fieldIds.ShouldContain(FieldId("party"));
+        fieldIds.ShouldNotContain(FieldId("date"));
 
         await _documentRepository.Received(1).UpdateAsync(
             doc, Arg.Any<bool>(), Arg.Any<CancellationToken>());
@@ -333,6 +346,11 @@ public class FieldExtractionEventHandler_Tests
 
     // ─── helpers ───────────────────────────────────────────────────────────
 
+    private void SetupType(string code)
+        => _documentTypeRepository
+            .FindByTypeCodeAsync(code, Arg.Any<CancellationToken>())
+            .Returns(new DocumentType(TypeId(code), null, code, code));
+
     private static Document CreateDocument(Guid? tenantId, string typeCode)
     {
         var doc = new Document(
@@ -346,11 +364,11 @@ public class FieldExtractionEventHandler_Tests
                 fileSize: 1024,
                 originalFileName: "test.pdf"));
 
-        // 走 internal 通道写入 DocumentTypeCode 模拟分类已完成状态
+        // 走 internal 通道写入 DocumentTypeId 模拟分类已完成状态（#207：分类结果是内部 Id）
         typeof(Document)
             .GetMethod("ApplyAutomaticClassificationResult",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
-            .Invoke(doc, [typeCode, 0.99]);
+            .Invoke(doc, [TypeId(typeCode), 0.99]);
         typeof(Document)
             .GetMethod("SetMarkdown",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
@@ -363,11 +381,14 @@ public class FieldExtractionEventHandler_Tests
         string documentTypeCode, string name,
         FieldDataType dataType = FieldDataType.String, Guid? tenantId = null) =>
         new(
-            id: Guid.NewGuid(),
+            id: FieldId(name),
             tenantId: tenantId,
-            documentTypeCode: documentTypeCode,
+            documentTypeId: TypeId(documentTypeCode),
             name: name,
             displayName: name,
             prompt: $"Extract the {name}.",
             dataType: dataType);
+
+    private static Guid TypeId(string code) => new(MD5.HashData(Encoding.UTF8.GetBytes("type:" + code)));
+    private static Guid FieldId(string name) => new(MD5.HashData(Encoding.UTF8.GetBytes("field:" + name)));
 }

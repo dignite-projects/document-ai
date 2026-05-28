@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Documents.Pipelines;
@@ -20,12 +22,24 @@ public class DocumentAppServiceReviewTestModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
-        context.Services.AddSingleton(Substitute.For<IDocumentTypeRepository>());
-        context.Services.AddSingleton(Substitute.For<IFieldDefinitionRepository>());
         context.Services.AddSingleton(Substitute.For<ICabinetRepository>());
         context.Services.AddSingleton(Substitute.For<IBlobContainer<PaperbaseDocumentContainer>>());
         context.Services.AddSingleton(Substitute.For<IBackgroundJobManager>());
         context.Services.AddSingleton(Substitute.For<IDistributedEventBus>());
+
+        // #207：DTO 组装走 ResolveReferenceMapsAsync → GetListAsync(谓词) 批量解析 Id→code/name。
+        // 默认 stub 返回空 list（避免 NSubstitute 对 Task<List<T>> 返回 null 触发 NRE）；具体用例可按需覆盖。
+        var documentTypeRepository = Substitute.For<IDocumentTypeRepository>();
+        documentTypeRepository
+            .GetListAsync(Arg.Any<Expression<Func<DocumentType, bool>>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<DocumentType>());
+        context.Services.AddSingleton(documentTypeRepository);
+
+        var fieldDefinitionRepository = Substitute.For<IFieldDefinitionRepository>();
+        fieldDefinitionRepository
+            .GetListAsync(Arg.Any<Expression<Func<FieldDefinition, bool>>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<FieldDefinition>());
+        context.Services.AddSingleton(fieldDefinitionRepository);
     }
 }
 
@@ -151,6 +165,7 @@ public class DocumentAppService_Review_Tests
         var method = typeof(DocumentAppService).GetMethod(
             "ApplyFilter",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        return (IQueryable<Document>)method.Invoke(service, [query, input])!;
+        // #207：ApplyFilter 现签名 (query, input, documentTypeId?)；这些用例只过滤 ReviewStatus，类型传 null。
+        return (IQueryable<Document>)method.Invoke(service, [query, input, null])!;
     }
 }

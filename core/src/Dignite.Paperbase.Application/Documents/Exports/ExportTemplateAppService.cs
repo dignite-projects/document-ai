@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Dignite.Paperbase.Documents.DocumentTypes;
 using Dignite.Paperbase.Documents.Fields;
 using Dignite.Paperbase.Permissions;
 using Microsoft.AspNetCore.Authorization;
@@ -16,50 +17,62 @@ namespace Dignite.Paperbase.Documents.Exports;
 [Authorize]
 public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppService
 {
+    // 固定导出的系统字段表头（#207）——SourceType / LifecycleStatus / ReviewStatus / Title 始终输出，不走模板列配置。
+    private static readonly IReadOnlyList<string> SystemFieldHeaders = new[]
+    {
+        "SourceType", "LifecycleStatus", "ReviewStatus", "Title"
+    };
+
     private readonly IExportTemplateRepository _templateRepository;
     private readonly IDocumentRepository _documentRepository;
     private readonly IDocumentTypeRepository _documentTypeRepository;
+    private readonly IFieldDefinitionRepository _fieldDefinitionRepository;
 
     public ExportTemplateAppService(
         IExportTemplateRepository templateRepository,
         IDocumentRepository documentRepository,
-        IDocumentTypeRepository documentTypeRepository)
+        IDocumentTypeRepository documentTypeRepository,
+        IFieldDefinitionRepository fieldDefinitionRepository)
     {
         _templateRepository = templateRepository;
         _documentRepository = documentRepository;
         _documentTypeRepository = documentTypeRepository;
+        _fieldDefinitionRepository = fieldDefinitionRepository;
     }
 
     public virtual async Task<ExportTemplateDto> GetAsync(Guid id)
     {
         await CheckPolicyAsync(PaperbasePermissions.Documents.Templates.Default);
         var entity = await GetOwnedTemplateAsync(id);
-        return ObjectMapper.Map<ExportTemplate, ExportTemplateDto>(entity);
+        return await MapTemplateToDtoAsync(entity);
     }
 
     public virtual async Task<List<ExportTemplateDto>> GetListAsync()
     {
         await CheckPolicyAsync(PaperbasePermissions.Documents.Templates.Default);
         var list = await _templateRepository.GetByTenantAsync();
-        return ObjectMapper.Map<List<ExportTemplate>, List<ExportTemplateDto>>(list);
+        var dtos = ObjectMapper.Map<List<ExportTemplate>, List<ExportTemplateDto>>(list);
+        await FillTemplateDtosAsync(list, dtos);
+        return dtos;
     }
 
     [Authorize(PaperbasePermissions.Documents.Templates.Create)]
     public virtual async Task<ExportTemplateDto> CreateAsync(CreateExportTemplateDto input)
     {
         await EnsureTemplateNameAvailableAsync(input.Name);
-        await EnsureDocumentTypeValidAsync(input.DocumentTypeCode);
+        var documentType = await ResolveDocumentTypeAsync(input.DocumentTypeCode);
+        var columns = await MapColumnsAsync(input.Columns, documentType);
 
         var entity = new ExportTemplate(
             GuidGenerator.Create(),
             CurrentTenant.Id,
             input.Name,
             input.Format,
-            input.DocumentTypeCode,
-            MapColumns(input.Columns));
+            documentType.Id,
+            columns);
 
         await _templateRepository.InsertAsync(entity, autoSave: true);
-        return ObjectMapper.Map<ExportTemplate, ExportTemplateDto>(entity);
+        return await MapTemplateToDtoAsync(entity);
     }
 
     [Authorize(PaperbasePermissions.Documents.Templates.Update)]
@@ -73,11 +86,12 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
             await EnsureTemplateNameAvailableAsync(input.Name);
         }
 
-        await EnsureDocumentTypeValidAsync(input.DocumentTypeCode);
+        var documentType = await ResolveDocumentTypeAsync(input.DocumentTypeCode);
+        var columns = await MapColumnsAsync(input.Columns, documentType);
 
-        entity.Update(input.Name, input.Format, input.DocumentTypeCode, MapColumns(input.Columns));
+        entity.Update(input.Name, input.Format, documentType.Id, columns);
         await _templateRepository.UpdateAsync(entity, autoSave: true);
-        return ObjectMapper.Map<ExportTemplate, ExportTemplateDto>(entity);
+        return await MapTemplateToDtoAsync(entity);
     }
 
     [Authorize(PaperbasePermissions.Documents.Templates.Delete)]
@@ -95,27 +109,16 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
         // 租户隔离由 ambient IMultiTenant 过滤器施加（含下方 GetQueryableAsync）。
         var query = await _documentRepository.GetQueryableAsync();
 
+        // 模板类型绑定（#207）：导出始终收窄到模板的 DocumentTypeId。
+        query = query.Where(d => d.DocumentTypeId == template.DocumentTypeId);
+
         if (input.DocumentIds is { Count: > 0 } ids)
         {
             query = query.Where(d => ids.Contains(d.Id));
         }
-        else
+        else if (input.LifecycleStatus.HasValue)
         {
-            if (input.LifecycleStatus.HasValue)
-            {
-                query = query.Where(d => d.LifecycleStatus == input.LifecycleStatus.Value);
-            }
-
-            if (!string.IsNullOrWhiteSpace(input.DocumentTypeCode))
-            {
-                query = query.Where(d => d.DocumentTypeCode == input.DocumentTypeCode);
-            }
-        }
-
-        // 模板可限定适用文档类型——在筛选 / 勾选基础上再收窄一层。
-        if (!string.IsNullOrWhiteSpace(template.DocumentTypeCode))
-        {
-            query = query.Where(d => d.DocumentTypeCode == template.DocumentTypeCode);
+            query = query.Where(d => d.LifecycleStatus == input.LifecycleStatus.Value);
         }
 
         // 单次 fetch (Max + 1) 投影到 ExportProjection（非实体类型 → 不 SELECT Markdown、不进 tracker）。
@@ -127,22 +130,15 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
                 .OrderByDescending(d => d.CreationTime)
                 .Select(d => new ExportProjection
                 {
-                    Id = d.Id,
+                    SourceType = d.SourceType,
                     Title = d.Title,
-                    DocumentTypeCode = d.DocumentTypeCode,
                     LifecycleStatus = d.LifecycleStatus,
                     ReviewStatus = d.ReviewStatus,
-                    Language = d.Language,
-                    ClassificationConfidence = d.ClassificationConfidence,
-                    CreationTime = d.CreationTime,
-                    OriginalFileName = d.FileOrigin.OriginalFileName,
-                    ContentType = d.FileOrigin.ContentType,
-                    FileSize = d.FileOrigin.FileSize,
-                    // typed child 行随文档一并投影（单查询相关子查询，非逐文档 N+1）。
+                    // typed child 行随文档一并投影（单查询相关子查询，非逐文档 N+1）；按 FieldDefinitionId 匹配模板列。
                     ExtractedFields = d.ExtractedFieldValues
                         .Select(f => new ExtractedFieldProjection
                         {
-                            Name = f.Name,
+                            FieldDefinitionId = f.FieldDefinitionId,
                             DataType = f.DataType,
                             StringValue = f.StringValue,
                             BooleanValue = f.BooleanValue,
@@ -162,9 +158,25 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
                 .WithData("max", limit);
         }
 
-        var headers = template.Columns.Select(c => c.ColumnName).ToList();
+        // 固定系统字段列在前，模板配置的抽取字段列在后（#207）。
+        var headers = new List<string>(SystemFieldHeaders);
+        headers.AddRange(template.Columns.Select(c => c.ColumnName));
+
+        var systemCount = SystemFieldHeaders.Count;
         var dataRows = rows
-            .Select(r => template.Columns.Select(c => GetCellValue(r, c)).ToArray())
+            .Select(r =>
+            {
+                var cells = new string?[headers.Count];
+                cells[0] = r.SourceType.ToString();
+                cells[1] = r.LifecycleStatus.ToString();
+                cells[2] = r.ReviewStatus.ToString();
+                cells[3] = r.Title;
+                for (var i = 0; i < template.Columns.Count; i++)
+                {
+                    cells[systemCount + i] = GetExtractedValue(r, template.Columns[i].FieldDefinitionId);
+                }
+                return cells;
+            })
             .ToList();
 
         var bytes = ExportFileBuilder.Build(template.Format, headers, dataRows);
@@ -201,51 +213,94 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
         }
     }
 
-    protected virtual async Task EnsureDocumentTypeValidAsync(string? documentTypeCode)
+    /// <summary>解析模板限定的文档类型（#207 必填）——按当前层 TypeCode 解析为实体；不存在则 loud fail。</summary>
+    protected virtual async Task<DocumentType> ResolveDocumentTypeAsync(string documentTypeCode)
     {
-        if (string.IsNullOrWhiteSpace(documentTypeCode))
-        {
-            return;
-        }
-
         var type = await _documentTypeRepository.FindByTypeCodeAsync(documentTypeCode);
         if (type == null)
         {
             throw new BusinessException(PaperbaseErrorCodes.ExportTemplateInvalidDocumentTypeCode)
                 .WithData("documentTypeCode", documentTypeCode);
         }
+
+        return type;
     }
 
-    private static IReadOnlyList<ExportColumn> MapColumns(IEnumerable<ExportColumnInput> columns)
-        => columns.Select(c => new ExportColumn(c.SourceKind, c.Key, c.ColumnName, c.Order)).ToList();
-
-    private static string? GetCellValue(ExportProjection d, ExportColumn column)
-        => column.SourceKind switch
+    /// <summary>把列入参的字段名解析为该类型下的 <c>FieldDefinitionId</c>（#207）；字段未定义则 loud fail。</summary>
+    protected virtual async Task<List<ExportColumn>> MapColumnsAsync(
+        IEnumerable<ExportColumnInput> columns, DocumentType documentType)
+    {
+        var result = new List<ExportColumn>();
+        foreach (var c in columns)
         {
-            ExportColumnSourceKind.System => GetSystemValue(d, column.Key),
-            ExportColumnSourceKind.Extracted => GetExtractedValue(d, column.Key),
-            _ => null
-        };
+            var definition = await _fieldDefinitionRepository.FindByNameAsync(documentType.Id, c.FieldName);
+            if (definition == null)
+            {
+                throw new BusinessException(PaperbaseErrorCodes.UnknownExtractedField)
+                    .WithData("FieldName", c.FieldName)
+                    .WithData("DocumentTypeCode", documentType.TypeCode);
+            }
 
-    private static string? GetSystemValue(ExportProjection d, string key) => key switch
-    {
-        ExportSystemFields.Id => d.Id.ToString(),
-        ExportSystemFields.Title => d.Title,
-        ExportSystemFields.DocumentTypeCode => d.DocumentTypeCode,
-        ExportSystemFields.LifecycleStatus => d.LifecycleStatus.ToString(),
-        ExportSystemFields.ReviewStatus => d.ReviewStatus.ToString(),
-        ExportSystemFields.Language => d.Language,
-        ExportSystemFields.ClassificationConfidence => d.ClassificationConfidence.ToString(CultureInfo.InvariantCulture),
-        ExportSystemFields.CreationTime => d.CreationTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-        ExportSystemFields.OriginalFileName => d.OriginalFileName,
-        ExportSystemFields.ContentType => d.ContentType,
-        ExportSystemFields.FileSize => d.FileSize.ToString(CultureInfo.InvariantCulture),
-        _ => null
-    };
+            result.Add(new ExportColumn(definition.Id, c.ColumnName, c.Order));
+        }
 
-    private static string? GetExtractedValue(ExportProjection d, string key)
+        return result;
+    }
+
+    /// <summary>映射单个模板 → DTO，并填充 DocumentTypeCode + 每列 FieldName（Id → code/name，穿透 soft-delete）。</summary>
+    protected virtual async Task<ExportTemplateDto> MapTemplateToDtoAsync(ExportTemplate template)
     {
-        var field = d.ExtractedFields.FirstOrDefault(f => f.Name == key);
+        var dto = ObjectMapper.Map<ExportTemplate, ExportTemplateDto>(template);
+        await FillTemplateDtosAsync(new[] { template }, new[] { dto });
+        return dto;
+    }
+
+    /// <summary>
+    /// 批量填充模板 DTO 的 DocumentTypeCode + 列 FieldName（Id → code/name）。穿透 soft-delete——已归档类型 / 字段
+    /// 也解析为"已归档"名而非空白；一次性解析两张映射表，无 N+1。
+    /// </summary>
+    protected virtual async Task FillTemplateDtosAsync(
+        IReadOnlyList<ExportTemplate> templates, IReadOnlyList<ExportTemplateDto> dtos)
+    {
+        if (templates.Count == 0)
+        {
+            return;
+        }
+
+        var typeIds = templates.Select(t => t.DocumentTypeId).Distinct().ToList();
+        var fieldIds = templates.SelectMany(t => t.Columns).Select(c => c.FieldDefinitionId).Distinct().ToList();
+
+        var typeCodes = new Dictionary<Guid, string>();
+        var fieldNames = new Dictionary<Guid, string>();
+        using (DataFilter.Disable<ISoftDelete>())
+        {
+            foreach (var t in await _documentTypeRepository.GetListAsync(t => typeIds.Contains(t.Id)))
+            {
+                typeCodes[t.Id] = t.TypeCode;
+            }
+
+            if (fieldIds.Count > 0)
+            {
+                foreach (var f in await _fieldDefinitionRepository.GetListAsync(f => fieldIds.Contains(f.Id)))
+                {
+                    fieldNames[f.Id] = f.Name;
+                }
+            }
+        }
+
+        for (var i = 0; i < templates.Count; i++)
+        {
+            dtos[i].DocumentTypeCode = typeCodes.TryGetValue(templates[i].DocumentTypeId, out var code) ? code : null;
+            foreach (var col in dtos[i].Columns)
+            {
+                col.FieldName = fieldNames.TryGetValue(col.FieldDefinitionId, out var name) ? name : null;
+            }
+        }
+    }
+
+    private static string? GetExtractedValue(ExportProjection d, Guid fieldDefinitionId)
+    {
+        var field = d.ExtractedFields.FirstOrDefault(f => f.FieldDefinitionId == fieldDefinitionId);
         return field == null ? null : FieldValueToString(field);
     }
 

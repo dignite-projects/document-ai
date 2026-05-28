@@ -1,6 +1,8 @@
 using System;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Dignite.Paperbase.Documents.Exports;
+using Dignite.Paperbase.Documents.Fields;
 using Volo.Abp;
 using Volo.Abp.Domain.Entities.Auditing;
 using Volo.Abp.MultiTenancy;
@@ -26,8 +28,10 @@ namespace Dignite.Paperbase.Documents.DocumentTypes;
 /// <see cref="DisplayName"/> 是普通字符串列，运行时直接展示（不再走 seed-time ILocalizableString 解析）。
 /// </para>
 /// <para>
-/// 字段关系：<see cref="FieldDefinition.DocumentTypeCode"/> 字符串引用本实体的 TypeCode，
-/// 按 DDD "reference by id" 原则不加 navigation property。
+/// 字段关系：<see cref="FieldDefinition.DocumentTypeId"/> 引用本实体的 Id（内部不可变关联，#207），
+/// 按 DDD "reference by id" 原则不加 navigation property。<see cref="Document.DocumentTypeId"/> /
+/// <see cref="ExportTemplate.DocumentTypeId"/> 同理。这些 Id 关联让 <see cref="TypeCode"/> 可由 admin 重命名而不级联数据行；
+/// 被引用的本实体硬删由 FK RESTRICT 阻止。
 /// </para>
 /// </summary>
 public class DocumentType : FullAuditedAggregateRoot<Guid>, IMultiTenant
@@ -67,8 +71,15 @@ public class DocumentType : FullAuditedAggregateRoot<Guid>, IMultiTenant
         Priority = priority;
     }
 
-    public void Update(string displayName, double confidenceThreshold, int priority)
+    /// <summary>
+    /// 更新文档类型。<paramref name="typeCode"/> 是外部机器契约 key——#207 起允许重命名（仍执行 <see cref="ValidateTypeCode"/>
+    /// regex 白名单；同层 <c>(TenantId, TypeCode)</c> 唯一性由 AppService 校验）。内部关联（Document / FieldDefinition /
+    /// ExportTemplate）已改用本实体的不可变 Id，rename 不级联这些表；但 rename 是契约级变更（下游按 (TenantId, TypeCode)
+    /// 消费、进 LLM 分类 prompt，UI 应警示）。
+    /// </summary>
+    public void Update(string typeCode, string displayName, double confidenceThreshold, int priority)
     {
+        TypeCode = ValidateTypeCode(typeCode);
         DisplayName = ValidateDisplayName(displayName);
         ConfidenceThreshold = Check.Range(confidenceThreshold, nameof(confidenceThreshold), 0d, 1d);
         Priority = priority;

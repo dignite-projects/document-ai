@@ -149,7 +149,7 @@ public class DocumentAppService_ExtractedFields_Tests
     public async Task Should_Clear_All_Fields_When_Input_Is_Empty()
     {
         var doc = CreateClassifiedDocument("host.contract");
-        doc.SetFields(new[] { new DocumentFieldValue("amount", FieldDataType.String, JsonString("1000")) });
+        doc.SetFields(new[] { new DocumentFieldValue(Guid.NewGuid(), FieldDataType.String, JsonString("1000")) });
         doc.ExtractedFieldValues.Count.ShouldBe(1);
         StubGet(doc);
         StubFields("host.contract", "amount");
@@ -199,10 +199,10 @@ public class DocumentAppService_ExtractedFields_Tests
     {
         var defs = fields
             .Select(f => new FieldDefinition(
-                Guid.NewGuid(), tenantId: null, documentTypeCode: typeCode,
+                Guid.NewGuid(), tenantId: null, documentTypeId: TypeId(typeCode),
                 name: f.Name, displayName: f.Name, prompt: "extract " + f.Name, dataType: f.DataType))
             .ToList();
-        _fieldDefinitionRepository.GetForExtractionAsync(typeCode, Arg.Any<CancellationToken>())
+        _fieldDefinitionRepository.GetForExtractionAsync(TypeId(typeCode), Arg.Any<CancellationToken>())
             .Returns(defs);
     }
 
@@ -224,11 +224,15 @@ public class DocumentAppService_ExtractedFields_Tests
     private static Document CreateClassifiedDocument(string typeCode)
     {
         var doc = CreateDocument();
-        // DocumentTypeCode 经 Domain internal 方法设置；测试项目只对 Application 开放 internal，
-        // 不能调 Document.ConfirmClassification —— 用反射写 private setter 模拟"已分类"。
-        typeof(Document).GetProperty(nameof(Document.DocumentTypeCode))!.SetValue(doc, typeCode);
+        // DocumentTypeId 经 Domain internal 方法设置；测试项目只对 Application 开放 internal，
+        // 不能调 Document.ConfirmClassification —— 用反射写 private setter 模拟"已分类"（#207 内部按 Id 关联）。
+        typeof(Document).GetProperty(nameof(Document.DocumentTypeId))!.SetValue(doc, TypeId(typeCode));
         return doc;
     }
+
+    // typeCode → 稳定 Guid 派生（#207：内部按 DocumentTypeId 关联；与 StubFields 一致）。
+    private static Guid TypeId(string typeCode)
+        => new(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes("type:" + typeCode)));
 
     private static JsonElement JsonString(string value)
     {

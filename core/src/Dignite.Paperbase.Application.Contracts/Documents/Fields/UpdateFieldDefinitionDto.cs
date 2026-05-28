@@ -5,6 +5,11 @@ namespace Dignite.Paperbase.Documents.Fields;
 
 public class UpdateFieldDefinitionDto
 {
+    /// <summary>字段机器名（#207 起允许重命名；regex 白名单由实体校验，同层同类型唯一性由 AppService 校验）。</summary>
+    [Required]
+    [DynamicStringLength(typeof(FieldDefinitionConsts), nameof(FieldDefinitionConsts.MaxNameLength))]
+    public string Name { get; set; } = default!;
+
     [Required]
     [DynamicStringLength(typeof(FieldDefinitionConsts), nameof(FieldDefinitionConsts.MaxDisplayNameLength))]
     public string DisplayName { get; set; } = default!;

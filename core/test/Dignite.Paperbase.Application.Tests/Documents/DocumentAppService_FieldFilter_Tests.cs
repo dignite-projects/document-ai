@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -21,11 +22,13 @@ public class DocumentAppService_FieldFilter_Tests
     : PaperbaseApplicationTestBase<DocumentAppServiceReviewTestModule>
 {
     private readonly IDocumentAppService _appService;
+    private readonly IDocumentTypeRepository _documentTypeRepository;
     private readonly IFieldDefinitionRepository _fieldDefinitionRepository;
 
     public DocumentAppService_FieldFilter_Tests()
     {
         _appService = GetRequiredService<IDocumentAppService>();
+        _documentTypeRepository = GetRequiredService<IDocumentTypeRepository>();
         _fieldDefinitionRepository = GetRequiredService<IFieldDefinitionRepository>();
     }
 
@@ -79,8 +82,13 @@ public class DocumentAppService_FieldFilter_Tests
     [Fact]
     public async Task Throws_when_field_not_defined_on_type()
     {
+        // #207：AppService 先把 TypeCode 解析为内部 DocumentTypeId，再按 Id 解析字段。
+        var typeId = Guid.NewGuid();
+        _documentTypeRepository
+            .FindByTypeCodeAsync("host.contract", Arg.Any<CancellationToken>())
+            .Returns(new DocumentType(typeId, null, "host.contract", "Contract"));
         _fieldDefinitionRepository
-            .FindByNameAsync("host.contract", "ghost", Arg.Any<CancellationToken>())
+            .FindByNameAsync(typeId, "ghost", Arg.Any<CancellationToken>())
             .Returns((FieldDefinition?)null);
 
         // DTO 校验通过，但该类型下无 "ghost" 字段 → loud fail（UnknownExtractedField，可纠正），不静默空。

@@ -17,35 +17,35 @@ public class EfCoreFieldDefinitionRepository
         : base(dbContextProvider) { }
 
     public async Task<List<FieldDefinition>> GetForExtractionAsync(
-        string documentTypeCode,
+        Guid documentTypeId,
         CancellationToken cancellationToken = default)
     {
         var dbSet = await GetDbSetAsync();
         return await dbSet
-            .Where(f => f.DocumentTypeCode == documentTypeCode)
+            .Where(f => f.DocumentTypeId == documentTypeId)
             .OrderBy(f => f.DisplayOrder)
             .ToListAsync(GetCancellationToken(cancellationToken));
     }
 
     public async Task<List<FieldDefinition>> GetByDocumentTypeAsync(
-        string documentTypeCode,
+        Guid documentTypeId,
         CancellationToken cancellationToken = default)
     {
         var dbSet = await GetDbSetAsync();
         return await dbSet
-            .Where(f => f.DocumentTypeCode == documentTypeCode)
+            .Where(f => f.DocumentTypeId == documentTypeId)
             .OrderBy(f => f.DisplayOrder)
             .ToListAsync(GetCancellationToken(cancellationToken));
     }
 
     public async Task<FieldDefinition?> FindByNameAsync(
-        string documentTypeCode,
+        Guid documentTypeId,
         string name,
         CancellationToken cancellationToken = default)
     {
         var dbSet = await GetDbSetAsync();
         return await dbSet.FirstOrDefaultAsync(
-            f => f.DocumentTypeCode == documentTypeCode && f.Name == name,
+            f => f.DocumentTypeId == documentTypeId && f.Name == name,
             GetCancellationToken(cancellationToken));
     }
 }

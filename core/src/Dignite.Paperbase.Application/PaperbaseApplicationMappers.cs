@@ -13,11 +13,11 @@ namespace Dignite.Paperbase;
 /// Document -> DocumentDto
 /// FileOrigin and PipelineRun nested mappings are consolidated here (Mapperly compile-time constraint).
 /// <para>
-/// <c>ExtractedFields</c>（出口 wire-format：<c>Dictionary&lt;string, JsonElement&gt;</c>）由 <see cref="AfterMap"/>
-/// 从 <see cref="Document.ExtractedFieldValues"/> typed child 行即时组装（Issue #206）——不再是 Document 上的
-/// 同名属性，故 <see cref="MapperIgnoreTargetAttribute"/> 忽略后手填。AfterMap 在本顶层 mapper 经 ABP
-/// IObjectMapper 调用时会被触发，但显式 MapCore + AfterMap 包装保证任何调用路径都执行（与
-/// <see cref="DocumentPipelineRunToDocumentPipelineRunDtoMapper"/> 同理）。
+/// <c>DocumentTypeCode</c>（外部 wire-format）与 <c>ExtractedFields</c> 字典 key（字段名）是 Id → code/name 的查找投影
+/// （#207：内部存 <see cref="Document.DocumentTypeId"/> 与 <see cref="DocumentExtractedField.FieldDefinitionId"/>），
+/// 需穿透 soft-delete 的批量 join，mapper 无法独立完成——故 <see cref="MapperIgnoreTargetAttribute"/> 忽略后由
+/// <c>DocumentAppService</c> 批量填充（无 N+1）。PipelineRuns 经 <c>[UseMapper]</c> 嵌套映射，其
+/// <c>Candidates</c> AfterMap 由子 mapper 自身的 Map wrapper 触发，与本 mapper 无关。
 /// </para>
 /// </summary>
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
@@ -26,29 +26,13 @@ public partial class DocumentToDocumentDtoMapper : MapperBase<Document, Document
     [UseMapper]
     private readonly DocumentPipelineRunToDocumentPipelineRunDtoMapper _pipelineRunMapper = new();
 
-    public override DocumentDto Map(Document source)
-    {
-        var destination = MapCore(source);
-        AfterMap(source, destination);
-        return destination;
-    }
-
-    public override void Map(Document source, DocumentDto destination)
-    {
-        MapCore(source, destination);
-        AfterMap(source, destination);
-    }
-
-    public override void AfterMap(Document source, DocumentDto destination)
-    {
-        destination.ExtractedFields = ExtractedFieldsAssembler.ToDictionary(source.ExtractedFieldValues);
-    }
-
+    [MapperIgnoreTarget(nameof(DocumentDto.DocumentTypeCode))]
     [MapperIgnoreTarget(nameof(DocumentDto.ExtractedFields))]
-    private partial DocumentDto MapCore(Document source);
+    public override partial DocumentDto Map(Document source);
 
+    [MapperIgnoreTarget(nameof(DocumentDto.DocumentTypeCode))]
     [MapperIgnoreTarget(nameof(DocumentDto.ExtractedFields))]
-    private partial void MapCore(Document source, DocumentDto destination);
+    public override partial void Map(Document source, DocumentDto destination);
 }
 
 /// <summary>
@@ -121,47 +105,20 @@ public partial class DocumentPipelineRunToDocumentPipelineRunDtoMapper : MapperB
     }
 }
 
+/// <summary>
+/// Document -> DocumentListItemDto。<c>DocumentTypeCode</c> 与 <c>ExtractedFields</c> 同 <see cref="DocumentToDocumentDtoMapper"/>
+/// 由 <c>DocumentAppService</c> 批量填充（Id → code/name 穿透 soft-delete 的 join，分页后一次性解析，无 N+1）。
+/// </summary>
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class DocumentToDocumentListItemDtoMapper : MapperBase<Document, DocumentListItemDto>
 {
-    // ExtractedFields 由 AfterMap 从 ExtractedFieldValues typed child 行即时组装（Issue #206）；
-    // 列表路径已 WithDetailsAsync(ExtractedFieldValues) 批量 eager-load，组装不触发 N+1。
-    public override DocumentListItemDto Map(Document source)
-    {
-        var destination = MapCore(source);
-        AfterMap(source, destination);
-        return destination;
-    }
-
-    public override void Map(Document source, DocumentListItemDto destination)
-    {
-        MapCore(source, destination);
-        AfterMap(source, destination);
-    }
-
-    public override void AfterMap(Document source, DocumentListItemDto destination)
-    {
-        destination.ExtractedFields = ExtractedFieldsAssembler.ToDictionary(source.ExtractedFieldValues);
-    }
-
+    [MapperIgnoreTarget(nameof(DocumentListItemDto.DocumentTypeCode))]
     [MapperIgnoreTarget(nameof(DocumentListItemDto.ExtractedFields))]
-    private partial DocumentListItemDto MapCore(Document source);
+    public override partial DocumentListItemDto Map(Document source);
 
+    [MapperIgnoreTarget(nameof(DocumentListItemDto.DocumentTypeCode))]
     [MapperIgnoreTarget(nameof(DocumentListItemDto.ExtractedFields))]
-    private partial void MapCore(Document source, DocumentListItemDto destination);
-}
-
-/// <summary>
-/// 把 <see cref="Document.ExtractedFieldValues"/> typed child 行组装回出口 wire-format
-/// <c>Dictionary&lt;string, JsonElement&gt;</c>（key = 字段名，value = <see cref="DocumentExtractedField.ToJsonElement"/>
-/// 重建的规范 JSON）。空集合 → null（与旧 JSON 列"未抽取时 null"语义一致）。
-/// </summary>
-internal static class ExtractedFieldsAssembler
-{
-    public static Dictionary<string, JsonElement>? ToDictionary(IReadOnlyCollection<DocumentExtractedField> fields)
-        => fields.Count == 0
-            ? null
-            : fields.ToDictionary(f => f.Name, f => f.ToJsonElement(), StringComparer.Ordinal);
+    public override partial void Map(Document source, DocumentListItemDto destination);
 }
 
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
@@ -171,22 +128,37 @@ public partial class DocumentTypeToDtoMapper : MapperBase<DocumentType, Document
     public override partial void Map(DocumentType source, DocumentTypeDto destination);
 }
 
+/// <summary>
+/// FieldDefinition -> FieldDefinitionDto。<c>DocumentTypeCode</c>（外部 wire-format）是 <see cref="FieldDefinition.DocumentTypeId"/>
+/// → TypeCode 的查找投影（#207），由 <c>FieldDefinitionAppService</c> 在已知类型上下文中填充。
+/// </summary>
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class FieldDefinitionToDtoMapper : MapperBase<FieldDefinition, FieldDefinitionDto>
 {
+    [MapperIgnoreTarget(nameof(FieldDefinitionDto.DocumentTypeCode))]
     public override partial FieldDefinitionDto Map(FieldDefinition source);
+
+    [MapperIgnoreTarget(nameof(FieldDefinitionDto.DocumentTypeCode))]
     public override partial void Map(FieldDefinition source, FieldDefinitionDto destination);
 }
 
 /// <summary>
-/// ExportTemplate -> ExportTemplateDto。Columns（IReadOnlyList&lt;ExportColumn&gt; → List&lt;ExportColumnDto&gt;）
-/// 元素映射由 Mapperly 按同名属性自动 inline。
+/// ExportTemplate -> ExportTemplateDto（#207）。<c>DocumentTypeCode</c>（← <see cref="ExportTemplate.DocumentTypeId"/>）与
+/// 每列 <c>FieldName</c>（← <see cref="ExportColumn.FieldDefinitionId"/>）是 Id → code/name 查找投影，
+/// 由 <c>ExportTemplateAppService</c> 填充；其余标量 + 列的 FieldDefinitionId / ColumnName / Order 由 Mapperly 直接映射。
 /// </summary>
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class ExportTemplateToDtoMapper : MapperBase<ExportTemplate, ExportTemplateDto>
 {
+    [MapperIgnoreTarget(nameof(ExportTemplateDto.DocumentTypeCode))]
     public override partial ExportTemplateDto Map(ExportTemplate source);
+
+    [MapperIgnoreTarget(nameof(ExportTemplateDto.DocumentTypeCode))]
     public override partial void Map(ExportTemplate source, ExportTemplateDto destination);
+
+    // 列元素映射：FieldName 是 FieldDefinitionId → 当前字段名的查找，mapper 忽略、AppService 填充。
+    [MapperIgnoreTarget(nameof(ExportColumnDto.FieldName))]
+    private partial ExportColumnDto MapColumn(ExportColumn source);
 }
 
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]

@@ -43,8 +43,29 @@ public class DocumentTypeTests
     {
         // 构造时合法，但 Update 路径必须重新校验——避免 admin 通过 Update API 绕过实体不变量
         var type = CreateDocumentType("Contract");
-        Should.Throw<BusinessException>(() => type.Update("Bad\nName", 0.7, 0))
+        Should.Throw<BusinessException>(() => type.Update("host.test", "Bad\nName", 0.7, 0))
             .Code.ShouldBe(PaperbaseErrorCodes.InvalidDocumentTypeDisplayName);
+    }
+
+    [Fact]
+    public void Update_Should_Allow_TypeCode_Rename()
+    {
+        // #207：解锁 TypeCode 重命名——内部关联改用不可变 Id，rename 不再被实体层禁止。
+        var type = CreateDocumentType("Contract");
+        type.TypeCode.ShouldBe("host.test");
+
+        type.Update("host.renamed-contract", "Contract", 0.7, 0);
+
+        type.TypeCode.ShouldBe("host.renamed-contract");
+    }
+
+    [Fact]
+    public void Update_Should_Still_Validate_TypeCode_Format()
+    {
+        // rename 解锁不等于跳过 regex 白名单——非法 TypeCode 仍被拒。
+        var type = CreateDocumentType("Contract");
+        Should.Throw<BusinessException>(() => type.Update("bad code", "Contract", 0.7, 0))
+            .Code.ShouldBe(PaperbaseErrorCodes.InvalidDocumentTypeCodeFormat);
     }
 
     [Theory]
