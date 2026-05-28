@@ -25,7 +25,7 @@ namespace Dignite.Paperbase.Documents.Pipelines.FieldExtraction;
 ///   <item>归一化由 prompt 要求 AI 按 <see cref="FieldDataType"/> 输出规范形（数字裸 JSON number、
 ///         日期 ISO-8601 字符串、布尔 JSON true/false）；解析时再经 <see cref="ExtractedFieldValueValidator"/>
 ///         严格校验（不符声明类型的值写 null + log）——保证 <c>ExtractedFields</c> 类型自洽
-///         （Issue #204：让 SearchAsync 的类型化查询建立在干净数据上）</item>
+///         （Issue #204：让 GetFieldMatchedIdsAsync 的类型化查询建立在干净数据上）</item>
 ///   <item>所有字段的 prompt（包括 Host 来源）统一经 <c>PromptBoundary.WrapField</c> 包裹——
 ///         比 v1 区分 Host/Tenant 是否 wrap 更保守，无功能损失</item>
 /// </list>

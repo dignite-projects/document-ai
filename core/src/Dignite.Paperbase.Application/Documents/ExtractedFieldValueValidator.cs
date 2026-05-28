@@ -15,7 +15,7 @@ namespace Dignite.Paperbase.Documents;
 ///   <item><b>LLM 抽取</b>（<c>FieldExtractionWorkflow</c>）：后台非交互式路径，不符 → 存 null + log
 ///   （归一化责任在 prompt，由 AI 输出规范形；校验器是兜底护栏）。</item>
 /// </list>
-/// 干净的 <c>ExtractedFields</c> 让 <c>SearchAsync</c> 的类型化查询（<c>JSON_VALUE(... RETURNING &lt;type&gt;)</c>
+/// 干净的 <c>ExtractedFields</c> 让 <c>GetFieldMatchedIdsAsync</c> 的类型化查询（<c>JSON_VALUE(... RETURNING &lt;type&gt;)</c>
 /// / JSON 索引）建立在可信数据上（Issue #204 任务 2 / 任务 3 同源）。
 /// </para>
 /// <para>
