@@ -7,7 +7,7 @@ using Volo.Abp.Validation;
 
 namespace Dignite.Paperbase.Documents;
 
-public class GetDocumentListInput : PagedAndSortedResultRequestDto, IValidatableObject
+public class GetDocumentListInput : PagedAndSortedResultRequestDto
 {
     public DocumentLifecycleStatus? LifecycleStatus { get; set; }
 
@@ -33,8 +33,15 @@ public class GetDocumentListInput : PagedAndSortedResultRequestDto, IValidatable
     [MaxLength(DocumentConsts.MaxSearchFieldFilters)]
     public List<DocumentFieldFilter>? FieldFilters { get; set; }
 
-    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    public override IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
+        // 先转发基类校验——LimitedResultRequestDto 校验 MaxResultCount ≤ MaxMaxResultCount。
+        // 此前本方法隐藏（而非 override）基类 Validate，导致该上限校验静默失效（CS0114）。
+        foreach (var result in base.Validate(validationContext))
+        {
+            yield return result;
+        }
+
         // 字段值过滤器必须锚定单一类型（amount 等字段离开类型无确定含义，且字段类型按类型解析）——
         // loud fail（AbpValidationException），不静默。
         if (FieldFilters is { Count: > 0 } && string.IsNullOrWhiteSpace(DocumentTypeCode))
