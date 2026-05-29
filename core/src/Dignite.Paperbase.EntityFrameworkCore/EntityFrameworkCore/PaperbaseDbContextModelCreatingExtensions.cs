@@ -111,7 +111,11 @@ public static class PaperbaseDbContextModelCreatingExtensions
             b.HasKey(x => new { x.DocumentId, x.FieldDefinitionId });
 
             // 字段类型不在本行持久化（#208）：由所引用 FieldDefinition.DataType 决定，读 / 导出路径已 load 该实体。
-            // StringValue 不限长（nvarchar(max) / text）：忠实存储，不截断；故不进索引键。
+            // StringValue 限长 nvarchar(256)（#209）：类型绑定 String 字段是从 Markdown 抽取的结构化短值（姓名 / 编号 /
+            // 币种 / 案由等），不承载长文本（长文本归 Document.Markdown）——限长换来它能进复合索引键，等值查询走 index seek。
+            // 校验上限同源 DocumentExtractedFieldConsts.MaxStringValueLength（ExtractedFieldValueValidator 一并卡住）。
+            b.Property(x => x.StringValue).HasMaxLength(DocumentExtractedFieldConsts.MaxStringValueLength);
+
             // NumberValue 用 precision(38,6)（32 位整数 + 6 位小数）——覆盖任何现实抽取数值（金额 / 比率 / 百分比）
             // 而不溢出 / 截断；EF 默认 decimal(18,2) 会静默把 >2 位小数四舍五入，丢精度。precision 跨库可移植（provider 各自映射）。
             // 其余数字 / 日期值列由 provider 按 CLR 类型自动映射（long→bigint、DateOnly→date、DateTime→datetime2 等），不绑 provider-specific 类型。
@@ -126,8 +130,9 @@ public static class PaperbaseDbContextModelCreatingExtensions
 
             // 字段值查询从 Documents 聚合根起手（按 TenantId + DocumentTypeId + 软删全局过滤收窄），再对 child 走
             // (FieldDefinitionId, typedValue) EXISTS。下列 (TenantId, FieldDefinitionId, <typedValue>, DocumentId) 复合索引
-            // 支撑 Number / 日期字段的等值 + 范围；其 (TenantId, FieldDefinitionId) 前缀也覆盖 String / Boolean 等值收窄
-            // （StringValue 是 nvarchar(max) 不能进索引键，靠前缀分组 + 与其他选择性字段 AND 收窄）。
+            // 支撑 String 等值 + Number / 日期字段的等值 + 范围（String 限长 256 后可进索引键，#209）。Boolean 不单建索引——
+            // 基数仅 2，selectivity 太低，靠 (TenantId, FieldDefinitionId) 前缀分组 + 与其他字段 AND 收窄即可。
+            b.HasIndex(x => new { x.TenantId, x.FieldDefinitionId, x.StringValue, x.DocumentId });
             b.HasIndex(x => new { x.TenantId, x.FieldDefinitionId, x.NumberValue, x.DocumentId });
             b.HasIndex(x => new { x.TenantId, x.FieldDefinitionId, x.DateValue, x.DocumentId });
             b.HasIndex(x => new { x.TenantId, x.FieldDefinitionId, x.DateTimeValue, x.DocumentId });

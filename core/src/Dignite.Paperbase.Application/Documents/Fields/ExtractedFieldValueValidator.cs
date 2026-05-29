@@ -21,7 +21,8 @@ namespace Dignite.Paperbase.Documents.Fields;
 /// <para>
 /// 严格语义（不做强制转换）：声明类型即承诺值可表达为该 JSON 类型。数字字段须为 JSON number、
 /// 布尔字段须为 JSON true/false、日期字段须为 ISO-8601 字符串。要存自由文本应把字段声明为
-/// <see cref="FieldDataType.String"/>。
+/// <see cref="FieldDataType.String"/>——且长度须 ≤ <see cref="DocumentExtractedFieldConsts.MaxStringValueLength"/>
+/// （类型绑定 String 字段是结构化短值，与持久化列长同源；超长归 Document.Markdown，不在此承载，#209）。
 /// </para>
 /// </summary>
 internal static class ExtractedFieldValueValidator
@@ -30,7 +31,8 @@ internal static class ExtractedFieldValueValidator
     {
         return dataType switch
         {
-            FieldDataType.String => value.ValueKind == JsonValueKind.String,
+            FieldDataType.String => value.ValueKind == JsonValueKind.String &&
+                                    (value.GetString() ?? string.Empty).Length <= DocumentExtractedFieldConsts.MaxStringValueLength,
             FieldDataType.Number => value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out _),
             FieldDataType.Boolean => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
             FieldDataType.Date => IsValidDateString(value),
