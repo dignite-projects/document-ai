@@ -8,11 +8,8 @@ namespace Dignite.Paperbase.Documents.Exports;
 /// </summary>
 public class ExportColumnDto
 {
-    /// <summary>引用的类型绑定字段定义 Id（内部不可变关联，#207）。</summary>
+    /// <summary>引用的类型绑定字段定义不可变 Id（#207：内部稳定句柄，字段名可由 admin 重命名故不作引用键）。</summary>
     public Guid FieldDefinitionId { get; set; }
-
-    /// <summary>当前字段名（服务端 join 当前 <c>FieldDefinition</c> 解析，穿透 soft-delete——已归档字段也可读）。</summary>
-    public string? FieldName { get; set; }
 
     /// <summary>输出文件中的列标题。</summary>
     public string ColumnName { get; set; } = default!;

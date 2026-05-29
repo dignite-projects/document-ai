@@ -19,15 +19,15 @@ import {
   ExportFormat,
   ExportTemplateDto,
   ExportTemplateService,
+  FieldDefinitionDto,
+  FieldDefinitionService,
   PAPERBASE_PERMISSIONS,
   exportFormatOptions,
 } from '@dignite/paperbase';
 
 // Mirrors ExportTemplateConsts (Domain.Shared).
 const MAX_NAME_LENGTH = 128;
-const MAX_FIELD_NAME_LENGTH = 64;
 const MAX_COLUMN_NAME_LENGTH = 128;
-const FIELD_NAME_PATTERN = /^[A-Za-z0-9_\-]{1,64}$/;
 
 @Component({
   selector: 'lib-export-template-list',
@@ -39,6 +39,7 @@ const FIELD_NAME_PATTERN = /^[A-Za-z0-9_\-]{1,64}$/;
 export class ExportTemplateListComponent implements OnInit {
   private readonly service = inject(ExportTemplateService);
   private readonly documentTypeService = inject(DocumentTypeService);
+  private readonly fieldDefinitionService = inject(FieldDefinitionService);
   private readonly fb = inject(FormBuilder);
   private readonly confirmation = inject(ConfirmationService);
   private readonly toaster = inject(ToasterService);
@@ -57,6 +58,7 @@ export class ExportTemplateListComponent implements OnInit {
 
   templates = signal<ExportTemplateDto[]>([]);
   documentTypes = signal<DocumentTypeDto[]>([]);
+  fieldDefinitions = signal<FieldDefinitionDto[]>([]);
   isLoading = signal(true);
   editing = signal<ExportTemplateDto | 'create' | null>(null);
   isSubmitting = signal(false);
@@ -65,7 +67,7 @@ export class ExportTemplateListComponent implements OnInit {
   readonly form = this.fb.nonNullable.group({
     name: ['', [Validators.required, Validators.maxLength(MAX_NAME_LENGTH)]],
     format: [ExportFormat.Csv, [Validators.required]],
-    documentTypeCode: ['', [Validators.required]],
+    documentTypeId: ['', [Validators.required]],
     columns: this.fb.array<FormGroup>([]),
   });
 
@@ -105,7 +107,8 @@ export class ExportTemplateListComponent implements OnInit {
 
   openCreate(): void {
     this.columns.clear();
-    this.form.reset({ name: '', format: ExportFormat.Csv, documentTypeCode: '' });
+    this.fieldDefinitions.set([]);
+    this.form.reset({ name: '', format: ExportFormat.Csv, documentTypeId: '' });
     this.addColumn();
     this.editing.set('create');
   }
@@ -115,25 +118,19 @@ export class ExportTemplateListComponent implements OnInit {
     this.form.reset({
       name: template.name,
       format: template.format,
-      documentTypeCode: template.documentTypeCode ?? '',
+      documentTypeId: template.documentTypeId,
     });
+    this.loadFieldDefinitions(template.documentTypeId);
     [...template.columns]
       .sort((a, b) => a.order - b.order)
-      .forEach(c => this.addColumn(c.fieldName ?? '', c.columnName));
+      .forEach(c => this.addColumn(c.fieldDefinitionId, c.columnName));
     this.editing.set(template);
   }
 
-  addColumn(fieldName = '', columnName = ''): void {
+  addColumn(fieldDefinitionId = '', columnName = ''): void {
     this.columns.push(
       this.fb.nonNullable.group({
-        fieldName: [
-          fieldName,
-          [
-            Validators.required,
-            Validators.maxLength(MAX_FIELD_NAME_LENGTH),
-            Validators.pattern(FIELD_NAME_PATTERN),
-          ],
-        ],
+        fieldDefinitionId: [fieldDefinitionId, [Validators.required]],
         columnName: [columnName, [Validators.required, Validators.maxLength(MAX_COLUMN_NAME_LENGTH)]],
       }),
     );
@@ -141,6 +138,27 @@ export class ExportTemplateListComponent implements OnInit {
 
   removeColumn(index: number): void {
     this.columns.removeAt(index);
+  }
+
+  // Switching the document type invalidates already-picked field columns (they belong to the prior type).
+  onDocumentTypeChange(): void {
+    const documentTypeId = this.form.controls.documentTypeId.value;
+    this.columns.controls.forEach(ctrl => ctrl.get('fieldDefinitionId')?.setValue(''));
+    this.loadFieldDefinitions(documentTypeId);
+  }
+
+  private loadFieldDefinitions(documentTypeId: string): void {
+    if (!documentTypeId) {
+      this.fieldDefinitions.set([]);
+      return;
+    }
+    this.fieldDefinitionService
+      .getList({ documentTypeId })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: defs => this.fieldDefinitions.set(defs),
+        error: () => this.fieldDefinitions.set([]),
+      });
   }
 
   closeModal(): void {
@@ -160,17 +178,17 @@ export class ExportTemplateListComponent implements OnInit {
     // Order = array position; the editor's row order is the source of truth.
     const columns: ExportColumnInput[] = this.columns.controls.map((ctrl, i) => {
       const v = ctrl.getRawValue() as {
-        fieldName: string;
+        fieldDefinitionId: string;
         columnName: string;
       };
-      return { fieldName: v.fieldName, columnName: v.columnName, order: i };
+      return { fieldDefinitionId: v.fieldDefinitionId, columnName: v.columnName, order: i };
     });
 
     if (mode === 'create') {
       const input: CreateExportTemplateDto = {
         name: raw.name,
         format: raw.format,
-        documentTypeCode: raw.documentTypeCode,
+        documentTypeId: raw.documentTypeId,
         columns,
       };
       this.service
@@ -185,7 +203,7 @@ export class ExportTemplateListComponent implements OnInit {
         .update(mode.id, {
           name: raw.name,
           format: raw.format,
-          documentTypeCode: raw.documentTypeCode,
+          documentTypeId: raw.documentTypeId,
           columns,
         })
         .pipe(takeUntilDestroyed(this.destroyRef))
@@ -249,5 +267,9 @@ export class ExportTemplateListComponent implements OnInit {
 
   formatLabel(format: ExportFormat): string {
     return this.formatOptions.find(o => o.value === format)?.key ?? String(format);
+  }
+
+  documentTypeLabel(documentTypeId: string): string | null {
+    return this.documentTypes().find(dt => dt.id === documentTypeId)?.typeCode ?? null;
   }
 }

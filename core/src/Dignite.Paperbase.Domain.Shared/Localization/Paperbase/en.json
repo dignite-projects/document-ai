@@ -228,7 +228,6 @@
     "Paperbase:ExportTemplateTooManyColumns": "Too many columns ({count}); the maximum is {max}.",
     "Paperbase:ExportTemplateDuplicateColumnName": "Duplicate column name '{columnName}'. Column names must be unique within a template.",
     "Paperbase:InvalidExportColumnName": "Column name '{columnName}' contains control characters, which are not allowed.",
-    "Paperbase:ExportTemplateInvalidDocumentTypeCode": "Export template references document type '{documentTypeCode}', which does not exist in this scope.",
     "Paperbase:ExportDocumentLimitExceeded": "The export matches {count} documents, exceeding the per-export limit of {max}. Narrow the filter or select fewer documents.",
     "Menu:ExportTemplates": "Export Templates",
     "ExportTemplate:Title": "Export Templates",

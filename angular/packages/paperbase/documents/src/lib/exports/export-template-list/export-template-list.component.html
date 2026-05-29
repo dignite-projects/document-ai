@@ -57,8 +57,8 @@
                 <td class="fw-semibold">{{ t.name }}</td>
                 <td><span class="badge bg-secondary">{{ formatLabel(t.format) }}</span></td>
                 <td>
-                  @if (t.documentTypeCode) {
-                    <span class="badge bg-info text-dark">{{ t.documentTypeCode }}</span>
+                  @if (documentTypeLabel(t.documentTypeId); as code) {
+                    <span class="badge bg-info text-dark">{{ code }}</span>
                   } @else {
                     <span class="text-muted">-</span>
                   }
@@ -141,10 +141,14 @@
               </div>
               <div class="col-md-4">
                 <label class="form-label">{{ '::ExportTemplate:DocumentType' | abpLocalization }}</label>
-                <select class="form-select" formControlName="documentTypeCode">
+                <select
+                  class="form-select"
+                  formControlName="documentTypeId"
+                  (change)="onDocumentTypeChange()"
+                >
                   <option value="" disabled>{{ '::ExportTemplate:DocumentType' | abpLocalization }}</option>
                   @for (dt of documentTypes(); track dt.id) {
-                    <option [value]="dt.typeCode">{{ dt.displayName }} ({{ dt.typeCode }})</option>
+                    <option [value]="dt.id">{{ dt.displayName }} ({{ dt.typeCode }})</option>
                   }
                 </select>
               </div>
@@ -170,12 +174,14 @@
               @for (col of columns.controls; track $index) {
                 <div class="row g-2 mb-2 align-items-center" [formGroupName]="$index">
                   <div class="col-md-5">
-                    <input
-                      type="text"
-                      class="form-control form-control-sm"
-                      formControlName="fieldName"
-                      placeholder="field_name"
-                    />
+                    <select class="form-select form-select-sm" formControlName="fieldDefinitionId">
+                      <option value="" disabled>
+                        {{ '::ExportTemplate:ColumnKey' | abpLocalization }}
+                      </option>
+                      @for (fd of fieldDefinitions(); track fd.id) {
+                        <option [value]="fd.id">{{ fd.displayName }} ({{ fd.name }})</option>
+                      }
+                    </select>
                   </div>
                   <div class="col-md-6">
                     <input

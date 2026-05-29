@@ -9,6 +9,7 @@ using Dignite.Paperbase.Documents.Exports;
 using Dignite.Paperbase.Documents.Fields;
 using Shouldly;
 using Volo.Abp;
+using Volo.Abp.Domain.Entities;
 using Volo.Abp.Guids;
 using Xunit;
 
@@ -204,10 +205,10 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
     }
 
     [Fact]
-    public async Task Template_Crud_Resolves_FieldName_To_FieldDefinitionId_And_Back()
+    public async Task Template_Crud_Roundtrips_DocumentTypeId_And_FieldDefinitionId()
     {
-        // #207：模板列以 FieldName 提交 → AppService 按 (DocumentTypeId, name) 解析为 FieldDefinitionId 持久化；
-        // 读回时 join 当前 FieldDefinition.Name。覆盖 MapColumnsAsync + FillTemplateDtosAsync。
+        // #207：模板以不可变 DocumentTypeId / 列 FieldDefinitionId 提交 → AppService 校验字段属于该类型后持久化；
+        // 读回由 Mapperly 直接映射回 Id。覆盖 EnsureDocumentTypeExistsAsync + MapColumnsAsync。
         var typeId = _guidGenerator.Create();
         var fieldId = _guidGenerator.Create();
 
@@ -227,32 +228,30 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
             {
                 Name = "Contract Export",
                 Format = ExportFormat.Csv,
-                DocumentTypeCode = "contract.general",
+                DocumentTypeId = typeId,
                 Columns = new List<ExportColumnInput>
                 {
-                    new() { FieldName = "amount", ColumnName = "金额", Order = 0 }
+                    new() { FieldDefinitionId = fieldId, ColumnName = "金额", Order = 0 }
                 }
             });
 
             templateId = created.Id;
-            created.DocumentTypeCode.ShouldBe("contract.general");
+            created.DocumentTypeId.ShouldBe(typeId);
             created.Columns.ShouldHaveSingleItem();
-            created.Columns[0].FieldDefinitionId.ShouldBe(fieldId);   // 解析为内部 Id
-            created.Columns[0].FieldName.ShouldBe("amount");          // join 回当前名
+            created.Columns[0].FieldDefinitionId.ShouldBe(fieldId);
             created.Columns[0].ColumnName.ShouldBe("金额");
         });
 
         await WithUnitOfWorkAsync(async () =>
         {
             var got = await _appService.GetAsync(templateId);
-            got.DocumentTypeCode.ShouldBe("contract.general");
+            got.DocumentTypeId.ShouldBe(typeId);
             got.Columns[0].FieldDefinitionId.ShouldBe(fieldId);
-            got.Columns[0].FieldName.ShouldBe("amount");
         });
     }
 
     [Fact]
-    public async Task Template_Create_Rejects_Unknown_FieldName()
+    public async Task Template_Create_Rejects_Unknown_FieldDefinitionId()
     {
         var typeId = _guidGenerator.Create();
         await WithUnitOfWorkAsync(() => _documentTypeRepository.InsertAsync(
@@ -260,18 +259,17 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
 
         await WithUnitOfWorkAsync(async () =>
         {
-            // 该类型下无 "ghost" 字段 → loud fail（UnknownExtractedField）。
-            var ex = await Should.ThrowAsync<BusinessException>(() => _appService.CreateAsync(new CreateExportTemplateDto
+            // 该类型下无此 FieldDefinitionId → loud fail（EntityNotFoundException）。
+            await Should.ThrowAsync<EntityNotFoundException>(() => _appService.CreateAsync(new CreateExportTemplateDto
             {
                 Name = "Bad",
                 Format = ExportFormat.Csv,
-                DocumentTypeCode = "contract.general",
+                DocumentTypeId = typeId,
                 Columns = new List<ExportColumnInput>
                 {
-                    new() { FieldName = "ghost", ColumnName = "X", Order = 0 }
+                    new() { FieldDefinitionId = _guidGenerator.Create(), ColumnName = "X", Order = 0 }
                 }
             }));
-            ex.Code.ShouldBe(PaperbaseErrorCodes.UnknownExtractedField);
         });
     }
 

@@ -140,22 +140,14 @@ public partial class FieldDefinitionToDtoMapper : MapperBase<FieldDefinition, Fi
 }
 
 /// <summary>
-/// ExportTemplate -> ExportTemplateDto（#207）。<c>DocumentTypeCode</c>（← <see cref="ExportTemplate.DocumentTypeId"/>）与
-/// 每列 <c>FieldName</c>（← <see cref="ExportColumn.FieldDefinitionId"/>）是 Id → code/name 查找投影，
-/// 由 <c>ExportTemplateAppService</c> 填充；其余标量 + 列的 FieldDefinitionId / ColumnName / Order 由 Mapperly 直接映射。
+/// ExportTemplate -> ExportTemplateDto（#207）。所有标量（含不可变 <see cref="ExportTemplate.DocumentTypeId"/>）
+/// 及列集合（FieldDefinitionId / ColumnName / Order）由 Mapperly 直接映射，无需查找投影。
 /// </summary>
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class ExportTemplateToDtoMapper : MapperBase<ExportTemplate, ExportTemplateDto>
 {
-    [MapperIgnoreTarget(nameof(ExportTemplateDto.DocumentTypeCode))]
     public override partial ExportTemplateDto Map(ExportTemplate source);
-
-    [MapperIgnoreTarget(nameof(ExportTemplateDto.DocumentTypeCode))]
     public override partial void Map(ExportTemplate source, ExportTemplateDto destination);
-
-    // 列元素映射：FieldName 是 FieldDefinitionId → 当前字段名的查找，mapper 忽略、AppService 填充。
-    [MapperIgnoreTarget(nameof(ExportColumnDto.FieldName))]
-    private partial ExportColumnDto MapColumn(ExportColumn source);
 }
 
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]

@@ -182,7 +182,6 @@
     "Paperbase:ExportTemplateTooManyColumns": "列数过多（{count}），上限为 {max}。",
     "Paperbase:ExportTemplateDuplicateColumnName": "列名 '{columnName}' 重复。同一模板内列名必须唯一。",
     "Paperbase:InvalidExportColumnName": "列名 '{columnName}' 包含控制字符，不允许使用。",
-    "Paperbase:ExportTemplateInvalidDocumentTypeCode": "导出模板引用的文档类型 '{documentTypeCode}' 在当前作用域不存在。",
     "Paperbase:ExportDocumentLimitExceeded": "本次导出匹配到 {count} 个文档，超过单次上限 {max}。请缩小筛选范围或减少勾选数量。",
     "Menu:ExportTemplates": "导出模板",
     "ExportTemplate:Title": "导出模板",

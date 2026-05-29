@@ -38,7 +38,6 @@ public static class PaperbaseErrorCodes
     public const string ExportTemplateTooManyColumns = "Paperbase:ExportTemplateTooManyColumns";
     public const string ExportTemplateDuplicateColumnName = "Paperbase:ExportTemplateDuplicateColumnName";
     public const string InvalidExportColumnName = "Paperbase:InvalidExportColumnName";
-    public const string ExportTemplateInvalidDocumentTypeCode = "Paperbase:ExportTemplateInvalidDocumentTypeCode";
     public const string ExportDocumentLimitExceeded = "Paperbase:ExportDocumentLimitExceeded";
 
     // 文件柜（#194）

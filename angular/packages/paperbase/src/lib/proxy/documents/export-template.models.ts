@@ -5,7 +5,6 @@ import type { ExportFormat } from './export-format.enum';
 // Mirrors C# Dignite.Paperbase.Documents.Exports.ExportColumnDto / ExportTemplateDto / inputs.
 export interface ExportColumnDto {
   fieldDefinitionId: string;
-  fieldName?: string;
   columnName: string;
   order: number;
 }
@@ -14,12 +13,12 @@ export interface ExportTemplateDto extends EntityDto<string> {
   tenantId?: string;
   name: string;
   format: ExportFormat;
-  documentTypeCode?: string;
+  documentTypeId: string;
   columns: ExportColumnDto[];
 }
 
 export interface ExportColumnInput {
-  fieldName: string;
+  fieldDefinitionId: string;
   columnName: string;
   order: number;
 }
@@ -27,14 +26,14 @@ export interface ExportColumnInput {
 export interface CreateExportTemplateDto {
   name: string;
   format: ExportFormat;
-  documentTypeCode: string;
+  documentTypeId: string;
   columns: ExportColumnInput[];
 }
 
 export interface UpdateExportTemplateDto {
   name: string;
   format: ExportFormat;
-  documentTypeCode: string;
+  documentTypeId: string;
   columns: ExportColumnInput[];
 }
 
