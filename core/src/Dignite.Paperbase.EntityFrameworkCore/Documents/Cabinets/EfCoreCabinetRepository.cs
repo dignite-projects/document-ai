@@ -14,13 +14,13 @@ public class EfCoreCabinetRepository
     public EfCoreCabinetRepository(IDbContextProvider<PaperbaseDbContext> dbContextProvider)
         : base(dbContextProvider) { }
 
-    public async Task<Cabinet?> FindByDisplayNameAsync(
-        string displayName,
+    public async Task<Cabinet?> FindByNameAsync(
+        string name,
         CancellationToken cancellationToken = default)
     {
         var dbSet = await GetDbSetAsync();
         return await dbSet.FirstOrDefaultAsync(
-            c => c.DisplayName == displayName,
+            c => c.Name == name,
             GetCancellationToken(cancellationToken));
     }
 }

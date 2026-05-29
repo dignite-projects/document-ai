@@ -6,5 +6,5 @@ namespace Dignite.Paperbase.Documents.Cabinets;
 public class CabinetDto : EntityDto<Guid>
 {
     public Guid? TenantId { get; set; }
-    public string DisplayName { get; set; } = default!;
+    public string Name { get; set; } = default!;
 }

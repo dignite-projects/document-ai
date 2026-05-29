@@ -218,10 +218,10 @@ public static class PaperbaseDbContextModelCreatingExtensions
             b.ToTable(PaperbaseDbProperties.DbTablePrefix + "Cabinets", PaperbaseDbProperties.DbSchema);
             b.ConfigureByConvention();
 
-            b.Property(x => x.DisplayName).IsRequired().HasMaxLength(CabinetConsts.MaxDisplayNameLength);
+            b.Property(x => x.Name).IsRequired().HasMaxLength(CabinetConsts.MaxNameLength);
 
-            // 唯一约束：(TenantId, DisplayName)，层内不可重名（Host 与租户各自独立宇宙）。软删过滤。
-            b.HasIndex(x => new { x.TenantId, x.DisplayName })
+            // 唯一约束：(TenantId, Name)，层内不可重名（Host 与租户各自独立宇宙）。软删过滤。
+            b.HasIndex(x => new { x.TenantId, x.Name })
                 .IsUnique()
                 .HasFilter("IsDeleted = 0");
         });

@@ -143,8 +143,8 @@
     "Cabinet:New": "New Cabinet",
     "Cabinet:Edit": "Edit Cabinet",
     "Cabinet:Empty": "No cabinets yet. Create one to organize documents by group or batch.",
-    "Cabinet:DisplayName": "Name",
-    "Cabinet:DisplayNameHint": "A cabinet groups documents by manual organization (e.g. Legal Dept, 2024 Project) — orthogonal to the AI document type.",
+    "Cabinet:Name": "Name",
+    "Cabinet:NameHint": "A cabinet groups documents by manual organization (e.g. Legal Dept, 2024 Project) — orthogonal to the AI document type.",
     "Cabinet:AreYouSureToDelete": "Delete this cabinet? Documents in it become unfiled (they are not deleted).",
     "Cabinet:CreatedSuccessfully": "Cabinet created.",
     "Cabinet:UpdatedSuccessfully": "Cabinet updated.",
@@ -250,8 +250,8 @@
     "ExportTemplate:CreatedSuccessfully": "Export template created.",
     "ExportTemplate:UpdatedSuccessfully": "Export template updated.",
     "ExportTemplate:DeletedSuccessfully": "Export template deleted.",
-    "Paperbase:InvalidCabinetDisplayName": "Cabinet name '{displayName}' contains control characters (newlines, tabs, etc.), which are not allowed.",
-    "Paperbase:CabinetDisplayNameAlreadyExists": "A cabinet named '{DisplayName}' already exists in this scope.",
+    "Paperbase:InvalidCabinetName": "Cabinet name '{name}' contains control characters (newlines, tabs, etc.), which are not allowed.",
+    "Paperbase:CabinetNameAlreadyExists": "A cabinet named '{Name}' already exists in this scope.",
     "Paperbase:InvalidCabinetId": "The selected cabinet does not exist in this scope."
   }
 }

@@ -6,13 +6,13 @@ import type { EntityDto } from '@abp/ng.core';
 // 无字符串标识码（不进 LLM / 不被下游按 code 路由）。
 export interface CabinetDto extends EntityDto<string> {
   tenantId?: string;
-  displayName: string;
+  name: string;
 }
 
 export interface CreateCabinetDto {
-  displayName: string;
+  name: string;
 }
 
 export interface UpdateCabinetDto {
-  displayName: string;
+  name: string;
 }

@@ -18,8 +18,8 @@ import {
   PAPERBASE_PERMISSIONS,
 } from '@dignite/paperbase';
 
-// Mirrors CabinetConsts (Domain.Shared): DisplayName length cap.
-const MAX_DISPLAY_NAME_LENGTH = 128;
+// Mirrors CabinetConsts (Domain.Shared): Name length cap.
+const MAX_NAME_LENGTH = 128;
 
 @Component({
   selector: 'lib-cabinet-list',
@@ -48,7 +48,7 @@ export class CabinetListComponent implements OnInit {
   isSubmitting = signal(false);
 
   readonly form = this.fb.nonNullable.group({
-    displayName: ['', [Validators.required, Validators.maxLength(MAX_DISPLAY_NAME_LENGTH)]],
+    name: ['', [Validators.required, Validators.maxLength(MAX_NAME_LENGTH)]],
   });
 
   ngOnInit(): void {
@@ -73,12 +73,12 @@ export class CabinetListComponent implements OnInit {
   }
 
   openCreate(): void {
-    this.form.reset({ displayName: '' });
+    this.form.reset({ name: '' });
     this.editing.set('create');
   }
 
   openEdit(cabinet: CabinetDto): void {
-    this.form.reset({ displayName: cabinet.displayName });
+    this.form.reset({ name: cabinet.name });
     this.editing.set(cabinet);
   }
 
@@ -98,7 +98,7 @@ export class CabinetListComponent implements OnInit {
     const raw = this.form.getRawValue();
 
     if (mode === 'create') {
-      const input: CreateCabinetDto = { displayName: raw.displayName };
+      const input: CreateCabinetDto = { name: raw.name };
       this.service.create(input)
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
@@ -106,7 +106,7 @@ export class CabinetListComponent implements OnInit {
           error: () => this.isSubmitting.set(false),
         });
     } else {
-      this.service.update(mode.id, { displayName: raw.displayName })
+      this.service.update(mode.id, { name: raw.name })
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
           next: () => this.onSaved('::Cabinet:UpdatedSuccessfully'),

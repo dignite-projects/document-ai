@@ -47,7 +47,7 @@
         <table class="table table-hover mb-0 align-middle">
           <thead class="table-light">
             <tr>
-              <th>{{ '::Cabinet:DisplayName' | abpLocalization }}</th>
+              <th>{{ '::Cabinet:Name' | abpLocalization }}</th>
               <th style="width: 120px"></th>
             </tr>
           </thead>
@@ -56,7 +56,7 @@
               <tr>
                 <td class="fw-semibold">
                   <i class="fas fa-folder text-warning me-2"></i>
-                  {{ cabinet.displayName }}
+                  {{ cabinet.name }}
                 </td>
                 <td class="text-end">
                   <div class="d-flex gap-1 justify-content-end">
@@ -104,14 +104,14 @@
           </div>
           <div class="modal-body">
             <div class="mb-3">
-              <label class="form-label">{{ '::Cabinet:DisplayName' | abpLocalization }}</label>
+              <label class="form-label">{{ '::Cabinet:Name' | abpLocalization }}</label>
               <input
                 type="text"
                 class="form-control"
-                formControlName="displayName"
-                [class.is-invalid]="form.controls.displayName.touched && form.controls.displayName.invalid"
+                formControlName="name"
+                [class.is-invalid]="form.controls.name.touched && form.controls.name.invalid"
               />
-              <div class="form-text">{{ '::Cabinet:DisplayNameHint' | abpLocalization }}</div>
+              <div class="form-text">{{ '::Cabinet:NameHint' | abpLocalization }}</div>
             </div>
           </div>
           <div class="modal-footer">

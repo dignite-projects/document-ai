@@ -42,7 +42,7 @@ public static class PaperbaseErrorCodes
     public const string ExportDocumentLimitExceeded = "Paperbase:ExportDocumentLimitExceeded";
 
     // 文件柜（#194）
-    public const string InvalidCabinetDisplayName = "Paperbase:InvalidCabinetDisplayName";
-    public const string CabinetDisplayNameAlreadyExists = "Paperbase:CabinetDisplayNameAlreadyExists";
+    public const string InvalidCabinetName = "Paperbase:InvalidCabinetName";
+    public const string CabinetNameAlreadyExists = "Paperbase:CabinetNameAlreadyExists";
     public const string InvalidCabinetId = "Paperbase:InvalidCabinetId";
 }

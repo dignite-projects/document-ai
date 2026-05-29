@@ -37,9 +37,9 @@ public class CabinetAppService : PaperbaseAppService, ICabinetAppService
     [Authorize(PaperbasePermissions.Cabinets.Create)]
     public virtual async Task<CabinetDto> CreateAsync(CreateCabinetDto input)
     {
-        await EnsureDisplayNameAvailableAsync(input.DisplayName);
+        await EnsureNameAvailableAsync(input.Name);
 
-        var entity = new Cabinet(GuidGenerator.Create(), CurrentTenant.Id, input.DisplayName);
+        var entity = new Cabinet(GuidGenerator.Create(), CurrentTenant.Id, input.Name);
         await _repository.InsertAsync(entity, autoSave: true);
         return ObjectMapper.Map<Cabinet, CabinetDto>(entity);
     }
@@ -55,13 +55,13 @@ public class CabinetAppService : PaperbaseAppService, ICabinetAppService
             throw new EntityNotFoundException(typeof(Cabinet), id);
         }
 
-        // DisplayName 是可改的唯一键——仅改名时判重（同名不变则跳过，避免误判自身冲突）。
-        if (!string.Equals(entity.DisplayName, input.DisplayName, StringComparison.Ordinal))
+        // Name 是可改的唯一键——仅改名时判重（同名不变则跳过，避免误判自身冲突）。
+        if (!string.Equals(entity.Name, input.Name, StringComparison.Ordinal))
         {
-            await EnsureDisplayNameAvailableAsync(input.DisplayName);
+            await EnsureNameAvailableAsync(input.Name);
         }
 
-        entity.Update(input.DisplayName);
+        entity.Update(input.Name);
         await _repository.UpdateAsync(entity, autoSave: true);
         return ObjectMapper.Map<Cabinet, CabinetDto>(entity);
     }
@@ -96,15 +96,15 @@ public class CabinetAppService : PaperbaseAppService, ICabinetAppService
 
     /// <summary>
     /// 当前层柜名判重——只查活跃柜（不含软删除）。Cabinet 不做回收站，软删即遗忘，其名字可被新柜复用
-    /// （唯一索引 <c>(TenantId, DisplayName)</c> 带 <c>IsDeleted = 0</c> 过滤，软删柜不参与活跃约束）。
+    /// （唯一索引 <c>(TenantId, Name)</c> 带 <c>IsDeleted = 0</c> 过滤，软删柜不参与活跃约束）。
     /// </summary>
-    protected virtual async Task EnsureDisplayNameAvailableAsync(string displayName)
+    protected virtual async Task EnsureNameAvailableAsync(string name)
     {
-        var existing = await _repository.FindByDisplayNameAsync(displayName);
+        var existing = await _repository.FindByNameAsync(name);
         if (existing != null)
         {
-            throw new BusinessException(PaperbaseErrorCodes.CabinetDisplayNameAlreadyExists)
-                .WithData("DisplayName", displayName);
+            throw new BusinessException(PaperbaseErrorCodes.CabinetNameAlreadyExists)
+                .WithData("Name", name);
         }
     }
 }

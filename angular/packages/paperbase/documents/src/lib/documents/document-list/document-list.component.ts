@@ -175,7 +175,7 @@ export class DocumentListComponent implements OnInit {
 
   cabinetName(doc: DocumentListItemDto): string | null {
     if (!doc.cabinetId) return null;
-    return this.cabinets().find(c => c.id === doc.cabinetId)?.displayName ?? null;
+    return this.cabinets().find(c => c.id === doc.cabinetId)?.name ?? null;
   }
 
   // Load the selected type's field definitions and turn them into dynamic columns
