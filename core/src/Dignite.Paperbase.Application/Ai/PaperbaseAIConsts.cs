@@ -3,7 +3,7 @@ namespace Dignite.Paperbase.Ai;
 /// <summary>
 /// DI keys for the keyed <c>IChatClient</c> instances Paperbase's core LLM call sites resolve.
 /// Registered by the host wiring (<c>PaperbaseHostModule.ConfigureAI</c>) and consumed by the
-/// classification / field-extraction / title-generation pipelines.
+/// classification / field-extraction / slug-suggestion / title-generation paths.
 /// See <c>docs/ai-provider.md</c> for the keyed-clients table and what each is for.
 /// </summary>
 public static class PaperbaseAIConsts
@@ -20,14 +20,14 @@ public static class PaperbaseAIConsts
 
     /// <summary>
     /// DI key for the structured-output <c>IChatClient</c>
-    /// shared by all single-shot, tool-free, prompt-unique <c>RunAsync&lt;T&gt;</c> call
-    /// sites: <c>DocumentClassificationWorkflow</c> and the field-extraction pipeline.
+    /// shared by all single-shot, tool-free, prompt-unique structured-output call sites:
+    /// <c>DocumentClassificationWorkflow</c>, the field-extraction pipeline, and slug suggestions.
     ///
     /// <para>
     /// Same shape as the title-generator client (no FunctionInvocation, no DistributedCache) —
-    /// these calls do not invoke tools, their prompts are document-content-derived (unique
-    /// per call), and their outputs are schema-bound by
-    /// <c>ChatResponseFormat.ForJsonSchema&lt;T&gt;</c>. Wrapping them with
+    /// these calls do not invoke tools, their prompts are document-content-derived or
+    /// admin-input-derived (unique per call), and their outputs are schema-bound by
+    /// MAF <c>RunAsync&lt;T&gt;</c> or <c>ChatResponseFormat.ForJsonSchema</c>. Wrapping them with
     /// FunctionInvocation just produces phantom <c>orchestrate_tools</c> spans on traces,
     /// and DistributedCache lookups always miss.
     /// </para>

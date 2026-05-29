@@ -87,9 +87,20 @@ public class DocumentClassificationWorkflow : ITransientDependency
                 """;
 
         var template = _promptProvider.GetClassificationPrompt(_options.DefaultLanguage);
-        var agent = new ChatClientAgent(
+        AIAgent agent = new ChatClientAgent(
             _chatClient,
-            instructions: template.SystemInstructions + " " + PromptBoundary.BoundaryRule);
+            new ChatClientAgentOptions
+            {
+                Name = "PaperbaseDocumentClassifier",
+                ChatOptions = new ChatOptions
+                {
+                    Instructions = template.SystemInstructions + " " + PromptBoundary.BoundaryRule
+                },
+                UseProvidedChatClientAsIs = true
+            })
+            .AsBuilder()
+            .UseOpenTelemetry()
+            .Build();
 
         var response = await agent.RunAsync<ClassificationResponse>(
             userMessage,

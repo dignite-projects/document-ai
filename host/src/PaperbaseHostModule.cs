@@ -459,9 +459,9 @@ public class PaperbaseHostModule : AbpModule
             .UseOpenTelemetry()
             .UseLogging();
 
-        // Structured-output chat client: shared by every single-shot RunAsync<T> caller
-        // (DocumentClassificationWorkflow and future field-extraction workflows). All are
-        // tool-free and prompts are document-content-derived (unique per call), so
+        // Structured-output chat client: shared by classification (MAF RunAsync<T>) plus
+        // direct JSON-schema callers such as field extraction and slug suggestion. All are
+        // tool-free and prompts are document/admin-input-derived (unique per call), so
         // FunctionInvocation and DistributedCache are pure overhead. OTel + Logging stay
         // so each structured call shows up as a clean chat <model> span. Falls back to
         // ChatModelId when StructuredModelId is unset; production teams running tight

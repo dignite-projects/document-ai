@@ -8,7 +8,7 @@ Paperbase emits OpenTelemetry traces and metrics from the MAF + `Microsoft.Exten
 |---|---|---|
 | **`Microsoft.Agents.AI`** | Traces, Metrics | MAF agent-invocation spans + token-usage / tool-call metrics for the `ChatClientAgent` runs (today: document classification via `RunAsync<T>`). MAF also defines `CompactionTelemetry` (`compaction.*` spans) but those only fire when chat-history compaction is configured — Paperbase's agent runs are single-shot and tool-free, so no `compaction.*` spans are emitted. |
 | **`Microsoft.Extensions.AI`** | Traces, Metrics | `chat-client.GetResponseAsync` spans with GenAI semantic-convention tags (model id, prompt / completion tokens, finish reason). Emitted automatically by the `.UseOpenTelemetry()` decorators wired on every chat client in `PaperbaseHostModule.ConfigureAI`. |
-| **`Dignite.Paperbase.*`** | Traces, Metrics (reserved) | Wildcard reservation only — **nothing emits under it today**. Paperbase Core registers no custom `ActivitySource` / `Meter` (every LLM stage — classification / field extraction / title generation — is observable through the `Microsoft.Extensions.AI` + `Microsoft.Agents.AI` instrumentation above). The wildcard is a forward hook for **Paperbase Core's own future pipeline metrics** (e.g. classification-confidence histograms, OCR-duration counters) to land in the pipeline without host-side changes. It is **not** an integration point for downstream business modules — those are out of scope and run in their own host with their own OTel pipeline. |
+| **`Dignite.Paperbase.*`** | Traces, Metrics (reserved) | Wildcard reservation only — **nothing emits under it today**. Paperbase Core registers no custom `ActivitySource` / `Meter` (every LLM stage — classification / field extraction / title generation / slug suggestion — is observable through the `Microsoft.Extensions.AI` + `Microsoft.Agents.AI` instrumentation above). The wildcard is a forward hook for **Paperbase Core's own future pipeline metrics** (e.g. classification-confidence histograms, OCR-duration counters) to land in the pipeline without host-side changes. It is **not** an integration point for downstream business modules — those are out of scope and run in their own host with their own OTel pipeline. |
 
 If Paperbase Core later adds a Meter or ActivitySource named `Dignite.Paperbase.<name>`, it lands in the pipeline automatically — the host registers wildcard `AddSource("Dignite.Paperbase.*")` / `AddMeter("Dignite.Paperbase.*")`.
 
@@ -82,7 +82,7 @@ start http://localhost:18888
 
 Expected sightings:
 
-- **Traces** tab — an ASP.NET Core request span (or background-job activity) containing nested `chat-client.GetResponseAsync` spans for classification / field extraction / title generation. No `execute_tool` children — all LLM calls are tool-free.
+- **Traces** tab — an ASP.NET Core request span (or background-job activity) containing nested `chat-client.GetResponseAsync` spans for classification / field extraction / title generation / slug suggestion. Classification additionally has a MAF `invoke_agent` span. No `execute_tool` children — all LLM calls are tool-free.
 - **Metrics** tab — MAF + `Microsoft.Extensions.AI` token-usage counters tick on each LLM invocation.
 - **Structured Logs** tab — Serilog logs with `TraceId` correlations to the spans on the left.
 
@@ -92,7 +92,7 @@ aspire-dashboard takes 30–60 seconds to become reachable after `Up` status. If
 
 ### Note: `gen_ai.usage.*` token counts are trustworthy here (no streaming)
 
-All Paperbase LLM calls (classification / field extraction / title generation) are **non-streaming** `GetResponseAsync`, so `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` reflect the provider-reported totals for the turn and are safe to use for cost tracking.
+All Paperbase LLM calls (classification / field extraction / title generation / slug suggestion) are **non-streaming**. The `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` values reflect the provider-reported totals for the turn and are safe to use for cost tracking.
 
 This only becomes a caveat if a future code path introduces *streaming* (`GetStreamingResponseAsync`): `Microsoft.Extensions.AI`'s `OpenTelemetryChatClient` accumulates usage per streamed chunk, and some OpenAI-compatible gateways report **cumulative-so-far** usage on each chunk rather than per-chunk deltas — the SDK then sums them, inflating the total by the chunk count (observed ~40–70× on SiliconFlow + DeepSeek-V3). If streaming is ever added, verify token numbers against the provider's billing dashboard before trusting OTel for absolute cost.
 

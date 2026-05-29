@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -79,7 +80,7 @@ public class SlugSuggestionAppService : PaperbaseAppService, ISlugSuggestionAppS
             new(ChatRole.User, "Label:\n" + PromptBoundary.WrapField(input.Label))
         };
 
-        var options = new ChatOptions { ResponseFormat = ChatResponseFormat.Json };
+        var options = new ChatOptions { ResponseFormat = SlugResponseFormat };
 
         string slug;
         // 服务端 deadline：把调用方取消令牌（ABP 从 HttpContext.RequestAborted 注入）与 CancelAfter
@@ -143,6 +144,33 @@ public class SlugSuggestionAppService : PaperbaseAppService, ISlugSuggestionAppS
         }
 
         return string.Empty;
+    }
+
+    private static readonly ChatResponseFormat SlugResponseFormat = CreateSlugResponseFormat();
+
+    private static ChatResponseFormat CreateSlugResponseFormat()
+    {
+        var schema = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["slug"] = new JsonObject
+                {
+                    ["type"] = "string",
+                    ["pattern"] = @"^[a-z0-9_]{1,64}$",
+                    ["description"] = "A lowercase ASCII snake_case slug."
+                }
+            },
+            ["required"] = new JsonArray("slug"),
+            ["additionalProperties"] = false
+        };
+
+        using var document = JsonDocument.Parse(schema.ToJsonString());
+        return ChatResponseFormat.ForJsonSchema(
+            document.RootElement.Clone(),
+            schemaName: "PaperbaseSlugSuggestion",
+            schemaDescription: "A single suggested Paperbase machine identifier.");
     }
 
     /// <summary>

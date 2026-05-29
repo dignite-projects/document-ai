@@ -9,7 +9,7 @@ Paperbase delegates all chat-completion calls to `Microsoft.Extensions.AI`. AI c
 
 The split keeps credentials (`ApiKey`) out of any `IOptions<>` flowing into business code and lets operators tune behavior independently of provider switches. Every downstream feature — [classification](classification.md), Host field extraction, tenant field extraction (B 机制), document title generation — shares the same provider registration regardless of behavior tuning.
 
-> **Paperbase is a channel layer.** It does not host chat / RAG / agentic tool-calling paths (those were removed in #166 — see CLAUDE.md "OUT of scope"). The only LLM call sites in this repo are backend pipeline workflows. Downstream RAG / Chat consumers register their own `IChatClient` against their own provider on their side.
+> **Paperbase is a channel layer.** It does not host chat / RAG / agentic tool-calling paths (those were removed in #166 — see CLAUDE.md "OUT of scope"). The LLM call sites in this repo are backend pipeline workflows plus the admin-facing slug suggestion helper. Downstream RAG / Chat consumers register their own `IChatClient` against their own provider on their side.
 
 ## Required before first run
 
@@ -41,7 +41,7 @@ The only capability Paperbase's backend LLM calls need is **structured JSON outp
 
 | Capability | Where it's used | Failure mode if weak |
 |---|---|---|
-| Structured JSON output (`response_format: json_schema` or `json_object`) | `DocumentClassificationWorkflow` (via MAF `RunAsync<T>` + schema-bound `T`), `FieldExtractionWorkflow` (via `ChatResponseFormat.Json` + per-field prompt, covers both Host 字段 and 租户字段 (B 机制)) | Returns malformed JSON or violates schema → classification falls back to `(unclassified)`, fields write as `null`, document routes to manual review |
+| Structured JSON output (`response_format: json_schema`) | `DocumentClassificationWorkflow` (via MAF `RunAsync<T>` + schema-bound `T`), `FieldExtractionWorkflow` (via `ChatResponseFormat.ForJsonSchema` + per-field prompt, covers both Host 字段 and 租户字段 (B 机制)), `SlugSuggestionAppService` (schema-bound `{ slug }`) | Returns malformed JSON or violates schema → classification falls back to `(unclassified)`, fields write as `null`, slug suggestion returns empty and the UI falls back |
 
 That's it. Function calling, tool-call willingness, large-context RAG, multi-turn coherence — none of those matter here because Paperbase has no Chat / RAG path. Even small open-source models (Qwen3-8B class) usually comply when the prompt explicitly demands a JSON object.
 
@@ -63,13 +63,13 @@ For **production**, prefer a model that's strict about schema compliance. Models
 | DI key | Consumed by | Why this exists separately |
 |---|---|---|
 | `PaperbaseAIConsts.TitleGeneratorChatClientKey` | `DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync` (auto-generates a short document title from extracted Markdown) | Single-shot text completion, no schema. Different model id lets hosts run a cheaper / faster model here without affecting classification / extraction quality |
-| `PaperbaseAIConsts.StructuredChatClientKey` | `DocumentClassificationWorkflow`, `FieldExtractionWorkflow` (unified Host + 租户字段 (B 机制) entry, called by `FieldExtractionEventHandler`) | All schema-bound `RunAsync<T>` / `ChatResponseFormat.Json` calls share this client. Splitting structured from title lets production teams tune quality vs cost per workload |
+| `PaperbaseAIConsts.StructuredChatClientKey` | `DocumentClassificationWorkflow`, `FieldExtractionWorkflow` (unified Host + 租户字段 (B 机制) entry, called by `FieldExtractionEventHandler`), `SlugSuggestionAppService` | All schema-bound `RunAsync<T>` / `ChatResponseFormat.ForJsonSchema` calls share this client. Splitting structured from title lets production teams tune quality vs cost per workload |
 
 Both clients are registered with `UseOpenTelemetry()` + `UseLogging()`. Neither has `UseFunctionInvocation` (no tool calling anywhere in Paperbase) or `UseDistributedCache` (every prompt is document-content-derived and therefore unique per call — cache lookups would always miss).
 
 > **Provider-switch gotcha**: When switching `Endpoint` to a non-OpenAI provider (SiliconFlow, Ollama via `/v1` shim, OpenRouter, etc.), override **all three** model id keys together in your environment-specific config — `ChatModelId` alone is not enough if the provider doesn't recognize the default `gpt-4o-mini` placeholder that may be inherited from base `appsettings.json`. The simplest fix: copy all three overrides into your `appsettings.Development.json` / `appsettings.Production.json` / env vars whenever you change `Endpoint`.
 
-To split further (e.g. a different model per workflow), add more per-purpose `AddKeyedChatClient` registrations in your own `ConfigureAI` override. The current consolidation puts classification + 字段抽取 (Host + 租户合一) on the same key because their call shape is identical (schema-bound JSON); split them only when production telemetry shows a real per-task cost or quality reason.
+To split further (e.g. a different model per workflow), add more per-purpose `AddKeyedChatClient` registrations in your own `ConfigureAI` override. The current consolidation puts classification + 字段抽取 (Host + 租户合一) + slug suggestion on the same key because their call shape is identical (schema-bound JSON); split them only when production telemetry shows a real per-task cost or quality reason.
 
 ## Where it is used
 
@@ -78,6 +78,7 @@ To split further (e.g. a different model per workflow), add more per-purpose `Ad
 | `Documents/Pipelines/Classification/DocumentClassificationWorkflow` | `StructuredChatClientKey` |
 | `Documents/Pipelines/FieldExtraction/FieldExtractionWorkflow` (unified Host + 租户字段 (B 机制)) | `StructuredChatClientKey` |
 | `Documents/Pipelines/TextExtraction/DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync` | `TitleGeneratorChatClientKey` |
+| `Slugging/SlugSuggestionAppService` | `StructuredChatClientKey` |
 
 A single `PaperbaseAI` block serves all of them. Picking different models per workflow is a host-level customization that replaces the registrations in `PaperbaseHostModule.ConfigureAI`.
 
@@ -97,7 +98,7 @@ The `PaperbaseAI` section becomes irrelevant in that case — drop it from `apps
 
 | Required | Why |
 | --- | --- |
-| Two `services.AddKeyedChatClient(key, factory)` registrations, keyed `PaperbaseAIConsts.TitleGeneratorChatClientKey` and `PaperbaseAIConsts.StructuredChatClientKey` | The four workflow / background-job sites inject by `[FromKeyedServices(...)]`. Missing either key crashes service resolution at first use |
+| Two `services.AddKeyedChatClient(key, factory)` registrations, keyed `PaperbaseAIConsts.TitleGeneratorChatClientKey` and `PaperbaseAIConsts.StructuredChatClientKey` | The workflow / background-job / AppService call sites inject by `[FromKeyedServices(...)]`. Missing either key crashes service resolution at first use |
 | `.UseOpenTelemetry()` on both keyed clients | `gen_ai.*` semantic-convention spans + token counters depend on this decorator. Without it the OTel pipeline still emits MAF spans (from `Microsoft.Agents.AI`) but no per-LLM-call duration / token metrics |
 | `.UseLogging()` on both keyed clients (recommended) | Per-call request / response logging at `Debug` is useful for diagnosing prompt issues. Drop only if your logs are token-budget constrained |
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
@@ -21,7 +22,7 @@ namespace Dignite.Paperbase.Documents.Pipelines.FieldExtraction;
 /// 设计要点：
 /// <list type="bullet">
 ///   <item>所有字段一次调用提取，减少 LLM 往返 + 上下文重复</item>
-///   <item>用 <c>ChatResponseFormat.Json</c> 限定输出为 JSON</item>
+///   <item>用 <c>ChatResponseFormat.ForJsonSchema</c> 限定输出 schema</item>
 ///   <item>归一化由 prompt 要求 AI 按 <see cref="FieldDataType"/> 输出规范形（数字裸 JSON number、
 ///         日期 ISO-8601 字符串、布尔 JSON true/false）；解析时再经 <see cref="ExtractedFieldValueValidator"/>
 ///         严格校验（不符声明类型的值写 null + log）——保证 <c>ExtractedFields</c> 类型自洽
@@ -79,7 +80,7 @@ public class FieldExtractionWorkflow : ITransientDependency
 
         var options = new ChatOptions
         {
-            ResponseFormat = ChatResponseFormat.Json
+            ResponseFormat = BuildResponseFormat(fields)
         };
 
         var response = await _chatClient.GetResponseAsync(messages, options, cancellationToken);
@@ -118,6 +119,83 @@ public class FieldExtractionWorkflow : ITransientDependency
             sb.AppendLine($"- \"{f.Name}\" ({f.DataType}, {(f.IsRequired ? "required" : "optional")}): {PromptBoundary.WrapField(f.Prompt)}");
         }
         return sb.ToString();
+    }
+
+    private static ChatResponseFormat BuildResponseFormat(IReadOnlyList<FieldExtractionDescriptor> fields)
+    {
+        var properties = new JsonObject();
+        var required = new JsonArray();
+
+        foreach (var field in fields)
+        {
+            properties[field.Name] = BuildFieldValueSchema(field.DataType);
+            required.Add(field.Name);
+        }
+
+        var schema = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = properties,
+            ["required"] = required,
+            ["additionalProperties"] = false
+        };
+
+        using var document = JsonDocument.Parse(schema.ToJsonString());
+        return ChatResponseFormat.ForJsonSchema(
+            document.RootElement.Clone(),
+            schemaName: "PaperbaseFieldExtraction",
+            schemaDescription: "Extracted Paperbase field values keyed by field name.");
+    }
+
+    private static JsonObject BuildFieldValueSchema(FieldDataType dataType)
+    {
+        var schema = new JsonObject
+        {
+            ["type"] = JsonTypes(JsonTypeName(dataType), "null")
+        };
+
+        switch (dataType)
+        {
+            case FieldDataType.String:
+                schema["maxLength"] = DocumentExtractedFieldConsts.MaxStringValueLength;
+                schema["description"] = "A short structured string value, or null when absent.";
+                break;
+            case FieldDataType.Number:
+                schema["description"] = "A JSON number, or null when absent.";
+                break;
+            case FieldDataType.Boolean:
+                schema["description"] = "A JSON boolean, or null when absent.";
+                break;
+            case FieldDataType.Date:
+                schema["pattern"] = @"^\d{4}-\d{2}-\d{2}$";
+                schema["description"] = "An ISO-8601 date string in YYYY-MM-DD format, or null when absent.";
+                break;
+            case FieldDataType.DateTime:
+                schema["pattern"] = @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$";
+                schema["description"] = "An offset-free ISO-8601 local date-time string in YYYY-MM-DDThh:mm:ss format, or null when absent.";
+                break;
+        }
+
+        return schema;
+    }
+
+    private static string JsonTypeName(FieldDataType dataType)
+        => dataType switch
+        {
+            FieldDataType.Number => "number",
+            FieldDataType.Boolean => "boolean",
+            _ => "string"
+        };
+
+    private static JsonArray JsonTypes(params string[] types)
+    {
+        var result = new JsonArray();
+        foreach (var type in types)
+        {
+            result.Add(type);
+        }
+
+        return result;
     }
 
     private IReadOnlyDictionary<string, JsonElement?> ParseJsonToDictionary(
