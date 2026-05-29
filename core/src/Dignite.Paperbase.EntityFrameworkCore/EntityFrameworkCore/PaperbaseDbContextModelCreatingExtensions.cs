@@ -7,23 +7,23 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Volo.Abp;
 using Volo.Abp.EntityFrameworkCore.Modeling;
+using Volo.Abp.EntityFrameworkCore.ValueConverters;
 
 namespace Dignite.Paperbase.EntityFrameworkCore;
 
 public static class PaperbaseDbContextModelCreatingExtensions
 {
-    // ExportTemplate.Columns 是有序列定义数组，整体读写（无单列查询需求）——走 ValueConverter 整体序列化
-    // 成大文本列（不绑 provider-specific native json：SQL Server 落 nvarchar(max)，其它 provider 自选）。
-    // ExportColumn 为 get-only 值对象，System.Text.Json 用其唯一带参构造函数反序列化（参数名匹配属性名）。
-    // 对比 DocumentExtractedField：有查询诉求的字段值拆一等 child（Issue #206），无查询诉求的 JSON-like
-    // payload 留字符串、不绑 native json 类型——这是 Issue #206 cross-DB 清理确立的原则。
+    // ExportTemplate.Columns 是有序列定义数组，整体读写（无单列查询需求）——走 ABP 框架的
+    // AbpJsonValueConverter<T> 整体序列化成大文本列（不绑 provider-specific native json：SQL Server 落
+    // nvarchar(max)，其它 provider 自选）。ExportColumn 为 get-only 值对象，System.Text.Json 用其唯一带参
+    // 构造函数反序列化（参数名匹配属性名）。SetColumns 保证 ≥1 列、只整体替换，故持久化值恒为非空 JSON 数组——
+    // 转换器无需兜底 null/空串。对比 DocumentExtractedField：有查询诉求的字段值拆一等 child（Issue #206），
+    // 无查询诉求的 JSON-like payload 留字符串、不绑 native json 类型——这是 Issue #206 cross-DB 清理确立的原则。
     private static readonly ValueConverter<IReadOnlyList<ExportColumn>, string> ExportColumnsConverter =
-        new(
-            v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
-            v => string.IsNullOrEmpty(v)
-                ? new List<ExportColumn>()
-                : (JsonSerializer.Deserialize<List<ExportColumn>>(v, (JsonSerializerOptions?)null) ?? new List<ExportColumn>()));
+        new AbpJsonValueConverter<IReadOnlyList<ExportColumn>>();
 
+    // ValueComparer 仍手写：ABP 未提供泛型 JSON 比较器，而 EF Core 对经 ValueConverter 转换的集合属性需要
+    // 比较器做变更快照（否则退化为引用相等，且触发模型校验告警）。
     private static readonly ValueComparer<IReadOnlyList<ExportColumn>> ExportColumnsComparer =
         new(
             (a, b) => JsonSerializer.Serialize(a, (JsonSerializerOptions?)null) == JsonSerializer.Serialize(b, (JsonSerializerOptions?)null),
