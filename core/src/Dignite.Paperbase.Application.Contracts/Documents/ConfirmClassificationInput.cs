@@ -6,6 +6,6 @@ namespace Dignite.Paperbase.Documents;
 public class ConfirmClassificationInput
 {
     [Required]
-    [DynamicStringLength(typeof(DocumentConsts), nameof(DocumentConsts.MaxDocumentTypeCodeLength))]
+    [DynamicStringLength(typeof(DocumentTypeConsts), nameof(DocumentTypeConsts.MaxTypeCodeLength))]
     public string DocumentTypeCode { get; set; } = default!;
 }

@@ -5,7 +5,6 @@ public static class FieldDefinitionConsts
     public static int MaxNameLength { get; set; } = 64;
     public static int MaxDisplayNameLength { get; set; } = 128;
     public static int MaxPromptLength { get; set; } = 1024;
-    public static int MaxDocumentTypeCodeLength { get; set; } = 128;
 
     /// <summary>
     /// Field <see cref="FieldDefinition.Name"/> 白名单：仅允许字母 / 数字 / 下划线 / 短横线，1-64 字符。
