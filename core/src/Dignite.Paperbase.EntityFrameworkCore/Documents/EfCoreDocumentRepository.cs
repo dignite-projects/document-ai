@@ -185,8 +185,8 @@ public class EfCoreDocumentRepository
                 var (min, max) = ParseRange(fieldQuery, ParseDecimal);
                 return query.Where(d => d.ExtractedFieldValues.Any(f =>
                     f.FieldDefinitionId == fieldDefinitionId
-                    && (min == null || f.DecimalValue >= min)
-                    && (max == null || f.DecimalValue <= max)));
+                    && (min == null || f.NumberValue >= min)
+                    && (max == null || f.NumberValue <= max)));
             }
 
             case FieldDataType.Date:

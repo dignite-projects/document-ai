@@ -186,7 +186,7 @@ public class EfCoreDocumentRepositorySearch_Tests : PaperbaseEntityFrameworkCore
         });
     }
 
-    // Number 统一了整数与小数（同落 DecimalValue）：以下两组分别验证整数形与小数形 JSON 值都能往返 + 匹配。
+    // Number 统一了整数与小数（同落 NumberValue）：以下两组分别验证整数形与小数形 JSON 值都能往返 + 匹配。
     [Fact]
     public async Task Number_equality_matches_integer_value()
     {
@@ -487,7 +487,7 @@ public class EfCoreDocumentRepositorySearch_Tests : PaperbaseEntityFrameworkCore
         await WithUnitOfWorkAsync(async () =>
         {
             var reloaded = await _documentRepository.GetAsync(id, includeDetails: true);
-            reloaded.ExtractedFieldValues.ShouldHaveSingleItem().DecimalValue.ShouldBe(200m);
+            reloaded.ExtractedFieldValues.ShouldHaveSingleItem().NumberValue.ShouldBe(200m);
 
             var newHits = await _documentRepository.GetFieldMatchedIdsAsync(
                 TypeId(TypeCode), new[] { Query("amount", FieldDataType.Number, value: "200") });

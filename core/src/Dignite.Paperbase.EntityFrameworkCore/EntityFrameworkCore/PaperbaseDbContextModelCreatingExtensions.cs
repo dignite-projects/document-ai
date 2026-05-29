@@ -112,10 +112,10 @@ public static class PaperbaseDbContextModelCreatingExtensions
 
             // 字段类型不在本行持久化（#208）：由所引用 FieldDefinition.DataType 决定，读 / 导出路径已 load 该实体。
             // StringValue 不限长（nvarchar(max) / text）：忠实存储，不截断；故不进索引键。
-            // DecimalValue 用 precision(38,6)（32 位整数 + 6 位小数）——覆盖任何现实抽取数值（金额 / 比率 / 百分比）
+            // NumberValue 用 precision(38,6)（32 位整数 + 6 位小数）——覆盖任何现实抽取数值（金额 / 比率 / 百分比）
             // 而不溢出 / 截断；EF 默认 decimal(18,2) 会静默把 >2 位小数四舍五入，丢精度。precision 跨库可移植（provider 各自映射）。
             // 其余数字 / 日期值列由 provider 按 CLR 类型自动映射（long→bigint、DateOnly→date、DateTime→datetime2 等），不绑 provider-specific 类型。
-            b.Property(x => x.DecimalValue).HasPrecision(38, 6);
+            b.Property(x => x.NumberValue).HasPrecision(38, 6);
 
             // 字段定义内部关联（#207）：FK → FieldDefinition.Id，OnDelete Restrict——FieldDefinition 走软删除（不触发 FK），
             // 仅硬删仍被字段值引用的定义时由 DB 拒绝（保护历史字段值可解释）。EF 自动为该 FK 建索引。
@@ -128,7 +128,7 @@ public static class PaperbaseDbContextModelCreatingExtensions
             // (FieldDefinitionId, typedValue) EXISTS。下列 (TenantId, FieldDefinitionId, <typedValue>, DocumentId) 复合索引
             // 支撑 Number / 日期字段的等值 + 范围；其 (TenantId, FieldDefinitionId) 前缀也覆盖 String / Boolean 等值收窄
             // （StringValue 是 nvarchar(max) 不能进索引键，靠前缀分组 + 与其他选择性字段 AND 收窄）。
-            b.HasIndex(x => new { x.TenantId, x.FieldDefinitionId, x.DecimalValue, x.DocumentId });
+            b.HasIndex(x => new { x.TenantId, x.FieldDefinitionId, x.NumberValue, x.DocumentId });
             b.HasIndex(x => new { x.TenantId, x.FieldDefinitionId, x.DateValue, x.DocumentId });
             b.HasIndex(x => new { x.TenantId, x.FieldDefinitionId, x.DateTimeValue, x.DocumentId });
         });
