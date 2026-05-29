@@ -45,7 +45,7 @@ export const DOCUMENTS_ROUTES: Routes = [
       ),
   },
   {
-    path: 'types/:typeCode/fields',
+    path: 'types/:typeId/fields',
     canActivate: [authGuard, permissionGuard],
     data: { requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification },
     loadComponent: () =>

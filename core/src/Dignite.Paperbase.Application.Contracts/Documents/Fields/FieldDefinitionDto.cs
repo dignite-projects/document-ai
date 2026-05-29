@@ -6,7 +6,9 @@ namespace Dignite.Paperbase.Documents.Fields;
 public class FieldDefinitionDto : EntityDto<Guid>
 {
     public Guid? TenantId { get; set; }
-    public string DocumentTypeCode { get; set; } = default!;
+
+    /// <summary>所属文档类型不可变 Id（#207：内部稳定句柄，TypeCode 由 admin 可重命名故不作引用键）。</summary>
+    public Guid DocumentTypeId { get; set; }
     public string Name { get; set; } = default!;
     public string DisplayName { get; set; } = default!;
     public string Prompt { get; set; } = default!;

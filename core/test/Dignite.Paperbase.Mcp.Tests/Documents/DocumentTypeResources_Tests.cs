@@ -50,13 +50,13 @@ public class DocumentTypeResources_Tests : PaperbaseTestBase<DocumentTypeResourc
     [Fact]
     public async Task Returns_schema_with_wrapped_display_names_ordered_by_display_order()
     {
-        // #207：ReadAsync 先 FindByTypeCodeAsync 拿类型 Id，再 GetByDocumentTypeAsync(id) 取字段。
+        // #207：ReadAsync 先 FindByTypeCodeAsync 拿类型 Id，再 GetListAsync(id) 取字段。
         var typeId = Guid.NewGuid();
         _documentTypeRepository
             .FindByTypeCodeAsync("contract.general", Arg.Any<CancellationToken>())
             .Returns(new DocumentType(typeId, null, "contract.general", "合同"));
         _fieldDefinitionRepository
-            .GetByDocumentTypeAsync(typeId, Arg.Any<CancellationToken>())
+            .GetListAsync(typeId, Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition>
             {
                 new(Guid.NewGuid(), null, typeId, "amount", "合同金额",

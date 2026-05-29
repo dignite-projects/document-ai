@@ -50,8 +50,8 @@ public sealed class DocumentTypeResources
             throw new McpException($"Document type not found: {code}");
         }
 
-        // GetByDocumentTypeAsync 按 ambient 租户层取该类型字段定义（同一隔离边界）；#207 内部按 DocumentTypeId 关联。
-        var fields = await fieldDefinitionRepository.GetByDocumentTypeAsync(documentType.Id, cancellationToken);
+        // GetListAsync 按 ambient 租户层取该类型字段定义（同一隔离边界）；#207 内部按 DocumentTypeId 关联。
+        var fields = await fieldDefinitionRepository.GetListAsync(documentType.Id, cancellationToken);
 
         var schema = new DocumentTypeSchema
         {

@@ -9,6 +9,7 @@ import {
   computed,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { of, switchMap } from 'rxjs';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { LocalizationPipe, PermissionService } from '@abp/ng.core';
@@ -20,6 +21,7 @@ import {
   DocumentPipelineRunDto,
   DocumentReviewStatus,
   DocumentService,
+  DocumentTypeService,
   FieldDataType,
   FieldDefinitionDto,
   FieldDefinitionService,
@@ -61,6 +63,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly documentService = inject(DocumentService);
+  private readonly documentTypeService = inject(DocumentTypeService);
   private readonly fieldDefinitionService = inject(FieldDefinitionService);
   private readonly toaster = inject(ToasterService);
   private readonly confirmation = inject(ConfirmationService);
@@ -204,7 +207,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
           this.loadBlob();
         }
         // 编辑字段需要该类型的字段定义（含 LLM 漏抽的空字段）以支持补全。
-        // getByDocumentType 需 ConfirmClassification 权限，仅在可编辑时拉取避免 403。
+        // getList 需 ConfirmClassification 权限，仅在可编辑时拉取避免 403。
         this.fieldDefinitions.set([]);
         if (this.canEditFields && doc.documentTypeCode) {
           this.loadFieldDefinitions(doc.documentTypeCode);
@@ -216,9 +219,18 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     });
   }
 
+  // doc.documentTypeCode 是 Document 出口契约的当前 code 投影（#207）；字段定义 API 按不可变
+  // DocumentTypeId 关联，故先在当前层可见类型里把 code 解析为 id 再查。
   private loadFieldDefinitions(typeCode: string): void {
-    this.fieldDefinitionService.getByDocumentType(typeCode)
-      .pipe(takeUntilDestroyed(this.destroyRef))
+    this.documentTypeService.getVisible()
+      .pipe(
+        switchMap(types => {
+          const documentTypeId = types.find(t => t.typeCode === typeCode)?.id;
+          if (!documentTypeId) return of<FieldDefinitionDto[]>([]);
+          return this.fieldDefinitionService.getList({ documentTypeId });
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe({
         next: defs => this.fieldDefinitions.set(
           [...defs].sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name)),

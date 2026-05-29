@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.EntityFrameworkCore;
@@ -15,16 +13,6 @@ public class EfCoreDocumentTypeRepository
 {
     public EfCoreDocumentTypeRepository(IDbContextProvider<PaperbaseDbContext> dbContextProvider)
         : base(dbContextProvider) { }
-
-    public async Task<List<DocumentType>> GetByTenantAsync(
-        CancellationToken cancellationToken = default)
-    {
-        var dbSet = await GetDbSetAsync();
-        return await dbSet
-            .OrderByDescending(t => t.Priority)
-            .ThenBy(t => t.TypeCode)
-            .ToListAsync(GetCancellationToken(cancellationToken));
-    }
 
     public async Task<DocumentType?> FindByTypeCodeAsync(
         string typeCode,

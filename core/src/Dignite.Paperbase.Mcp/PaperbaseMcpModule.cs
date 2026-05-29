@@ -40,10 +40,10 @@ public class PaperbaseMcpModule : AbpModule
                 var authorizationService = ctx.Services!.GetRequiredService<IAuthorizationService>();
                 await authorizationService.CheckAsync(PaperbasePermissions.Documents.Default);
 
-                // 租户隔离由 ambient IMultiTenant 过滤器施加：GetByTenantAsync 只返回当前主体那一层的类型
+                // 租户隔离由 ambient IMultiTenant 过滤器施加：GetListAsync 只返回当前主体那一层的类型
                 // （两层独立单层模型）。文档类型数量有限且应被看见，故枚举进 resources/list。
                 var documentTypeRepository = ctx.Services!.GetRequiredService<IDocumentTypeRepository>();
-                var types = await documentTypeRepository.GetByTenantAsync(ct);
+                var types = await documentTypeRepository.GetListAsync(cancellationToken: ct);
 
                 return new ListResourcesResult
                 {

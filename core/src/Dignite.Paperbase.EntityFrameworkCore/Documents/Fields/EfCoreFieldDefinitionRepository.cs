@@ -16,18 +16,7 @@ public class EfCoreFieldDefinitionRepository
     public EfCoreFieldDefinitionRepository(IDbContextProvider<PaperbaseDbContext> dbContextProvider)
         : base(dbContextProvider) { }
 
-    public async Task<List<FieldDefinition>> GetForExtractionAsync(
-        Guid documentTypeId,
-        CancellationToken cancellationToken = default)
-    {
-        var dbSet = await GetDbSetAsync();
-        return await dbSet
-            .Where(f => f.DocumentTypeId == documentTypeId)
-            .OrderBy(f => f.DisplayOrder)
-            .ToListAsync(GetCancellationToken(cancellationToken));
-    }
-
-    public async Task<List<FieldDefinition>> GetByDocumentTypeAsync(
+    public async Task<List<FieldDefinition>> GetListAsync(
         Guid documentTypeId,
         CancellationToken cancellationToken = default)
     {

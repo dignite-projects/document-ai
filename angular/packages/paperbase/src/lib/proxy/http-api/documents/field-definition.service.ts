@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import type {
   CreateFieldDefinitionDto,
   FieldDefinitionDto,
+  GetFieldDefinitionListInput,
   UpdateFieldDefinitionDto,
 } from '../../documents/field-definition.models';
 
@@ -14,17 +15,14 @@ export class FieldDefinitionService {
   private readonly apiName = 'Default';
   private readonly basePath = '/api/paperbase/field-definitions';
 
-  // 当前层指定文档类型下的字段定义（不跨层）。
-  getByDocumentType = (documentTypeCode: string): Observable<FieldDefinitionDto[]> =>
+  // 当前层指定文档类型下的字段定义（不跨层）。onlyDeleted=true 取回收站（已软删除）。
+  getList = (input: GetFieldDefinitionListInput): Observable<FieldDefinitionDto[]> =>
     this.rest.request<void, FieldDefinitionDto[]>(
-      { method: 'GET', url: this.basePath, params: { documentTypeCode } },
-      { apiName: this.apiName },
-    );
-
-  // 当前层指定文档类型下已软删除的字段定义（回收站）。
-  getDeletedByDocumentType = (documentTypeCode: string): Observable<FieldDefinitionDto[]> =>
-    this.rest.request<void, FieldDefinitionDto[]>(
-      { method: 'GET', url: `${this.basePath}/deleted`, params: { documentTypeCode } },
+      {
+        method: 'GET',
+        url: this.basePath,
+        params: { documentTypeId: input.documentTypeId, onlyDeleted: input.onlyDeleted },
+      },
       { apiName: this.apiName },
     );
 

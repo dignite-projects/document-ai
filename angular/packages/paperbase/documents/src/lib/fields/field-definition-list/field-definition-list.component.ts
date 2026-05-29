@@ -15,6 +15,7 @@ import { Confirmation, ConfirmationService, ToasterService } from '@abp/ng.theme
 import { map } from 'rxjs';
 import {
   CreateFieldDefinitionDto,
+  DocumentTypeService,
   FieldDataType,
   FieldDefinitionDto,
   FieldDefinitionService,
@@ -41,6 +42,7 @@ export class FieldDefinitionListComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly service = inject(FieldDefinitionService);
+  private readonly documentTypeService = inject(DocumentTypeService);
   private readonly slugService = inject(SlugSuggestionService);
   private readonly fb = inject(FormBuilder);
   private readonly confirmation = inject(ConfirmationService);
@@ -54,7 +56,9 @@ export class FieldDefinitionListComponent implements OnInit {
   readonly dataTypeOptions = fieldDataTypeOptions;
   readonly FieldDataType = FieldDataType;
 
-  documentTypeCode = '';
+  // 路由按不可变 DocumentTypeId 绑定（#207）；TypeCode 仅作 header 徽标展示，由当前层类型即时解析。
+  documentTypeId = '';
+  documentTypeCode = signal('');
   fields = signal<FieldDefinitionDto[]>([]);
   isLoading = signal(true);
   showDeleted = signal(false);
@@ -78,7 +82,8 @@ export class FieldDefinitionListComponent implements OnInit {
   });
 
   ngOnInit(): void {
-    this.documentTypeCode = this.route.snapshot.paramMap.get('typeCode') ?? '';
+    this.documentTypeId = this.route.snapshot.paramMap.get('typeId') ?? '';
+    this.resolveTypeCode();
     this.slugHandle = wireSlugSuggestion({
       displayName: this.form.controls.displayName,
       target: this.form.controls.name,
@@ -88,6 +93,16 @@ export class FieldDefinitionListComponent implements OnInit {
       onPending: pending => this.isSuggesting.set(pending),
     });
     this.load();
+  }
+
+  // header 徽标展示用：按不可变 Id 在当前层可见类型里解析当前 TypeCode（穿透重命名）。
+  private resolveTypeCode(): void {
+    this.documentTypeService.getVisible()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: types =>
+          this.documentTypeCode.set(types.find(t => t.id === this.documentTypeId)?.typeCode ?? ''),
+      });
   }
 
   // LLM 不可用 / 未翻译时的本地回退：取与现有字段名不冲突的最小 field_{n}。
@@ -113,9 +128,10 @@ export class FieldDefinitionListComponent implements OnInit {
 
   private load(): void {
     this.isLoading.set(true);
-    const source$ = this.showDeleted()
-      ? this.service.getDeletedByDocumentType(this.documentTypeCode)
-      : this.service.getByDocumentType(this.documentTypeCode);
+    const source$ = this.service.getList({
+      documentTypeId: this.documentTypeId,
+      onlyDeleted: this.showDeleted(),
+    });
     source$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: list => {
         this.fields.set([...list].sort((a, b) => a.displayOrder - b.displayOrder));
@@ -176,7 +192,7 @@ export class FieldDefinitionListComponent implements OnInit {
 
     if (mode === 'create') {
       const input: CreateFieldDefinitionDto = {
-        documentTypeCode: this.documentTypeCode,
+        documentTypeId: this.documentTypeId,
         name: raw.name,
         displayName: raw.displayName,
         prompt: raw.prompt,

@@ -181,12 +181,16 @@ export class DocumentListComponent implements OnInit {
   // Load the selected type's field definitions and turn them into dynamic columns
   // (ordered by displayOrder). Cleared when no single type is selected. Errors fall
   // back to no columns rather than breaking the list (mirrors loadDocumentTypes).
+  // The type filter is keyed by typeCode (Document exit contract); the field-definition
+  // API is keyed by immutable DocumentTypeId (#207), so we resolve code → id via the
+  // already-loaded visible types before querying.
   private loadExtractedFieldColumns(typeCode: string): void {
-    if (!typeCode) {
+    const documentTypeId = this.documentTypes().find(t => t.typeCode === typeCode)?.id;
+    if (!documentTypeId) {
       this.extractedFieldColumns.set([]);
       return;
     }
-    this.fieldDefinitionService.getByDocumentType(typeCode)
+    this.fieldDefinitionService.getList({ documentTypeId })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: fields =>

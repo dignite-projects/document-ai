@@ -30,8 +30,12 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
     public virtual async Task<List<DocumentTypeDto>> GetVisibleAsync()
     {
         // 当前层文档类型（Host admin 看 TenantId IS NULL 行；租户 admin 看自己租户行）。
-        // 解读 X + 没有继承关系：不做 Host ∪ Tenant union。
-        var list = await _repository.GetByTenantAsync();
+        // 解读 X + 没有继承关系：不做 Host ∪ Tenant union。租户隔离由 ambient IMultiTenant
+        // 过滤器施加；Priority DESC + TypeCode ASC 排序在内存中保持。
+        var list = (await _repository.GetListAsync())
+            .OrderByDescending(t => t.Priority)
+            .ThenBy(t => t.TypeCode)
+            .ToList();
         return ObjectMapper.Map<List<DocumentType>, List<DocumentTypeDto>>(list);
     }
 
@@ -130,7 +134,7 @@ public class DocumentTypeAppService : PaperbaseAppService, IDocumentTypeAppServi
 
         // 级联软删除：同类型（DocumentTypeId）下的 FieldDefinition 随 DocumentType 一并下线，
         // 否则会留下孤儿字段定义且未来重建同 TypeCode 时无法复用同名字段。
-        var fields = await _fieldDefinitionRepository.GetByDocumentTypeAsync(entity.Id);
+        var fields = await _fieldDefinitionRepository.GetListAsync(entity.Id);
         if (fields.Count > 0)
         {
             await _fieldDefinitionRepository.DeleteManyAsync(fields);

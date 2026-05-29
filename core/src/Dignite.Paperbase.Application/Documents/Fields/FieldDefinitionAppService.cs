@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Dignite.Paperbase.Documents.DocumentTypes;
 using Dignite.Paperbase.Permissions;
 using Microsoft.AspNetCore.Authorization;
 using Volo.Abp;
@@ -26,70 +27,57 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
         _documentRepository = documentRepository;
     }
 
-    public virtual async Task<List<FieldDefinitionDto>> GetByDocumentTypeAsync(string documentTypeCode)
+    public virtual async Task<List<FieldDefinitionDto>> GetListAsync(GetFieldDefinitionListInput input)
     {
-        // 仅当前租户层字段（CLAUDE.md "两层 mutually exclusive 不混"）。解析外部 TypeCode → 内部 DocumentTypeId（#207）。
-        var type = await _documentTypeRepository.FindByTypeCodeAsync(documentTypeCode);
-        if (type == null)
+        // 仅当前租户层字段（CLAUDE.md "两层 mutually exclusive 不混"）——租户隔离由 ABP IMultiTenant 全局过滤器施加。
+        // 按不可变 DocumentTypeId 精确匹配单层（#207）；类型不存在时自然返回空集。
+        if (input.OnlyDeleted)
         {
-            return new List<FieldDefinitionDto>();
+            // 回收站视图：穿透 soft-delete 过滤，仅取 IsDeleted，按删除时间倒序。
+            using (DataFilter.Disable<ISoftDelete>())
+            {
+                var queryable = await _repository.GetQueryableAsync();
+                var deleted = await AsyncExecuter.ToListAsync(
+                    queryable
+                        .Where(f =>
+                            f.DocumentTypeId == input.DocumentTypeId &&
+                            f.IsDeleted)
+                        .OrderByDescending(f => f.DeletionTime));
+                return ObjectMapper.Map<List<FieldDefinition>, List<FieldDefinitionDto>>(deleted);
+            }
         }
 
-        var list = await _repository.GetByDocumentTypeAsync(type.Id);
-        return MapToDtos(list, documentTypeCode);
-    }
-
-    public virtual async Task<List<FieldDefinitionDto>> GetDeletedByDocumentTypeAsync(string documentTypeCode)
-    {
-        // 当前层回收站：Host admin（CurrentTenant.Id IS NULL）看 Host 字段；租户 admin 看自己租户。
-        var type = await _documentTypeRepository.FindByTypeCodeAsync(documentTypeCode);
-        if (type == null)
-        {
-            return new List<FieldDefinitionDto>();
-        }
-
-        using (DataFilter.Disable<ISoftDelete>())
-        {
-            var queryable = await _repository.GetQueryableAsync();
-            var list = await AsyncExecuter.ToListAsync(
-                queryable
-                    .Where(f =>
-                        f.TenantId == CurrentTenant.Id &&
-                        f.DocumentTypeId == type.Id &&
-                        f.IsDeleted)
-                    .OrderByDescending(f => f.DeletionTime));
-            return MapToDtos(list, documentTypeCode);
-        }
+        var list = await _repository.GetListAsync(input.DocumentTypeId);
+        return ObjectMapper.Map<List<FieldDefinition>, List<FieldDefinitionDto>>(list);
     }
 
     public virtual async Task<FieldDefinitionDto> CreateAsync(CreateFieldDefinitionDto input)
     {
         // 严格单层创建：Host admin 创建 TenantId IS NULL 字段；租户 admin 创建自己租户字段。
-        // 解析父类型（#207 必须存在——FieldDefinition.DocumentTypeId FK RESTRICT）。
-        var type = await _documentTypeRepository.FindByTypeCodeAsync(input.DocumentTypeCode);
+        // 父类型必须存在于当前层（#207 FieldDefinition.DocumentTypeId FK RESTRICT；IMultiTenant + ISoftDelete 过滤保证跨层/已删返回 null）。
+        var type = await _documentTypeRepository.FindAsync(input.DocumentTypeId);
         if (type == null)
         {
-            throw new BusinessException(PaperbaseErrorCodes.InvalidDocumentTypeCode)
-                .WithData(nameof(input.DocumentTypeCode), input.DocumentTypeCode);
+            throw new EntityNotFoundException(typeof(DocumentType), input.DocumentTypeId);
         }
 
         // 关闭 ISoftDelete 过滤——同 (TenantId, DocumentTypeId, Name) 即使软删除态也算占用，避免恢复时与新记录冲突。
         FieldDefinition? existing;
         using (DataFilter.Disable<ISoftDelete>())
         {
-            existing = await _repository.FindByNameAsync(type.Id, input.Name);
+            existing = await _repository.FindByNameAsync(input.DocumentTypeId, input.Name);
         }
         if (existing != null)
         {
             throw new BusinessException(PaperbaseErrorCodes.FieldDefinitionAlreadyExists)
-                .WithData("DocumentTypeCode", input.DocumentTypeCode)
+                .WithData("DocumentTypeCode", type.TypeCode)
                 .WithData("Name", input.Name);
         }
 
         var entity = new FieldDefinition(
             GuidGenerator.Create(),
             CurrentTenant.Id,
-            type.Id,
+            input.DocumentTypeId,
             input.Name,
             input.DisplayName,
             input.Prompt,
@@ -98,7 +86,7 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
             input.IsRequired);
 
         await _repository.InsertAsync(entity, autoSave: true);
-        return MapToDto(entity, input.DocumentTypeCode);
+        return ObjectMapper.Map<FieldDefinition, FieldDefinitionDto>(entity);
     }
 
     public virtual async Task<FieldDefinitionDto> UpdateAsync(Guid id, UpdateFieldDefinitionDto input)
@@ -111,8 +99,6 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
             throw new EntityNotFoundException(typeof(FieldDefinition), id);
         }
 
-        var documentTypeCode = await ResolveTypeCodeAsync(entity.DocumentTypeId);
-
         // 重命名解锁（#207）：仅在 Name 变化时判重（同层同类型唯一，含软删占用）。
         if (!string.Equals(input.Name, entity.Name, StringComparison.Ordinal))
         {
@@ -123,8 +109,9 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
             }
             if (conflict != null)
             {
+                // 仅错误路径解析 TypeCode 供人读消息（happy path 不查）。
                 throw new BusinessException(PaperbaseErrorCodes.FieldDefinitionAlreadyExists)
-                    .WithData("DocumentTypeCode", documentTypeCode ?? string.Empty)
+                    .WithData("DocumentTypeCode", await ResolveTypeCodeAsync(entity.DocumentTypeId) ?? string.Empty)
                     .WithData("Name", input.Name);
             }
         }
@@ -140,7 +127,7 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
 
         entity.Update(input.Name, input.DisplayName, input.Prompt, input.DataType, input.DisplayOrder, input.IsRequired);
         await _repository.UpdateAsync(entity, autoSave: true);
-        return MapToDto(entity, documentTypeCode);
+        return ObjectMapper.Map<FieldDefinition, FieldDefinitionDto>(entity);
     }
 
     public virtual async Task DeleteAsync(Guid id)
@@ -170,7 +157,7 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
             // 幂等：未删除直接返回。
             if (!entity.IsDeleted)
             {
-                return MapToDto(entity, documentTypeCode);
+                return ObjectMapper.Map<FieldDefinition, FieldDefinitionDto>(entity);
             }
 
             // 父类型必须存在且活跃——严格单层匹配（与 FieldExtractionEventHandler 一致）。
@@ -202,11 +189,11 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
             entity.DeleterId = null;
             await _repository.UpdateAsync(entity);
 
-            return MapToDto(entity, documentTypeCode);
+            return ObjectMapper.Map<FieldDefinition, FieldDefinitionDto>(entity);
         }
     }
 
-    /// <summary>解析字段所属类型的 TypeCode（穿透 soft-delete），用于回填 DTO 的 DocumentTypeCode（外部 wire-format，#207）。</summary>
+    /// <summary>解析字段所属类型的 TypeCode（穿透 soft-delete），仅用于人读错误消息（#207：API 出口已是 DocumentTypeId）。</summary>
     protected virtual async Task<string?> ResolveTypeCodeAsync(Guid documentTypeId)
     {
         using (DataFilter.Disable<ISoftDelete>())
@@ -214,22 +201,5 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
             var type = await _documentTypeRepository.FindAsync(documentTypeId);
             return type?.TypeCode;
         }
-    }
-
-    private FieldDefinitionDto MapToDto(FieldDefinition entity, string? documentTypeCode)
-    {
-        var dto = ObjectMapper.Map<FieldDefinition, FieldDefinitionDto>(entity);
-        dto.DocumentTypeCode = documentTypeCode!;
-        return dto;
-    }
-
-    private List<FieldDefinitionDto> MapToDtos(List<FieldDefinition> entities, string documentTypeCode)
-    {
-        var dtos = ObjectMapper.Map<List<FieldDefinition>, List<FieldDefinitionDto>>(entities);
-        foreach (var dto in dtos)
-        {
-            dto.DocumentTypeCode = documentTypeCode;
-        }
-        return dtos;
     }
 }

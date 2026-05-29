@@ -18,15 +18,9 @@ public class FieldDefinitionController : PaperbaseController, IFieldDefinitionAp
     }
 
     [HttpGet]
-    public virtual Task<List<FieldDefinitionDto>> GetByDocumentTypeAsync([FromQuery] string documentTypeCode)
+    public virtual Task<List<FieldDefinitionDto>> GetListAsync([FromQuery] GetFieldDefinitionListInput input)
     {
-        return _fieldDefinitionAppService.GetByDocumentTypeAsync(documentTypeCode);
-    }
-
-    [HttpGet("deleted")]
-    public virtual Task<List<FieldDefinitionDto>> GetDeletedByDocumentTypeAsync([FromQuery] string documentTypeCode)
-    {
-        return _fieldDefinitionAppService.GetDeletedByDocumentTypeAsync(documentTypeCode);
+        return _fieldDefinitionAppService.GetListAsync(input);
     }
 
     [HttpPost]

@@ -202,7 +202,7 @@ public class DocumentAppService_ExtractedFields_Tests
                 Guid.NewGuid(), tenantId: null, documentTypeId: TypeId(typeCode),
                 name: f.Name, displayName: f.Name, prompt: "extract " + f.Name, dataType: f.DataType))
             .ToList();
-        _fieldDefinitionRepository.GetForExtractionAsync(TypeId(typeCode), Arg.Any<CancellationToken>())
+        _fieldDefinitionRepository.GetListAsync(TypeId(typeCode), Arg.Any<CancellationToken>())
             .Returns(defs);
     }
 

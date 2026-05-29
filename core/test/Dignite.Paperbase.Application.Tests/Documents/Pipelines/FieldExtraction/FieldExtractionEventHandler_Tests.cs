@@ -90,7 +90,7 @@ public class FieldExtractionEventHandler_Tests
 
         await _eventBus.DidNotReceive().PublishAsync(
             Arg.Any<FieldsExtractedEto>(), Arg.Any<bool>(), Arg.Any<bool>());
-        await _fieldDefinitionRepository.DidNotReceive().GetForExtractionAsync(
+        await _fieldDefinitionRepository.DidNotReceive().GetListAsync(
             Arg.Any<Guid>(), Arg.Any<CancellationToken>());
     }
 
@@ -107,7 +107,7 @@ public class FieldExtractionEventHandler_Tests
             .FindWithFieldValuesAsync(doc.Id, Arg.Any<CancellationToken>())
             .Returns(doc);
         _fieldDefinitionRepository
-            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
+            .GetListAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition>());
 
         var evt = new DocumentClassifiedEto
@@ -156,7 +156,7 @@ public class FieldExtractionEventHandler_Tests
             .FindWithFieldValuesAsync(doc.Id, Arg.Any<CancellationToken>())
             .Returns(doc);
         _fieldDefinitionRepository
-            .GetForExtractionAsync(TypeId("blank.type"), Arg.Any<CancellationToken>())
+            .GetListAsync(TypeId("blank.type"), Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition>());
 
         var evt = new DocumentClassifiedEto
@@ -184,7 +184,7 @@ public class FieldExtractionEventHandler_Tests
         SetupType("contract.general");
         var defs = new List<FieldDefinition> { CreateFieldDefinition("contract.general", "amount") };
         _fieldDefinitionRepository
-            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
+            .GetListAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(defs);
         _workflow
             .ExtractAsync(
@@ -229,7 +229,7 @@ public class FieldExtractionEventHandler_Tests
             .FindWithFieldValuesAsync(doc.Id, Arg.Any<CancellationToken>())
             .Returns(doc);
         _fieldDefinitionRepository
-            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
+            .GetListAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition> { CreateFieldDefinition("contract.general", "amount", tenantId: eventTenant) });
         _workflow
             .ExtractAsync(
@@ -275,7 +275,7 @@ public class FieldExtractionEventHandler_Tests
             .FindWithFieldValuesAsync(doc.Id, Arg.Any<CancellationToken>())
             .Returns(doc);
         _fieldDefinitionRepository
-            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
+            .GetListAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(new List<FieldDefinition> { CreateFieldDefinition("contract.general", "amount") });
         _workflow
             .ExtractAsync(
@@ -324,7 +324,7 @@ public class FieldExtractionEventHandler_Tests
             CreateFieldDefinition("contract.general", "date", FieldDataType.Date)
         };
         _fieldDefinitionRepository
-            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
+            .GetListAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(defs);
         _workflow
             .ExtractAsync(
@@ -389,7 +389,7 @@ public class FieldExtractionEventHandler_Tests
             CreateFieldDefinition(typeId, "amount", FieldDataType.Number)
         };
         _fieldDefinitionRepository
-            .GetForExtractionAsync(typeId, Arg.Any<CancellationToken>())
+            .GetListAsync(typeId, Arg.Any<CancellationToken>())
             .Returns(defs);
         _workflow
             .ExtractAsync(
@@ -446,7 +446,7 @@ public class FieldExtractionEventHandler_Tests
             CreateFieldDefinition("contract.general", "amount", FieldDataType.String)
         };
         _fieldDefinitionRepository
-            .GetForExtractionAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
+            .GetListAsync(TypeId("contract.general"), Arg.Any<CancellationToken>())
             .Returns(initialDefs, currentDefs);
         _workflow
             .ExtractAsync(

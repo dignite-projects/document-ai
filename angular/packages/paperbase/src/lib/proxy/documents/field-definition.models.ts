@@ -2,11 +2,12 @@ import type { EntityDto } from '@abp/ng.core';
 import type { FieldDataType } from './field-data-type.enum';
 
 // Mirrors C# Dignite.Paperbase.Documents.Fields.FieldDefinitionDto.
-// 类型绑定字段（B 机制）。按 (tenantId, documentTypeCode, name) 唯一；
+// 类型绑定字段（B 机制）。按 (tenantId, documentTypeId, name) 唯一；
 // tenantId == null 为 Host 字段，否则为该租户字段（两层互斥，不混合）。
+// documentTypeId 为不可变 Id（#207：TypeCode 可重命名，故不作引用键）。
 export interface FieldDefinitionDto extends EntityDto<string> {
   tenantId?: string;
-  documentTypeCode: string;
+  documentTypeId: string;
   name: string;
   displayName: string;
   prompt: string;
@@ -16,7 +17,7 @@ export interface FieldDefinitionDto extends EntityDto<string> {
 }
 
 export interface CreateFieldDefinitionDto {
-  documentTypeCode: string;
+  documentTypeId: string;
   name: string;
   displayName: string;
   prompt: string;
@@ -32,4 +33,11 @@ export interface UpdateFieldDefinitionDto {
   dataType: FieldDataType;
   displayOrder: number;
   isRequired: boolean;
+}
+
+// Mirrors C# Dignite.Paperbase.Documents.Fields.GetFieldDefinitionListInput.
+// onlyDeleted=false（默认）取活跃字段（按 displayOrder）；true 取回收站（已软删除，按 deletionTime 倒序）。两视图互斥。
+export interface GetFieldDefinitionListInput {
+  documentTypeId: string;
+  onlyDeleted?: boolean;
 }

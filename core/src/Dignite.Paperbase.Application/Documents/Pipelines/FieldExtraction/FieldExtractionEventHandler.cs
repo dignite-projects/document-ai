@@ -144,7 +144,7 @@ public class FieldExtractionEventHandler
                         eventData.DocumentTypeCode, eventData.TenantId, eventData.DocumentId, documentTypeCode, documentTypeId);
                 }
 
-                definitions = await _fieldDefinitionRepository.GetForExtractionAsync(documentTypeId);
+                definitions = await _fieldDefinitionRepository.GetListAsync(documentTypeId);
                 markdown = readDocument.Markdown ?? string.Empty;
                 await readUow.CompleteAsync();
             }
@@ -258,8 +258,8 @@ public class FieldExtractionEventHandler
             // LLM 调用期间字段定义可能被 admin 改名 / 改类型 / 删除。写入前按稳定 Id 重读一次：
             // - Name rename：descriptor.Name 仍用于读取本轮 LLM 输出，FieldDefinitionId 仍稳定；
             // - DataType change：跳过该旧类型值，避免 typed-column 错位；
-            // - 删除 / 软删：GetForExtractionAsync 不再返回，跳过并由 SetFields 整组替换清掉旧值。
-            var currentDefinitions = await _fieldDefinitionRepository.GetForExtractionAsync(documentTypeId);
+            // - 删除 / 软删：GetListAsync 不再返回，跳过并由 SetFields 整组替换清掉旧值。
+            var currentDefinitions = await _fieldDefinitionRepository.GetListAsync(documentTypeId);
             var currentDefinitionsById = currentDefinitions.ToDictionary(d => d.Id);
 
             // 非空字段构造 typed DocumentFieldValue（FieldDefinitionId 稳定，DataType 使用写入前最新定义）——

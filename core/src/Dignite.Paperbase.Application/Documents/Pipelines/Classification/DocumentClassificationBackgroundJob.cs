@@ -82,8 +82,10 @@ public class DocumentClassificationBackgroundJob
         List<DocumentType> candidates;
         using (_currentTenant.Change(document.TenantId))
         {
-            var visible = await _documentTypeRepository.GetByTenantAsync();
+            var visible = await _documentTypeRepository.GetListAsync();
             candidates = visible
+                .OrderByDescending(t => t.Priority)
+                .ThenBy(t => t.TypeCode)
                 .Take(_aiOptions.MaxDocumentTypesInClassificationPrompt)
                 .ToList();
         }

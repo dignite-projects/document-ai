@@ -166,7 +166,7 @@ public class DocumentReferenceResolution_Tests : PaperbaseTestBase<DocumentRefer
         });
         var field = await _fieldDefinitionAppService.CreateAsync(new CreateFieldDefinitionDto
         {
-            DocumentTypeCode = typeCode,
+            DocumentTypeId = type.Id,
             Name = fieldName,
             DisplayName = "Field",
             Prompt = "Extract.",

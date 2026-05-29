@@ -218,6 +218,6 @@ export class DocumentTypeListComponent implements OnInit {
   }
 
   manageFields(type: DocumentTypeDto): void {
-    this.router.navigate(['/documents/types', type.typeCode, 'fields']);
+    this.router.navigate(['/documents/types', type.id, 'fields']);
   }
 }

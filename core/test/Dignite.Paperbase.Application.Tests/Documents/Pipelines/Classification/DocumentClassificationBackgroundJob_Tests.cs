@@ -41,7 +41,7 @@ public class DocumentClassificationJobTestModule : AbpModule
             priority: 0);
 
         var typeRepo = Substitute.For<IDocumentTypeRepository>();
-        typeRepo.GetByTenantAsync(Arg.Any<CancellationToken>())
+        typeRepo.GetListAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new List<DocumentType> { contractType });
         typeRepo.FindByTypeCodeAsync("contract.general", Arg.Any<CancellationToken>())
             .Returns(contractType);

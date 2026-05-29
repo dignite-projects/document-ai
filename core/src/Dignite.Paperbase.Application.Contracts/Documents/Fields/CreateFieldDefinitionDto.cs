@@ -1,3 +1,4 @@
+using System;
 using System.ComponentModel.DataAnnotations;
 using Volo.Abp.Validation;
 
@@ -5,9 +6,9 @@ namespace Dignite.Paperbase.Documents.Fields;
 
 public class CreateFieldDefinitionDto
 {
+    /// <summary>父文档类型不可变 Id（#207：建立 FieldDefinition.DocumentTypeId FK，按 Id 而非可重命名的 TypeCode 绑定）。</summary>
     [Required]
-    [DynamicStringLength(typeof(FieldDefinitionConsts), nameof(FieldDefinitionConsts.MaxDocumentTypeCodeLength))]
-    public string DocumentTypeCode { get; set; } = default!;
+    public Guid DocumentTypeId { get; set; }
 
     [Required]
     [DynamicStringLength(typeof(FieldDefinitionConsts), nameof(FieldDefinitionConsts.MaxNameLength))]

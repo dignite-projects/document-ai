@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.EntityFrameworkCore;
@@ -15,14 +13,6 @@ public class EfCoreCabinetRepository
 {
     public EfCoreCabinetRepository(IDbContextProvider<PaperbaseDbContext> dbContextProvider)
         : base(dbContextProvider) { }
-
-    public async Task<List<Cabinet>> GetListAsync(CancellationToken cancellationToken = default)
-    {
-        var dbSet = await GetDbSetAsync();
-        return await dbSet
-            .OrderBy(c => c.DisplayName)
-            .ToListAsync(GetCancellationToken(cancellationToken));
-    }
 
     public async Task<Cabinet?> FindByDisplayNameAsync(
         string displayName,

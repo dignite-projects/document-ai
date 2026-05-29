@@ -16,12 +16,12 @@ namespace Dignite.Paperbase.Documents.Fields;
 /// </summary>
 public interface IFieldDefinitionAppService : IApplicationService
 {
-    Task<List<FieldDefinitionDto>> GetByDocumentTypeAsync(string documentTypeCode);
-
     /// <summary>
-    /// 当前租户在指定文档类型下已软删除的字段定义列表（回收站视图）。
+    /// 当前租户层指定文档类型下的字段定义列表（不跨层）。
+    /// <see cref="GetFieldDefinitionListInput.OnlyDeleted"/> 为 <c>false</c> 返回活跃字段（按 DisplayOrder），
+    /// 为 <c>true</c> 返回回收站（已软删除）字段（按 DeletionTime 倒序）。
     /// </summary>
-    Task<List<FieldDefinitionDto>> GetDeletedByDocumentTypeAsync(string documentTypeCode);
+    Task<List<FieldDefinitionDto>> GetListAsync(GetFieldDefinitionListInput input);
 
     Task<FieldDefinitionDto> CreateAsync(CreateFieldDefinitionDto input);
 

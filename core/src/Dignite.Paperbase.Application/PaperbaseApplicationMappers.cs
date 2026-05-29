@@ -129,16 +129,13 @@ public partial class DocumentTypeToDtoMapper : MapperBase<DocumentType, Document
 }
 
 /// <summary>
-/// FieldDefinition -> FieldDefinitionDto。<c>DocumentTypeCode</c>（外部 wire-format）是 <see cref="FieldDefinition.DocumentTypeId"/>
-/// → TypeCode 的查找投影（#207），由 <c>FieldDefinitionAppService</c> 在已知类型上下文中填充。
+/// FieldDefinition -> FieldDefinitionDto。所有标量（含不可变 <see cref="FieldDefinition.DocumentTypeId"/>，#207）
+/// 由 Mapperly 直接映射，无需查找投影。
 /// </summary>
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class FieldDefinitionToDtoMapper : MapperBase<FieldDefinition, FieldDefinitionDto>
 {
-    [MapperIgnoreTarget(nameof(FieldDefinitionDto.DocumentTypeCode))]
     public override partial FieldDefinitionDto Map(FieldDefinition source);
-
-    [MapperIgnoreTarget(nameof(FieldDefinitionDto.DocumentTypeCode))]
     public override partial void Map(FieldDefinition source, FieldDefinitionDto destination);
 }
 
