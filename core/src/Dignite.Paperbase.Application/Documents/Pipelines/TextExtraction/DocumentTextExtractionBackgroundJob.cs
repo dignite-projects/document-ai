@@ -91,7 +91,13 @@ public class DocumentTextExtractionBackgroundJob
             var title = await TryGenerateTitleAsync(result.Markdown)
                 ?? MarkdownTitleExtractor.ExtractTitle(result.Markdown)
                 ?? FallbackTitleFromFileName(workItem.OriginalFileName);
-            await CompleteRunAsync(args.DocumentId, workItem.RunId, result, title, actualSourceType);
+
+            // External 段（无 UoW）：归档原生 payload 进 blob + 组装 Domain provenance 元数据。
+            // 归档 fail-open——超限 / 写失败 / 关闭只影响 manifest，不影响下面的文本提取完成。
+            var extractionMetadata = await ArchiveNativePayloadAndBuildMetadataAsync(args.DocumentId, result);
+
+            await CompleteRunAsync(
+                args.DocumentId, workItem.RunId, result, title, actualSourceType, extractionMetadata);
         }
         catch (Exception ex)
         {
@@ -122,7 +128,8 @@ public class DocumentTextExtractionBackgroundJob
         Guid runId,
         TextExtractionResult result,
         string? title,
-        SourceType actualSourceType)
+        SourceType actualSourceType,
+        DocumentTextExtractionMetadata extractionMetadata)
     {
         using var uow = _unitOfWorkManager.Begin(requiresNew: true);
 
@@ -132,7 +139,9 @@ public class DocumentTextExtractionBackgroundJob
                 document, runId, PaperbasePipelines.TextExtraction);
 
         await _pipelineRunManager.CompleteTextExtractionAsync(
-            document, run, result.Markdown, title, actualSourceType);
+            document, run, result.Markdown, title, actualSourceType,
+            language: result.DetectedLanguage,
+            extractionMetadata: extractionMetadata);
 
         // 发布 OCRCompletedEto——薄载荷，下游通过 REST 回拉 Markdown。
         await _distributedEventBus.PublishAsync(
@@ -149,6 +158,71 @@ public class DocumentTextExtractionBackgroundJob
         await _pipelineJobScheduler.QueueAsync(document, PaperbasePipelines.Classification);
 
         await uow.CompleteAsync();
+    }
+
+    /// <summary>
+    /// External 段（无 UoW）：把胜出 provider 的原生 payload 归档进 blob（稳定 per-document key，重提取覆盖），
+    /// 并组装 Domain typed 元数据值对象（#210）。
+    /// <para>
+    /// <b>归档 fail-open</b>：无 payload / 超限 / blob 写失败 → 记 warning、manifest 置 null，
+    /// <see cref="DocumentTextExtractionMetadata"/>（provider 名）<b>照常返回</b>，文本提取继续成功。
+    /// 原始 bbox 等空间信号留 blob，DB 只存 manifest。
+    /// </para>
+    /// </summary>
+    protected virtual async Task<DocumentTextExtractionMetadata> ArchiveNativePayloadAndBuildMetadataAsync(
+        Guid documentId,
+        TextExtractionResult result)
+    {
+        var manifest = await TryArchiveNativePayloadAsync(documentId, result.NativePayload);
+        return new DocumentTextExtractionMetadata(result.ProviderName, manifest);
+    }
+
+    private async Task<NativePayloadManifest?> TryArchiveNativePayloadAsync(Guid documentId, NativePayload? payload)
+    {
+        if (payload is null || payload.Content is not { Length: > 0 } content)
+        {
+            return null;
+        }
+
+        // ContentType / SchemaName 缺失 → manifest 构造器（Check.NotNullOrWhiteSpace）会抛，但 NativePayload 契约本身不强制非空
+        // （未来 rich Markdown / 第三方 provider 可能半填）。在写 blob 之前 fail-open 退出：辅助审计 blob 绝不打挂主 Markdown
+        // pipeline，也不留下登记不上的孤儿 blob。
+        if (string.IsNullOrWhiteSpace(payload.ContentType) || string.IsNullOrWhiteSpace(payload.SchemaName))
+        {
+            Logger.LogWarning(
+                "Native extraction payload for document {DocumentId} has {Bytes} bytes but blank ContentType/SchemaName; "
+                + "skipping archive (text extraction still succeeds).",
+                documentId, content.Length);
+            return null;
+        }
+
+        if (content.LongLength > DocumentConsts.MaxNativePayloadArchiveBytes)
+        {
+            Logger.LogWarning(
+                "Native extraction payload for document {DocumentId} is {Size} bytes, exceeding the archive limit "
+                + "{Limit}; skipping archive (text extraction still succeeds).",
+                documentId, content.LongLength, DocumentConsts.MaxNativePayloadArchiveBytes);
+            return null;
+        }
+
+        // 稳定 per-document key：重提取覆盖（一个文档一个归档 blob，避免孤儿）。
+        var blobName = $"extraction-native/{documentId}";
+        try
+        {
+            using var stream = new MemoryStream(content, writable: false);
+            await _blobContainer.SaveAsync(blobName, stream, overrideExisting: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex,
+                "Failed to archive native extraction payload for document {DocumentId} to blob {BlobName}; "
+                + "continuing without archive (text extraction still succeeds).",
+                documentId, blobName);
+            return null;
+        }
+
+        var sha256 = ContentHasher.Sha256Hex(content);
+        return new NativePayloadManifest(blobName, payload.ContentType, content.LongLength, sha256, payload.SchemaName);
     }
 
     private async Task<string?> TryGenerateTitleAsync(string markdown, CancellationToken cancellationToken = default)

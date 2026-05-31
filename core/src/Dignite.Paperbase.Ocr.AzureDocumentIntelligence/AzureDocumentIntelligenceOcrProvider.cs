@@ -27,23 +27,35 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
 
     public virtual async Task<OcrResult> RecognizeAsync(Stream fileStream, OcrOptions options)
     {
-        var analyzeResult = await AnalyzeAsync(fileStream, ModelId, cancellationToken: default);
+        var (analyzeResult, rawResponse) = await AnalyzeAsync(fileStream, ModelId, cancellationToken: default);
 
         var markdown = BuildMarkdown(analyzeResult);
         var pageCount = analyzeResult.Pages?.Count ?? 0;
 
-        return new OcrResult
+        var ocrResult = new OcrResult
         {
             Markdown = markdown,
             DetectedLanguage = analyzeResult.Languages?.FirstOrDefault()?.Locale,
             PageCount = pageCount,
-            ProviderName = "AzureDocumentIntelligence",
-            ProviderModelName = ModelId,
-            ProviderVersion = typeof(DocumentIntelligenceClient).Assembly.GetName().Version?.ToString()
+            ProviderName = "AzureDocumentIntelligence"
         };
+        FillNativePayload(ocrResult, rawResponse);
+        return ocrResult;
     }
 
-    private async Task<AnalyzeResult> AnalyzeAsync(
+    private static void FillNativePayload(OcrResult ocrResult, BinaryData? rawResponse)
+    {
+        // #210：归档 Azure DI 的原始 AnalyzeResult JSON 响应（含 bbox / polygon / spans / 表格 cell 等
+        // out-of-band 空间信号）作为原生 payload。
+        var bytes = rawResponse?.ToArray();
+        if (bytes is null || bytes.Length == 0) return;
+
+        ocrResult.NativePayloadContent = bytes;
+        ocrResult.NativePayloadContentType = "application/json";
+        ocrResult.NativePayloadSchemaName = "AzureDocumentIntelligence.AnalyzeResult";
+    }
+
+    private async Task<(AnalyzeResult Result, BinaryData RawResponse)> AnalyzeAsync(
         Stream fileStream,
         string modelId,
         CancellationToken cancellationToken)
@@ -68,8 +80,9 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
         };
 
         var operation = await client.AnalyzeDocumentAsync(WaitUntil.Completed, analyzeOptions, cancellationToken);
-        var analyzeResult = operation.Value;
-        return analyzeResult;
+        // operation.GetRawResponse().Content 是完成轮询的原始 JSON 响应体（含完整 analyzeResult：bbox / polygon /
+        // spans / cell）——比反射序列化 model 更忠实。LRO 完成响应默认缓冲，.Content 安全可读。
+        return (operation.Value, operation.GetRawResponse().Content);
     }
 
     private static string BuildMarkdown(AnalyzeResult analyzeResult)

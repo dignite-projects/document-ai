@@ -74,35 +74,47 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
             ? ctx.LanguageHints
             : (IList<string>)_ocrOptions.DefaultLanguageHints;
 
-        var result = await RecognizeAsync(seekable, ctx, languageHints);
+        seekable.Position = 0;
+        var result = await _ocrProvider.RecognizeAsync(seekable, new OcrOptions
+        {
+            ContentType = ctx.ContentType ?? string.Empty,
+            LanguageHints = languageHints
+        });
 
-        Logger.LogDebug(
-            "OCR completed using {Provider}: model {Model}.",
-            result.ProviderName ?? _ocrProvider.GetType().Name,
-            result.ProviderModelName);
+        Logger.LogDebug("OCR completed using {Provider}.", result.ProviderName ?? _ocrProvider.GetType().Name);
 
         return new TextExtractionResult
         {
             Markdown = result.Markdown,
             DetectedLanguage = result.DetectedLanguage,
             PageCount = result.PageCount,
-            UsedOcr = true
+            UsedOcr = true,
+            ProviderName = result.ProviderName,
+            NativePayload = MapNativePayload(result)
         };
     }
 
-    private async Task<OcrResult> RecognizeAsync(
-        Stream seekable,
-        TextExtractionContext ctx,
-        IList<string> languageHints)
+    // OcrResult → TextExtractionResult 的原生 payload 跨契约映射（Ocr 项目不引用 Abstractions；
+    // 扁平字段避免创建两遍相同的包装类，与 Markdown/DetectedLanguage 等字段一样在编排层映射）。
+    private NativePayload? MapNativePayload(OcrResult result)
     {
-        seekable.Position = 0;
-        return await _ocrProvider.RecognizeAsync(
-            seekable,
-            new OcrOptions
-            {
-                ContentType = ctx.ContentType ?? string.Empty,
-                LanguageHints = languageHints
-            });
+        if (result.NativePayloadContent is not { Length: > 0 } content)
+        {
+            // 无 payload（provider 无空间模型）——正常路径，静默。
+            return null;
+        }
+
+        if (string.IsNullOrEmpty(result.NativePayloadContentType) || string.IsNullOrEmpty(result.NativePayloadSchemaName))
+        {
+            // 有内容但缺 ContentType / SchemaName：扁平字段被 provider 半填，归档无法标注 schema。
+            // 丢弃但记 warning——不静默吞，否则空间信号丢失而无任何线索。
+            Logger.LogWarning(
+                "OCR provider {Provider} produced {Bytes} bytes of native payload but left ContentType/SchemaName unset; dropping it.",
+                result.ProviderName, content.Length);
+            return null;
+        }
+
+        return new NativePayload(content, result.NativePayloadContentType, result.NativePayloadSchemaName);
     }
 
     protected virtual bool IsImageFormat(string? fileExtension)

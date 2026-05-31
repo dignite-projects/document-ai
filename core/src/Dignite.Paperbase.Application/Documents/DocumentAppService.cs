@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Abstractions.Documents;
@@ -206,7 +205,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         var bytes = buffer.ToArray();
         var fileSize = bytes.LongLength;
 
-        var contentHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var contentHash = ContentHasher.Sha256Hex(bytes);
 
         var existing = await _documentRepository.FindByContentHashAsync(contentHash);
         if (existing != null)
@@ -313,6 +312,23 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             Logger.LogError(ex,
                 "Failed to delete blob {BlobName} for document {DocumentId}.",
                 document.OriginalFileBlobName, id);
+        }
+
+        // #210：永久删除时一并删归档的原生 payload blob（按 manifest 的稳定 key，不做 prefix 清理）。
+        // 与原始文件 blob 同样 best-effort——删失败只记日志，不阻断永久删除主流程。
+        var nativePayloadBlobName = document.ExtractionMetadata?.NativePayloadManifest?.BlobName;
+        if (!string.IsNullOrEmpty(nativePayloadBlobName))
+        {
+            try
+            {
+                await _blobContainer.DeleteAsync(nativePayloadBlobName);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex,
+                    "Failed to delete native payload blob {BlobName} for document {DocumentId}.",
+                    nativePayloadBlobName, id);
+            }
         }
 
         // 通知下游消费方：Document 已不可恢复，应物理删除派生数据
