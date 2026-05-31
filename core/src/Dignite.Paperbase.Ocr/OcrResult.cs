@@ -5,17 +5,17 @@ namespace Dignite.Paperbase.Ocr;
 /// 即便底层服务只返回纯文本也需在 Provider 内部包成扁平 Markdown 段落（保持下游消费一种格式）。
 /// </summary>
 /// <remarks>
-/// 当前字段集合刻意精简至 4 个文本相关字段。out-of-band 信号（每页 bbox / 印章位置 /
-/// 表单 key-value / page-level metadata）<b>与本类正交</b>——未来若需要 page-aware
-/// citations 等能力，应作为本类上具名可选强类型字段（例如 <c>IReadOnlyList&lt;PageBlock&gt;? PageBlocks</c>），
-/// <b>禁止</b>塞回 <see cref="Markdown"/> 字符串或通过 <c>Dictionary&lt;string, object&gt;</c> 扩展槽承载。
-/// 每加一种 out-of-band 信号应单独开 Issue 讨论。
+/// out-of-band 信号（每页 bbox / 印章位置 / 表单 key-value / page-level metadata）
+/// <b>与文本载荷正交</b>——其<b>原始</b>载体是 <see cref="NativePayloadContent"/> 等三个扁平字段
+/// （#210：归档进 blob，不进 DB / 不塞回 <see cref="Markdown"/>）。
+/// 未来若需要 page-aware citations 等<b>规范化</b>能力，应作为本类上具名可选强类型字段
+/// （例如 <c>IReadOnlyList&lt;PageBlock&gt;? PageBlocks</c>），<b>禁止</b>塞回 <see cref="Markdown"/> 字符串
+/// 或通过 <c>Dictionary&lt;string, object&gt;</c> 扩展槽承载。每加一种规范化 out-of-band 信号应单独开 Issue 讨论。
 /// </remarks>
 public class OcrResult
 {
     /// <summary>
     /// 结构化 Markdown 输出。Provider 未识别到任何内容时为空字符串。
-    /// 对结构化文档而言是真信号（标题/表格/列表）；对无结构 OCR 散段落而言只是下游统一的容器命名。
     /// </summary>
     public string Markdown { get; set; } = string.Empty;
 
@@ -25,12 +25,20 @@ public class OcrResult
     /// <summary>识别的页数。</summary>
     public int PageCount { get; set; }
 
-    /// <summary>OCR provider family/name for auditability; provider-specific options stay inside provider projects.</summary>
+    /// <summary>OCR provider family/name for auditability.</summary>
     public string? ProviderName { get; set; }
 
-    /// <summary>Provider-reported model/engine label for auditability.</summary>
-    public string? ProviderModelName { get; set; }
+    // === 扁平 native payload（#210）===
+    // 原 OcrNativePayload 三字段直接上移，消除 Ocr 项目内的专用包装类。
+    // 由 DefaultTextExtractor 映射到 TextExtractionResult.NativePayload（Abstractions.NativePayload）。
+    // Provider 无空间模型时三字段均为 null（整体视为无 payload）。
 
-    /// <summary>Provider or SDK version when available.</summary>
-    public string? ProviderVersion { get; set; }
+    /// <summary>provider 原生输出的不透明字节（通常是 provider 原始 JSON 响应的 UTF-8 编码）；无 payload 时 null。</summary>
+    public byte[]? NativePayloadContent { get; set; }
+
+    /// <summary>payload 的 MIME 类型（如 <c>application/json</c>）；无 payload 时 null。</summary>
+    public string? NativePayloadContentType { get; set; }
+
+    /// <summary>schema 标识，供下游消费方判断如何解析（如 <c>PaddleOCR/PP-StructureV3</c>）；无 payload 时 null。</summary>
+    public string? NativePayloadSchemaName { get; set; }
 }

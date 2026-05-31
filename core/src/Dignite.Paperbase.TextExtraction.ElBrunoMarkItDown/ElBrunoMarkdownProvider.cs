@@ -13,6 +13,8 @@ namespace Dignite.Paperbase.TextExtraction.ElBrunoMarkItDown;
 [ExposeServices(typeof(IMarkdownTextProvider))]
 public class ElBrunoMarkdownProvider : IMarkdownTextProvider, ITransientDependency
 {
+    public const string ProviderIdentifier = "ElBruno.MarkItDotNet";
+
     private readonly MarkdownService _markdownService;
 
     public ILogger<ElBrunoMarkdownProvider> Logger { get; set; } = NullLogger<ElBrunoMarkdownProvider>.Instance;
@@ -36,16 +38,19 @@ public class ElBrunoMarkdownProvider : IMarkdownTextProvider, ITransientDependen
         {
             Logger.LogDebug("ElBruno conversion failed for {Extension}: {Error}",
                 context.FileExtension, conversion.ErrorMessage);
-            return new TextExtractionResult();
+            // 仍自报 provider 身份（失败结果也记 provenance）。
+            return new TextExtractionResult { ProviderName = ProviderIdentifier };
         }
 
+        // 纯 text→Markdown，无空间模型 → NativePayload 留 null。
         return new TextExtractionResult
         {
             Markdown = conversion.Markdown ?? string.Empty,
-            // Confidence 留空 (null)——数字版无 OCR 概念，塞 1.0 会让下游无法区分"未走 OCR"和"OCR 99% 真值"。
             PageCount = conversion.Metadata?.PageCount ?? 0,
             DetectedLanguage = null,
             UsedOcr = false,
+            ProviderName = ProviderIdentifier,
+            NativePayload = null
         };
     }
 }

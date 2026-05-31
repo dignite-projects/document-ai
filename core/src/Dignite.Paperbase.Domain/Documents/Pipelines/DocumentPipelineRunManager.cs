@@ -105,20 +105,30 @@ public class DocumentPipelineRunManager : DomainService
     }
 
     /// <summary>
-    /// 记录文本提取结果、回写实际 SourceType 并完成 Run。
+    /// 记录文本提取结果、回写实际 SourceType + 语言 + provenance 元数据并完成 Run。
     /// <paramref name="markdown"/> 是流水线唯一的文本载荷（数字版与 OCR 路径都已统一输出 Markdown）；
     /// 下游需要纯文本时通过 <see cref="MarkdownStripper.Strip"/> 投影。
+    /// <para>
+    /// #210：<paramref name="language"/>（终结 write-never 死字段）与
+    /// <paramref name="extractionMetadata"/>（provenance：provider 名 + 原生 payload 归档 manifest，
+    /// 原始 payload 已由调用方在 External 段归档进 blob）与 Markdown / Title 同事务原子写入。
+    /// 参数可空且有默认值——既有调用方无需改动。
+    /// </para>
     /// </summary>
     public virtual Task CompleteTextExtractionAsync(
         Document document,
         DocumentPipelineRun run,
         string markdown,
         string? title,
-        SourceType sourceType = SourceType.Physical)
+        SourceType sourceType = SourceType.Physical,
+        string? language = null,
+        DocumentTextExtractionMetadata? extractionMetadata = null)
     {
         document.SetSourceType(sourceType);
         document.SetMarkdown(markdown);
         document.SetTitle(title);
+        document.SetLanguage(language);
+        document.SetExtractionMetadata(extractionMetadata);
         return CompleteAsync(document, run);
     }
 

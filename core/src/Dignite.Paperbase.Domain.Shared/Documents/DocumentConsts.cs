@@ -10,6 +10,13 @@ public static class DocumentConsts
     public static int MaxLanguageLength { get; set; } = 16;
 
     /// <summary>
+    /// 原生 payload 归档大小上限（字节，默认 16 MiB，#210）。
+    /// 超限 → 记 warning、manifest 置 null、文本提取仍成功（归档 fail-open）。
+    /// 可被测试或 host 覆盖（与 MaxTitleLength 等同为 static mutable）。
+    /// </summary>
+    public static long MaxNativePayloadArchiveBytes { get; set; } = 16L * 1024 * 1024;
+
+    /// <summary>
     /// 程序化 / LLM 触发检索（MCP 检索 tool 等）单次结果硬上限。
     /// fail-closed 安全门：防 prompt-injection 诱导宽泛查询炸 LLM context / 制造费用攻击。
     /// 设为编译期 <c>const</c>——安全边界不可被运行时配置放大。
