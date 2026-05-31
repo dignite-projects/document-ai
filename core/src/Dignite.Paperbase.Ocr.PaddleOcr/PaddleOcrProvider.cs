@@ -47,7 +47,6 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
         {
             Markdown = markdown,
             DetectedLanguage = result.DetectedLanguage,
-            PageCount = result.PageCount,
             ProviderName = result.ProviderName ?? "PaddleOCR"
         };
         FillNativePayload(ocrResult, rawJson, schemaName);

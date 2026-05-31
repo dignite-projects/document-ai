@@ -87,7 +87,6 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
         {
             Markdown = result.Markdown,
             DetectedLanguage = result.DetectedLanguage,
-            PageCount = result.PageCount,
             UsedOcr = true,
             ProviderName = result.ProviderName,
             NativePayload = MapNativePayload(result)

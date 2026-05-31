@@ -10,7 +10,6 @@ public class TextExtractionResult
     public string Markdown { get; set; } = string.Empty;
 
     public string? DetectedLanguage { get; set; }
-    public int PageCount { get; set; }
 
     /// <summary>true = OCR (physical scan), false = direct text layer (digital)</summary>
     public bool UsedOcr { get; set; }

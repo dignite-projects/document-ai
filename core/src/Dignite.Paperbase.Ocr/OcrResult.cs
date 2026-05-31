@@ -22,9 +22,6 @@ public class OcrResult
     /// <summary>检测到的主要语言（BCP 47 格式）。</summary>
     public string? DetectedLanguage { get; set; }
 
-    /// <summary>识别的页数。</summary>
-    public int PageCount { get; set; }
-
     /// <summary>OCR provider family/name for auditability.</summary>
     public string? ProviderName { get; set; }
 

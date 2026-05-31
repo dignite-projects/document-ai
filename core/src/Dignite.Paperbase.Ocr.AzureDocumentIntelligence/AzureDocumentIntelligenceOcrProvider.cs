@@ -30,13 +30,11 @@ public class AzureDocumentIntelligenceOcrProvider : IOcrProvider, ITransientDepe
         var (analyzeResult, rawResponse) = await AnalyzeAsync(fileStream, ModelId, cancellationToken: default);
 
         var markdown = BuildMarkdown(analyzeResult);
-        var pageCount = analyzeResult.Pages?.Count ?? 0;
 
         var ocrResult = new OcrResult
         {
             Markdown = markdown,
             DetectedLanguage = analyzeResult.Languages?.FirstOrDefault()?.Locale,
-            PageCount = pageCount,
             ProviderName = "AzureDocumentIntelligence"
         };
         FillNativePayload(ocrResult, rawResponse);

@@ -109,8 +109,7 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
         _ocrProvider.RecognizeAsync(Arg.Any<Stream>(), Arg.Any<OcrOptions>())
             .Returns(new OcrResult
             {
-                Markdown = "| A | B |\n|---|---|\n| kept | table |",
-                PageCount = 1
+                Markdown = "| A | B |\n|---|---|\n| kept | table |"
             });
 
         var stream = new MemoryStream(new byte[] { 0xFF, 0xD8 });
@@ -192,7 +191,6 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
                 .Returns(new OcrResult
                 {
                     Markdown = "fake ocr markdown",
-                    PageCount = 1,
                     ProviderName = "FakeOcr",
                     NativePayloadContent = new byte[] { 1, 2, 3, 4 },
                     NativePayloadContentType = "application/json",

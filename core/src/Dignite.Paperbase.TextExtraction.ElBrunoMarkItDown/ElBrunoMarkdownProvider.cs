@@ -46,7 +46,6 @@ public class ElBrunoMarkdownProvider : IMarkdownTextProvider, ITransientDependen
         return new TextExtractionResult
         {
             Markdown = conversion.Markdown ?? string.Empty,
-            PageCount = conversion.Metadata?.PageCount ?? 0,
             DetectedLanguage = null,
             UsedOcr = false,
             ProviderName = ProviderIdentifier,

@@ -348,7 +348,6 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
                 {
                     Markdown = markdown,
                     DetectedLanguage = "en",
-                    PageCount = 1,
                     UsedOcr = usedOcr,
                     ProviderName = usedOcr ? "PaddleOCR" : "ElBruno.MarkItDotNet",
                     NativePayload = nativePayload
