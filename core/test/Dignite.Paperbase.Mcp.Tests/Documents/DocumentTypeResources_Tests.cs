@@ -84,6 +84,36 @@ public class DocumentTypeResources_Tests : PaperbaseTestBase<DocumentTypeResourc
     }
 
     [Fact]
+    public async Task Exposes_AllowMultiple_so_clients_know_a_field_returns_an_array()
+    {
+        // #212：多值字段在检索结果 extractedFields 里是 string[]——schema 必须透出 AllowMultiple，
+        // 否则 MCP 客户端按"String 标量"解析数组会出错。
+        var typeId = Guid.NewGuid();
+        _documentTypeRepository
+            .FindByTypeCodeAsync("contract.general", Arg.Any<CancellationToken>())
+            .Returns(new DocumentType(typeId, null, "contract.general", "合同"));
+        _fieldDefinitionRepository
+            .GetListAsync(typeId, Arg.Any<CancellationToken>())
+            .Returns(new List<FieldDefinition>
+            {
+                new(Guid.NewGuid(), null, typeId, "tags", "标签", "Extract tags",
+                    FieldDataType.String, displayOrder: 0, isRequired: false, allowMultiple: true),
+                new(Guid.NewGuid(), null, typeId, "partyName", "甲方", "Extract party A name",
+                    FieldDataType.String, displayOrder: 1)
+            });
+
+        var result = await DocumentTypeResources.ReadAsync(
+            "contract.general", _documentTypeRepository, _fieldDefinitionRepository, _authorizationService);
+
+        var schema = JsonSerializer.Deserialize<DocumentTypeSchema>(((TextResourceContents)result).Text)!;
+
+        schema.Fields[0].Name.ShouldBe("tags");
+        schema.Fields[0].AllowMultiple.ShouldBeTrue();
+        schema.Fields[1].Name.ShouldBe("partyName");
+        schema.Fields[1].AllowMultiple.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task Throws_when_type_not_found()
     {
         // 跨租户 / 不存在的 code → FindByTypeCodeAsync 返回 null（租户隔离由 ambient 过滤器施加）。

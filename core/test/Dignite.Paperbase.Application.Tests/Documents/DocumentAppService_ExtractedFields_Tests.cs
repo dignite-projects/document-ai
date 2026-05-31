@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -168,6 +169,84 @@ public class DocumentAppService_ExtractedFields_Tests
     }
 
     [Fact]
+    public async Task Should_Expand_MultiValue_String_Field_Into_Ordered_Rows()
+    {
+        // #212：多值 String 字段——输入 JSON 数组，App 层经 DocumentFieldValueFactory 拆成多行（Order 0,1,2…）。
+        var doc = CreateClassifiedDocument("host.contract");
+        StubGet(doc);
+        StubMultiField("host.contract", "tags");
+
+        await _appService.UpdateExtractedFieldsAsync(doc.Id, new UpdateExtractedFieldsInput
+        {
+            Fields = new Dictionary<string, JsonElement>
+            {
+                ["tags"] = JsonValue(new[] { "urgent", "legal", "2026" })
+            }
+        });
+
+        // 数组 → 3 行，按 Order 还原。
+        doc.ExtractedFieldValues.Count.ShouldBe(3);
+        doc.ExtractedFieldValues.OrderBy(f => f.Order).Select(f => f.StringValue)
+            .ShouldBe(new[] { "urgent", "legal", "2026" });
+
+        // FieldsExtractedEto.FieldCount 是逻辑字段数（1），非展开行数（3）。
+        await _eventBus.Received().PublishAsync(
+            Arg.Is<FieldsExtractedEto>(e => e.DocumentId == doc.Id && e.FieldCount == 1),
+            Arg.Any<bool>(),
+            Arg.Any<bool>());
+    }
+
+    [Fact]
+    public async Task Should_Render_MultiValue_Field_As_Array_In_Returned_Dto()
+    {
+        // #212：读写对称——多值字段写入数组，出口 DTO 也渲染为 JSON 数组（让 operator 读—改—存往返一致）。
+        var doc = CreateClassifiedDocument("host.contract");
+        StubGet(doc);
+        var tags = new FieldDefinition(
+            Guid.NewGuid(), tenantId: null, documentTypeId: TypeId("host.contract"),
+            name: "tags", displayName: "Tags", prompt: "extract tags",
+            dataType: FieldDataType.String, allowMultiple: true);
+        // 写路径解析（按 typeId 查定义）
+        _fieldDefinitionRepository.GetListAsync(TypeId("host.contract"), Arg.Any<CancellationToken>())
+            .Returns(new List<FieldDefinition> { tags });
+        // 读路径解析（MapToDtoAsync → ResolveReferenceMapsAsync 按 predicate 查定义拿 Name/DataType/AllowMultiple）
+        _fieldDefinitionRepository.GetListAsync(
+            Arg.Any<Expression<Func<FieldDefinition, bool>>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(new List<FieldDefinition> { tags });
+
+        var dto = await _appService.UpdateExtractedFieldsAsync(doc.Id, new UpdateExtractedFieldsInput
+        {
+            Fields = new Dictionary<string, JsonElement>
+            {
+                ["tags"] = JsonValue(new[] { "urgent", "legal", "2026" })
+            }
+        });
+
+        dto.ExtractedFields.ShouldNotBeNull();
+        var tagsValue = dto.ExtractedFields!["tags"];
+        tagsValue.ValueKind.ShouldBe(JsonValueKind.Array);
+        tagsValue.EnumerateArray().Select(e => e.GetString()).ShouldBe(new[] { "urgent", "legal", "2026" });
+    }
+
+    [Fact]
+    public async Task Should_Reject_Scalar_For_MultiValue_Field()
+    {
+        // 多值字段收到标量（非数组）→ 不合类型 → loud fail（与单值字段类型不符同路径）。
+        var doc = CreateClassifiedDocument("host.contract");
+        StubGet(doc);
+        StubMultiField("host.contract", "tags");
+
+        var ex = await Should.ThrowAsync<BusinessException>(() =>
+            _appService.UpdateExtractedFieldsAsync(doc.Id, new UpdateExtractedFieldsInput
+            {
+                Fields = new Dictionary<string, JsonElement> { ["tags"] = JsonString("urgent") }
+            }));
+
+        ex.Code.ShouldBe(PaperbaseErrorCodes.ExtractedField.InvalidValue);
+        ex.Data["FieldName"].ShouldBe("tags");
+    }
+
+    [Fact]
     public async Task Should_Reject_When_Document_Not_Classified()
     {
         var doc = CreateDocument(); // DocumentTypeCode 为 null
@@ -202,6 +281,19 @@ public class DocumentAppService_ExtractedFields_Tests
                 Guid.NewGuid(), tenantId: null, documentTypeId: TypeId(typeCode),
                 name: f.Name, displayName: f.Name, prompt: "extract " + f.Name, dataType: f.DataType))
             .ToList();
+        _fieldDefinitionRepository.GetListAsync(TypeId(typeCode), Arg.Any<CancellationToken>())
+            .Returns(defs);
+    }
+
+    // #212：stub 一个多值 String 字段定义（AllowMultiple = true）。
+    private void StubMultiField(string typeCode, string name)
+    {
+        var defs = new List<FieldDefinition>
+        {
+            new(Guid.NewGuid(), tenantId: null, documentTypeId: TypeId(typeCode),
+                name: name, displayName: name, prompt: "extract " + name,
+                dataType: FieldDataType.String, allowMultiple: true)
+        };
         _fieldDefinitionRepository.GetListAsync(TypeId(typeCode), Arg.Any<CancellationToken>())
             .Returns(defs);
     }

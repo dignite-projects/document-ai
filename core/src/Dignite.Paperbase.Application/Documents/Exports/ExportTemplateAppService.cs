@@ -139,6 +139,7 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
                         .Select(f => new ExtractedFieldProjection
                         {
                             FieldDefinitionId = f.FieldDefinitionId,
+                            Order = f.Order,
                             StringValue = f.StringValue,
                             BooleanValue = f.BooleanValue,
                             NumberValue = f.NumberValue,
@@ -260,13 +261,21 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
     private static string? GetExtractedValue(
         ExportProjection d, Guid fieldDefinitionId, IReadOnlyDictionary<Guid, FieldDataType> fieldDataTypes)
     {
-        var field = d.ExtractedFields.FirstOrDefault(f => f.FieldDefinitionId == fieldDefinitionId);
-        if (field == null || !fieldDataTypes.TryGetValue(fieldDefinitionId, out var dataType))
+        if (!fieldDataTypes.TryGetValue(fieldDefinitionId, out var dataType))
         {
             return null;
         }
 
-        return FieldValueToString(field, dataType);
+        // 按 Order 升序渲染该字段全部值行再 join（#212）——单值字段恰好一行（结果即该值，与既有行为一致），
+        // 多值字段（String）多行用 "; " 连接，不丢值，且确定（不依赖 DB 对 child 子查询未指定的行返回顺序）。
+        var rendered = d.ExtractedFields
+            .Where(f => f.FieldDefinitionId == fieldDefinitionId)
+            .OrderBy(f => f.Order)
+            .Select(f => FieldValueToString(f, dataType))
+            .Where(s => s != null)
+            .ToList();
+
+        return rendered.Count > 0 ? string.Join("; ", rendered) : null;
     }
 
     // 按字段类型渲染类型化列为单元格字符串（InvariantCulture，与 DocumentExtractedField.ToJsonElement 的规范形一致）。

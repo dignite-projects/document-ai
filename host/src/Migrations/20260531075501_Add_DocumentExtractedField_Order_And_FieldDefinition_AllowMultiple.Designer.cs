@@ -4,6 +4,7 @@ using Dignite.Paperbase.Host.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Volo.Abp.EntityFrameworkCore;
 
@@ -12,9 +13,11 @@ using Volo.Abp.EntityFrameworkCore;
 namespace Dignite.Paperbase.Host.Migrations
 {
     [DbContext(typeof(PaperbaseHostDbContext))]
-    partial class PaperbaseHostDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260531075501_Add_DocumentExtractedField_Order_And_FieldDefinition_AllowMultiple")]
+    partial class Add_DocumentExtractedField_Order_And_FieldDefinition_AllowMultiple
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -163,7 +166,15 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.Property<string>("Markdown")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("OriginalFileBlobName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
                     b.Property<int>("ReviewStatus")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SourceType")
                         .HasColumnType("int");
 
                     b.Property<Guid?>("TenantId")
@@ -2433,11 +2444,6 @@ namespace Dignite.Paperbase.Host.Migrations
                         {
                             b1.Property<Guid>("DocumentId")
                                 .HasColumnType("uniqueidentifier");
-
-                            b1.Property<string>("BlobName")
-                                .IsRequired()
-                                .HasMaxLength(512)
-                                .HasColumnType("nvarchar(512)");
 
                             b1.Property<string>("ContentHash")
                                 .IsRequired()
