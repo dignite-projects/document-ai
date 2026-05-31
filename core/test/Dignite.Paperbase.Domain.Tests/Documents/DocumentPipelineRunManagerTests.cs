@@ -278,6 +278,28 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
     }
 
     [Fact]
+    public async Task CompleteTextExtraction_Persists_Language_And_Metadata()
+    {
+        var doc = CreateDocument();
+        var run = await _manager.StartAsync(doc, PaperbasePipelines.TextExtraction);
+
+        var metadata = new DocumentTextExtractionMetadata(
+            "PaddleOCR",
+            new NativePayloadManifest("extraction-native/" + doc.Id, "application/json", 42, "abc123", "PaddleOCR/PP-StructureV3"));
+
+        await _manager.CompleteTextExtractionAsync(
+            doc, run, markdown: "# Scan\n\nbody", title: "Scan", sourceType: SourceType.Physical,
+            language: "ja", extractionMetadata: metadata);
+
+        doc.Language.ShouldBe("ja");
+        doc.ExtractionMetadata.ShouldNotBeNull();
+        doc.ExtractionMetadata!.ProviderName.ShouldBe("PaddleOCR");
+        doc.ExtractionMetadata.NativePayloadManifest.ShouldNotBeNull();
+        doc.ExtractionMetadata.NativePayloadManifest!.BlobName.ShouldBe("extraction-native/" + doc.Id);
+        doc.ExtractionMetadata.NativePayloadManifest.Sha256.ShouldBe("abc123");
+    }
+
+    [Fact]
     public async Task CompleteTextExtraction_Allows_Null_Title_For_Backfill_Path()
     {
         var doc = CreateDocument();

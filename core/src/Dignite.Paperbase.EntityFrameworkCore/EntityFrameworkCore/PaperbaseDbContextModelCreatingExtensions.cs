@@ -30,6 +30,21 @@ public static class PaperbaseDbContextModelCreatingExtensions
             v => v == null ? 0 : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null).GetHashCode(),
             v => JsonSerializer.Deserialize<List<ExportColumn>>(JsonSerializer.Serialize(v, (JsonSerializerOptions?)null), (JsonSerializerOptions?)null) ?? new List<ExportColumn>());
 
+    // Document.ExtractionMetadata（#210）：单个 typed 值对象（provider 名 + 可空归档 manifest），
+    // 整体读写、无单列查询需求——同 ExportTemplate.Columns 走 AbpJsonValueConverter 序列化进大文本列（SQL Server → nvarchar(max)，
+    // 其它 provider 自选），不绑 provider-specific native json（#206 cross-DB 原则）。可空：未提取 / 历史记录为 null（EF 在
+    // 属性为 null 时存 DB null、不调转换器；非空时才序列化）。get-only 值对象由 System.Text.Json 经唯一带参构造反序列化（参数名匹配属性名）。
+    private static readonly ValueConverter<DocumentTextExtractionMetadata?, string> ExtractionMetadataConverter =
+        new AbpJsonValueConverter<DocumentTextExtractionMetadata?>();
+
+    // 同 ExportColumnsComparer 手写：null-safe（EF 可能对 null 值取快照 / 比较）。converter / comparer 的泛型实参用可空
+    // DocumentTextExtractionMetadata?，与可空属性匹配——否则 HasConversion 触发 CS8620 可空性差异警告。
+    private static readonly ValueComparer<DocumentTextExtractionMetadata?> ExtractionMetadataComparer =
+        new(
+            (a, b) => JsonSerializer.Serialize(a, (JsonSerializerOptions?)null) == JsonSerializer.Serialize(b, (JsonSerializerOptions?)null),
+            v => v == null ? 0 : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null).GetHashCode(),
+            v => v == null ? null : JsonSerializer.Deserialize<DocumentTextExtractionMetadata>(JsonSerializer.Serialize(v, (JsonSerializerOptions?)null), (JsonSerializerOptions?)null));
+
     public static void ConfigurePaperbase(this ModelBuilder builder)
     {
         Check.NotNull(builder, nameof(builder));
@@ -49,6 +64,10 @@ public static class PaperbaseDbContextModelCreatingExtensions
 
             // 字段架构 v2：系统通用字段平铺顶层 typed columns —— 真 pipeline 自动产物
             b.Property(x => x.Language).HasMaxLength(DocumentConsts.MaxLanguageLength);
+
+            // 文本提取 provenance（#210）：provider 名 + 归档 manifest 整体序列化进 typed JSON 列（#206 cross-DB 原则）。
+            b.Property(x => x.ExtractionMetadata)
+                .HasConversion(ExtractionMetadataConverter, ExtractionMetadataComparer);
 
             // 字段架构 v2 / Issue #206：类型绑定字段值是聚合内 child 集合（DocumentExtractedField），
             // 不再是 Document 顶层的 native json 列。硬删 Document 时级联删除字段行。

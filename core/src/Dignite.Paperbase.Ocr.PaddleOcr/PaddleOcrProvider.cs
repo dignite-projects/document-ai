@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -29,27 +30,45 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
     public virtual async Task<OcrResult> RecognizeAsync(Stream fileStream, OcrOptions options)
     {
         var modelName = _options.ModelName;
-        var result = await SendAsync(
+        var rawJson = await SendAsync(
             fileStream,
             options.LanguageHints,
             options.ContentType,
             modelName,
             cancellationToken: default);
 
-        var markdown = BuildMarkdown(result);
+        var result = JsonSerializer.Deserialize<PaddleOcrResponse>(rawJson)
+            ?? throw new InvalidOperationException("PaddleOCR server returned an empty response.");
 
-        return new OcrResult
+        var markdown = BuildMarkdown(result);
+        // SchemaName 包含 model 标识，便于下游消费方判断如何解析 bbox/block 结构。
+        var schemaName = $"PaddleOCR/{result.ProviderModelName ?? modelName}";
+        var ocrResult = new OcrResult
         {
             Markdown = markdown,
             DetectedLanguage = result.DetectedLanguage,
             PageCount = result.PageCount,
-            ProviderName = result.ProviderName ?? "PaddleOCR",
-            ProviderModelName = result.ProviderModelName ?? modelName,
-            ProviderVersion = result.ProviderVersion
+            ProviderName = result.ProviderName ?? "PaddleOCR"
         };
+        FillNativePayload(ocrResult, rawJson, schemaName);
+        return ocrResult;
     }
 
-    private async Task<PaddleOcrResponse> SendAsync(
+    private static void FillNativePayload(OcrResult ocrResult, string rawJson, string schemaName)
+    {
+        // #210：归档 sidecar 原始 JSON（含 blocks：每页/每行 text + page）。
+        // ⚠️ 坐标 / 置信度的真实性取决于模型：PP-StructureV3 / PaddleOCR-VL（含 host 当前默认）只到页级，
+        //    bbox 恒为占位 [0,0,0,0]、confidence 恒为 1.0（见 sidecar server.py 的 _process_structure / _process_vl）；
+        //    真实行级 bbox 仅 PP-OCRv4 且请求带 include_bboxes=true 时才有——而本 provider 当前未传该参数。
+        //    即默认配置下归档的 payload 没有可用坐标 / 置信度，将来做 Layer 3 解析前需先解决取数。
+        if (string.IsNullOrEmpty(rawJson)) return;
+
+        ocrResult.NativePayloadContent = Encoding.UTF8.GetBytes(rawJson);
+        ocrResult.NativePayloadContentType = "application/json";
+        ocrResult.NativePayloadSchemaName = schemaName;
+    }
+
+    private async Task<string> SendAsync(
         Stream fileStream,
         IList<string> languageHints,
         string contentType,
@@ -83,9 +102,7 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
                 statusCode: response.StatusCode);
         }
 
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        return JsonSerializer.Deserialize<PaddleOcrResponse>(json)
-            ?? throw new InvalidOperationException("PaddleOCR server returned an empty response.");
+        return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
     private static string BuildMarkdown(PaddleOcrResponse result)
@@ -133,8 +150,5 @@ public class PaddleOcrProvider : IOcrProvider, ITransientDependency
 
         [JsonPropertyName("provider_model")]
         public string? ProviderModelName { get; set; }
-
-        [JsonPropertyName("provider_version")]
-        public string? ProviderVersion { get; set; }
     }
 }

@@ -89,6 +89,13 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     /// <summary>文档语言（ISO 639-1 / IETF tag）。OCR / 抽取阶段检测；影响下游 prompt 语言选择。</summary>
     public virtual string? Language { get; private set; }
 
+    /// <summary>
+    /// 文本提取 provenance 元数据（#210）：胜出 provider 名 + 原生 payload 归档清单。
+    /// Domain 自有 typed 值对象 → JSON 列（解耦 provider 契约）。
+    /// 原始 bbox / cell 等空间信号<b>留 blob</b>，本字段只存 manifest。文本提取流水线 Run 成功后写入；历史记录可能为 null。
+    /// </summary>
+    public virtual DocumentTextExtractionMetadata? ExtractionMetadata { get; private set; }
+
     // --- 聚合内的字段值集合（字段架构 v2 / Issue #206） ---
 
     private readonly List<DocumentExtractedField> _extractedFieldValues = new();
@@ -170,6 +177,34 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     internal void SetSourceType(SourceType sourceType)
     {
         SourceType = sourceType;
+    }
+
+    /// <summary>
+    /// 写入 OCR / 抽取阶段检测到的语言（#210：终结此前 write-never 死字段）。空 / 空白入参<b>不</b>覆盖
+    /// （检测不到语言时保留既有值），超长截断到 <see cref="DocumentConsts.MaxLanguageLength"/>。
+    /// 由 <see cref="Pipelines.DocumentPipelineRunManager.CompleteTextExtractionAsync"/> 在文本提取完成时调用。
+    /// </summary>
+    internal void SetLanguage(string? language)
+    {
+        if (string.IsNullOrWhiteSpace(language))
+        {
+            return;
+        }
+
+        var trimmed = language.Trim();
+        Language = trimmed.Length <= DocumentConsts.MaxLanguageLength
+            ? trimmed
+            : trimmed[..DocumentConsts.MaxLanguageLength];
+    }
+
+    /// <summary>
+    /// 写入文本提取 provenance（#210）：Domain typed 元数据值对象（provider 名 + 归档 manifest）。
+    /// 由 <see cref="Pipelines.DocumentPipelineRunManager.CompleteTextExtractionAsync"/> 调用，
+    /// 与 <see cref="SetMarkdown"/> 同事务原子写入（Markdown write-once 不变式天然把本写入也钳成 write-once）。
+    /// </summary>
+    internal void SetExtractionMetadata(DocumentTextExtractionMetadata? extractionMetadata)
+    {
+        ExtractionMetadata = extractionMetadata;
     }
 
     /// <summary>

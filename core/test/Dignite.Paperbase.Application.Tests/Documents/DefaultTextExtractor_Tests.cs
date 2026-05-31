@@ -81,7 +81,6 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
         var result = await _extractor.ExtractAsync(stream, ctx);
 
         result.UsedOcr.ShouldBeFalse();
-        // Markdown 字段保留了原始结构（含 # 标题）
         result.Markdown.ShouldNotBeNullOrEmpty();
         result.Markdown.ShouldContain("# Title");
         result.Markdown.ShouldContain("Some content");
@@ -131,6 +130,54 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
             Arg.Any<OcrOptions>());
     }
 
+    // === #210 provenance：ProviderName 传播 + NativePayload 扁平字段映射 ===
+
+    [Fact]
+    public async Task Image_Path_Propagates_ProviderName_And_Maps_Native_Payload()
+    {
+        var stream = new MemoryStream(new byte[] { 0xFF, 0xD8 });
+        var ctx = new TextExtractionContext { ContentType = "image/jpeg", FileExtension = ".jpg" };
+
+        var result = await _extractor.ExtractAsync(stream, ctx);
+
+        result.ProviderName.ShouldBe("FakeOcr");
+
+        // OCR provider 的原生 payload 扁平字段经编排层映射到 TextExtractionResult.NativePayload（Abstractions 类型）。
+        result.NativePayload.ShouldNotBeNull();
+        result.NativePayload!.SchemaName.ShouldBe("FakeOcr/schema");
+        result.NativePayload.ContentType.ShouldBe("application/json");
+        result.NativePayload.Content.Length.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task Digital_Path_Propagates_ProviderName_And_Null_Native_Payload()
+    {
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("# Title\n\nbody text"));
+        var ctx = new TextExtractionContext { ContentType = "text/markdown", FileExtension = ".md" };
+
+        var result = await _extractor.ExtractAsync(stream, ctx);
+
+        result.ProviderName.ShouldBe(ElBrunoMarkdownProvider.ProviderIdentifier);
+
+        // 纯 text→Markdown 无空间模型 → 无原生 payload。
+        result.NativePayload.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Scanned_Pdf_Fallback_Uses_Ocr_ProviderName_And_Native_Payload()
+    {
+        // 非真实 PDF 字节 → ElBruno 转换失败（无文本层）→ 回退 OCR。
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("not a real pdf"));
+        var ctx = new TextExtractionContext { ContentType = "application/pdf", FileExtension = ".pdf" };
+
+        var result = await _extractor.ExtractAsync(stream, ctx);
+
+        result.UsedOcr.ShouldBeTrue();
+        result.ProviderName.ShouldBe("FakeOcr");
+        result.NativePayload.ShouldNotBeNull();
+        result.NativePayload!.SchemaName.ShouldBe("FakeOcr/schema");
+    }
+
     [DependsOn(
         typeof(PaperbaseTextExtractionModule),
         typeof(PaperbaseTextExtractionElBrunoMarkItDownModule))]
@@ -139,12 +186,17 @@ public class DefaultTextExtractor_Tests : AbpIntegratedTest<DefaultTextExtractor
         public override void ConfigureServices(ServiceConfigurationContext context)
         {
             // OCR provider 负责选择部署配置中的模型并输出 Markdown；orchestrator 不做 profile 重试。
+            // 带扁平 NativePayload 字段 + provider 身份，覆盖 #210 provenance 组装（编排层透传 + 映射 NativePayload）。
             var fakeOcr = Substitute.For<IOcrProvider>();
             fakeOcr.RecognizeAsync(Arg.Any<Stream>(), Arg.Any<OcrOptions>())
                 .Returns(new OcrResult
                 {
                     Markdown = "fake ocr markdown",
-                    PageCount = 1
+                    PageCount = 1,
+                    ProviderName = "FakeOcr",
+                    NativePayloadContent = new byte[] { 1, 2, 3, 4 },
+                    NativePayloadContentType = "application/json",
+                    NativePayloadSchemaName = "FakeOcr/schema"
                 });
 
             context.Services.AddSingleton<IOcrProvider>(fakeOcr);
