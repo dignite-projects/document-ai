@@ -140,6 +140,7 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
                         .Select(f => new ExtractedFieldProjection
                         {
                             FieldDefinitionId = f.FieldDefinitionId,
+                            Order = f.Order,
                             StringValue = f.StringValue,
                             BooleanValue = f.BooleanValue,
                             NumberValue = f.NumberValue,
@@ -262,7 +263,12 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
     private static string? GetExtractedValue(
         ExportProjection d, Guid fieldDefinitionId, IReadOnlyDictionary<Guid, FieldDataType> fieldDataTypes)
     {
-        var field = d.ExtractedFields.FirstOrDefault(f => f.FieldDefinitionId == fieldDefinitionId);
+        // 多值字段（#212）一字段多行：取 Order 最小行渲染单元格——确定且与 REST/MCP 出口的 Order-0 标量一致
+        // （不依赖 EF/DB 对 child 子查询未指定的行返回顺序）。完整多值 join 渲染留作后续出口契约增量。
+        var field = d.ExtractedFields
+            .Where(f => f.FieldDefinitionId == fieldDefinitionId)
+            .OrderBy(f => f.Order)
+            .FirstOrDefault();
         if (field == null || !fieldDataTypes.TryGetValue(fieldDefinitionId, out var dataType))
         {
             return null;

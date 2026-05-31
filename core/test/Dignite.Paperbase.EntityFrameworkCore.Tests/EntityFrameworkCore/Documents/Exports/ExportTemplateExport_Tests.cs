@@ -161,6 +161,58 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
     }
 
     [Fact]
+    public async Task Export_Renders_MultiValue_Field_Deterministically_As_Order0()
+    {
+        // #212：多值字段作为导出列 → 渲染 Order 最小行（确定，与 REST/MCP 的 Order-0 标量一致），
+        // 不依赖 DB 对 child 子查询未指定的行返回顺序。本测试故意把行按 Order 2,0,1 的乱序插入——
+        // 若 GetExtractedValue 走旧的 FirstOrDefault（无 OrderBy），会取到物理首行 "2026"（Order 2）而非 Order-0。
+        var templateId = _guidGenerator.Create();
+        var typeId = _guidGenerator.Create();
+        var tagsFieldId = _guidGenerator.Create();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _documentTypeRepository.InsertAsync(
+                new DocumentType(typeId, null, "t" + typeId.ToString("N"), "Type"), autoSave: true);
+            await _fieldDefinitionRepository.InsertAsync(
+                new FieldDefinition(
+                    tagsFieldId, null, typeId, "tags", "Tags", "extract",
+                    FieldDataType.String, allowMultiple: true),
+                autoSave: true);
+
+            // 乱序插入：物理首行是 Order 2（"2026"），Order 0（"urgent"）在中间。
+            var fields = new[]
+            {
+                new DocumentFieldValue(tagsFieldId, FieldDataType.String, Json("2026"), 2),
+                new DocumentFieldValue(tagsFieldId, FieldDataType.String, Json("urgent"), 0),
+                new DocumentFieldValue(tagsFieldId, FieldDataType.String, Json("legal"), 1),
+            };
+            await _documentRepository.InsertAsync(
+                CreateDocument(_guidGenerator.Create(), typeId, "Doc M", fields),
+                autoSave: true);
+
+            await _templateRepository.InsertAsync(
+                new ExportTemplate(
+                    templateId, tenantId: null, name: "Tags Export", format: ExportFormat.Csv,
+                    documentTypeId: typeId,
+                    new[] { new ExportColumn(tagsFieldId, "标签", 0) }),
+                autoSave: true);
+        });
+
+        string csv = null!;
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var content = await _appService.ExportAsync(new ExportDocumentsInput { TemplateId = templateId });
+            using var reader = new StreamReader(content.GetStream());
+            csv = await reader.ReadToEndAsync();
+        });
+
+        // 确定渲染 Order-0 值 "urgent"，而非乱序物理首行 "2026"。
+        csv.ShouldContain("Doc M,urgent");
+        csv.ShouldNotContain("2026");
+    }
+
+    [Fact]
     public async Task Export_Should_Fail_When_Over_Cap_Instead_Of_Truncating()
     {
         var originalMax = ExportTemplateConsts.MaxExportDocumentCount;

@@ -116,22 +116,25 @@ public class FieldDefinitionAppService : PaperbaseAppService, IFieldDefinitionAp
             }
         }
 
-        // DataType 变更守卫（#207）：已有抽取值的字段禁止改 DataType——历史值落在旧 typed 列，按新类型查会静默漏掉。
-        // 需换类型请新建字段。
-        if (input.DataType != entity.DataType
-            && await _documentRepository.AnyExtractedFieldValueAsync(entity.Id))
+        // 两条"已有抽取值则禁止"守卫共用同一事实（该字段是否已有任何值行），仅在确有变更需要判定时查一次库：
+        // - DataType 变更（#207）：历史值落在旧 typed 列，按新类型查会静默漏掉。
+        // - 多值收窄 multi→single（#212）：Order>0 行会变孤儿（出口只渲染 Order 0，多余值静默丢弃、存储行残留）。
+        //   single→multi 是无损放宽（既有单值行即 1 元素列表），不在此守卫内。
+        var dataTypeChanged = input.DataType != entity.DataType;
+        var multiValueNarrowed = entity.AllowMultiple && !input.AllowMultiple;
+        if (dataTypeChanged || multiValueNarrowed)
         {
-            throw new BusinessException(PaperbaseErrorCodes.FieldDefinition.DataTypeChangeNotAllowed)
-                .WithData("Name", entity.Name);
-        }
-
-        // 多值收窄守卫（#212）：multi→single 对已有抽取值的字段禁止——Order>0 行会变孤儿（出口只渲染 Order 0，
-        // 多余值被静默丢弃，存储行残留）。single→multi 是无损放宽（既有单值行即 1 元素列表），放行。
-        if (entity.AllowMultiple && !input.AllowMultiple
-            && await _documentRepository.AnyExtractedFieldValueAsync(entity.Id))
-        {
-            throw new BusinessException(PaperbaseErrorCodes.FieldDefinition.MultiValueChangeNotAllowed)
-                .WithData("Name", entity.Name);
+            var hasValues = await _documentRepository.AnyExtractedFieldValueAsync(entity.Id);
+            if (dataTypeChanged && hasValues)
+            {
+                throw new BusinessException(PaperbaseErrorCodes.FieldDefinition.DataTypeChangeNotAllowed)
+                    .WithData("Name", entity.Name);
+            }
+            if (multiValueNarrowed && hasValues)
+            {
+                throw new BusinessException(PaperbaseErrorCodes.FieldDefinition.MultiValueChangeNotAllowed)
+                    .WithData("Name", entity.Name);
+            }
         }
 
         entity.Update(input.Name, input.DisplayName, input.Prompt, input.DataType, input.DisplayOrder, input.IsRequired, input.AllowMultiple);

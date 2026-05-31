@@ -476,9 +476,10 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         document.SetFields(fieldValues);
         await _documentRepository.UpdateAsync(document, autoSave: true);
 
-        // FieldsExtractedEto.FieldCount 是逻辑字段数（输入 key 数），非展开后的行数（#212：多值字段不膨胀该薄信号）。
-        // 复用 FieldsExtractedEto 重发——手改与 LLM 抽取对下游是同一种"字段已更新"信号，
-        // 下游按 (DocumentId, EventType, EventTime) 幂等、回拉最新字段值（出口契约：薄载荷）。
+        // FieldsExtractedEto.FieldCount 是逻辑字段数（产生 ≥1 个值的不同字段个数），非展开后的行数——
+        // 与 FieldExtractionEventHandler 同一算法，保证两条写入路径对同一终态发出一致的薄信号
+        // （多值字段空数组 [] 展开 0 行不计入，避免与 LLM 路径分叉）。下游按 (DocumentId, EventType, EventTime) 幂等、回拉最新字段值。
+        var fieldCount = fieldValues.Select(v => v.FieldDefinitionId).Distinct().Count();
         await _distributedEventBus.PublishAsync(
             new FieldsExtractedEto
             {
@@ -486,7 +487,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
                 TenantId = document.TenantId,
                 EventTime = Clock.Now,
                 DocumentTypeCode = documentTypeCode,
-                FieldCount = fields.Count
+                FieldCount = fieldCount
             });
 
         return await MapToDtoAsync(document);
@@ -675,7 +676,8 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         }
 
         // 按 FieldDefinitionId 分组（#212）：多值 String 字段一字段多行（Order 0,1,2…），单值一字段一行（Order 0）。
-        var dict = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        // 容量按 values.Count 上界预留（去重后 ≤ 该值），省去多字段文档的字典扩容。
+        var dict = new Dictionary<string, JsonElement>(values.Count, StringComparer.Ordinal);
         foreach (var group in values.GroupBy(v => v.FieldDefinitionId))
         {
             // FK RESTRICT 保证被引用字段定义不会被硬删；软删的由穿透 join 解析。极端缺失则跳过（不吐半成品 key）。
@@ -686,10 +688,10 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
             }
 
             // #212 范围限定：出口 ExtractedFields 字典格式本期不变（用户明确"出口契约可以不做"）——多值字段
-            // 取 Order 最小行渲染标量，wire-shape 与多值前完全一致（既有消费方 / MCP ProjectFields / 导出列零感知）。
-            // 多值的完整集合当前经字段过滤查询消费（GetFieldMatchedIdsAsync 的 .Any 跨全部行命中任一值）；
-            // 数组出口形态（含 MCP 逐元素 PromptBoundary 包裹、导出列 join）留作后续出口契约增量。
-            var primary = group.OrderBy(v => v.Order).First();
+            // 取 Order 最小行渲染标量（MinBy 单趟取最小，不全排序），wire-shape 与多值前完全一致
+            // （既有消费方 / MCP ProjectFields / 导出列零感知）。多值的完整集合当前经字段过滤查询消费
+            // （GetFieldMatchedIdsAsync 的 .Any 跨全部行命中任一值）；数组出口形态（含 MCP 逐元素 PromptBoundary 包裹、导出列 join）留作后续出口契约增量。
+            var primary = group.MinBy(v => v.Order)!;
             dict[def.Name] = primary.ToJsonElement(def.DataType);
         }
 
