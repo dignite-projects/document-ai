@@ -30,6 +30,7 @@ import {
   GetDocumentListInput,
   PAPERBASE_PERMISSIONS,
 } from '@dignite/paperbase';
+import { formatExtractedFieldValue } from '../../shared/format-field-value';
 import { from, of } from 'rxjs';
 import { catchError, map, mergeMap } from 'rxjs/operators';
 
@@ -61,6 +62,9 @@ export class DocumentListComponent implements OnInit {
   private readonly toaster = inject(ToasterService);
   private readonly permissionService = inject(PermissionService);
   private readonly destroyRef = inject(DestroyRef);
+
+  // Shared with the detail view so multi-value (#212) / object cells render consistently.
+  protected readonly formatFieldValue = formatExtractedFieldValue;
 
   readonly canDelete = this.permissionService.getGrantedPolicy(
     PAPERBASE_PERMISSIONS.Documents.Delete,

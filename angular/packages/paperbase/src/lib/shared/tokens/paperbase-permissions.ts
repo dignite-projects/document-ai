@@ -24,4 +24,18 @@ export const PAPERBASE_PERMISSIONS = {
     Update: 'Paperbase.Cabinets.Update',
     Delete: 'Paperbase.Cabinets.Delete',
   },
+  // Document-type schema management (#217) — admin-level, independent of document CRUD.
+  DocumentTypes: {
+    Default: 'Paperbase.DocumentTypes',
+    Create: 'Paperbase.DocumentTypes.Create',
+    Update: 'Paperbase.DocumentTypes.Update',
+    Delete: 'Paperbase.DocumentTypes.Delete',
+  },
+  // Field-definition schema management (#217) — admin-level, independent of document CRUD.
+  FieldDefinitions: {
+    Default: 'Paperbase.FieldDefinitions',
+    Create: 'Paperbase.FieldDefinitions.Create',
+    Update: 'Paperbase.FieldDefinitions.Update',
+    Delete: 'Paperbase.FieldDefinitions.Delete',
+  },
 } as const;

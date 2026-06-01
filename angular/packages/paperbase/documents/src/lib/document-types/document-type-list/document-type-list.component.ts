@@ -44,9 +44,10 @@ export class DocumentTypeListComponent implements OnInit {
   private readonly permissionService = inject(PermissionService);
   private readonly destroyRef = inject(DestroyRef);
 
-  // Both app services are guarded by Documents.ConfirmClassification on the backend.
+  // Create/edit/delete buttons require any DocumentTypes write grant (#217); the route's
+  // DocumentTypes.Default only lists. ABP evaluates the `||` policy expression.
   readonly canManage = this.permissionService.getGrantedPolicy(
-    PAPERBASE_PERMISSIONS.Documents.ConfirmClassification,
+    `${PAPERBASE_PERMISSIONS.DocumentTypes.Create} || ${PAPERBASE_PERMISSIONS.DocumentTypes.Update} || ${PAPERBASE_PERMISSIONS.DocumentTypes.Delete}`,
   );
 
   types = signal<DocumentTypeDto[]>([]);

@@ -50,8 +50,10 @@ export class FieldDefinitionListComponent implements OnInit {
   private readonly permissionService = inject(PermissionService);
   private readonly destroyRef = inject(DestroyRef);
 
+  // Create/edit/delete buttons require any FieldDefinitions write grant (#217); the route's
+  // FieldDefinitions.Default only lists. ABP evaluates the `||` policy expression.
   readonly canManage = this.permissionService.getGrantedPolicy(
-    PAPERBASE_PERMISSIONS.Documents.ConfirmClassification,
+    `${PAPERBASE_PERMISSIONS.FieldDefinitions.Create} || ${PAPERBASE_PERMISSIONS.FieldDefinitions.Update} || ${PAPERBASE_PERMISSIONS.FieldDefinitions.Delete}`,
   );
   readonly dataTypeOptions = fieldDataTypeOptions;
   readonly FieldDataType = FieldDataType;

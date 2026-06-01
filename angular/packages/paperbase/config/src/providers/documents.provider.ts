@@ -52,7 +52,7 @@ export function provideDocuments(): EnvironmentProviders {
           name: '::Menu:DocumentTypes',
           iconClass: 'fas fa-tags',
           parentName: '::Menu:Documents',
-          requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification,
+          requiredPolicy: PAPERBASE_PERMISSIONS.DocumentTypes.Default,
           order: 4,
           layout: eLayoutType.application,
         },

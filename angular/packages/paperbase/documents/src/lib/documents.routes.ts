@@ -38,7 +38,7 @@ export const DOCUMENTS_ROUTES: Routes = [
   {
     path: 'types',
     canActivate: [authGuard, permissionGuard],
-    data: { requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification },
+    data: { requiredPolicy: PAPERBASE_PERMISSIONS.DocumentTypes.Default },
     loadComponent: () =>
       import('./document-types/document-type-list/document-type-list.component').then(
         c => c.DocumentTypeListComponent,
@@ -47,7 +47,7 @@ export const DOCUMENTS_ROUTES: Routes = [
   {
     path: 'types/:typeId/fields',
     canActivate: [authGuard, permissionGuard],
-    data: { requiredPolicy: PAPERBASE_PERMISSIONS.Documents.ConfirmClassification },
+    data: { requiredPolicy: PAPERBASE_PERMISSIONS.FieldDefinitions.Default },
     loadComponent: () =>
       import('./fields/field-definition-list/field-definition-list.component').then(
         c => c.FieldDefinitionListComponent,

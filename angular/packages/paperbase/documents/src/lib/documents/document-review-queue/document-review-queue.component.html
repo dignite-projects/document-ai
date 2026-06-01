@@ -62,7 +62,7 @@
                 </td>
                 <td>
                   <span class="fw-semibold">
-                    {{ doc.title || doc.fileOrigin?.originalFileName || doc.fileOrigin?.blobName }}
+                    {{ doc.title || doc.fileOrigin?.originalFileName }}
                   </span>
                 </td>
                 <td>
@@ -153,7 +153,7 @@
         </div>
         <div class="modal-body">
           <p class="text-muted small mb-3">
-            {{ doc.title || doc.fileOrigin?.originalFileName || doc.fileOrigin?.blobName }}
+            {{ doc.title || doc.fileOrigin?.originalFileName }}
           </p>
           <label class="form-label fw-semibold">{{ '::Document:SelectDocumentType' | abpLocalization }}</label>
           <select
@@ -202,13 +202,13 @@
         </div>
         <div class="modal-body">
           <p class="text-muted small mb-3">
-            {{ doc.title || doc.fileOrigin?.originalFileName || doc.fileOrigin?.blobName }}
+            {{ doc.title || doc.fileOrigin?.originalFileName }}
           </p>
           <label class="form-label fw-semibold">{{ '::Document:Review:RejectReason' | abpLocalization }}</label>
           <textarea
             class="form-control"
             rows="3"
-            maxlength="512"
+            maxlength="2048"
             [ngModel]="rejectReason()"
             (ngModelChange)="rejectReason.set($event)"
             placeholder="{{ '::Document:Review:RejectReasonHint' | abpLocalization }}"

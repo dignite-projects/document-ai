@@ -76,7 +76,7 @@
       >
         <option value="">{{ '::Document:Filter:AllCabinets' | abpLocalization }}</option>
         @for (c of cabinets(); track c.id) {
-          <option [value]="c.id">{{ c.displayName }}</option>
+          <option [value]="c.id">{{ c.name }}</option>
         }
       </select>
     }
@@ -172,7 +172,7 @@
                   }
                 </td>
                 @for (field of extractedFieldColumns(); track field.id) {
-                  <td class="small">{{ doc.extractedFields?.[field.name] }}</td>
+                  <td class="small">{{ formatFieldValue(doc.extractedFields?.[field.name]) }}</td>
                 }
                 @if (canViewCabinets) {
                   <td>
@@ -266,7 +266,7 @@
         </div>
         <div class="modal-body">
           <p class="text-muted small mb-3">
-            {{ doc.title || doc.fileOrigin?.originalFileName || doc.fileOrigin?.blobName }}
+            {{ doc.title || doc.fileOrigin?.originalFileName }}
           </p>
           <label class="form-label fw-semibold">{{ '::Document:SelectDocumentType' | abpLocalization }}</label>
           <select

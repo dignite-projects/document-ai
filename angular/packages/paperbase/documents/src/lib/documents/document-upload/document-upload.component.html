@@ -20,7 +20,7 @@
               >
                 <option value="">{{ '::Document:Unfiled' | abpLocalization }}</option>
                 @for (c of cabinets(); track c.id) {
-                  <option [value]="c.id">{{ c.displayName }}</option>
+                  <option [value]="c.id">{{ c.name }}</option>
                 }
               </select>
             </div>

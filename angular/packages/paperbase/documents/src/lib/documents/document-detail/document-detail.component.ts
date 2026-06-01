@@ -29,6 +29,7 @@ import {
   PAPERBASE_PERMISSIONS,
   PipelineRunStatus,
 } from '@dignite/paperbase';
+import { formatExtractedFieldValue } from '../../shared/format-field-value';
 
 interface PipelineRow {
   pipelineCode: string;
@@ -415,13 +416,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   }
 
   formatFieldValue(value: unknown): string {
-    if (value === null || value === undefined) return '—';
-    // 多值字段（#212）出口是 JSON 数组 → 以 ", " 连接展示（空数组当无值）。
-    if (Array.isArray(value)) {
-      return value.length > 0 ? value.map(v => String(v)).join(', ') : '—';
-    }
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
+    return formatExtractedFieldValue(value);
   }
 
   startEditFields(): void {
