@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using Volo.Abp.Domain.Values;
+
 namespace Dignite.Paperbase.Documents;
 
 /// <summary>
@@ -14,7 +17,7 @@ namespace Dignite.Paperbase.Documents;
 /// get-only 属性 + 唯一带参构造让 System.Text.Json 反序列化复用同一构造（参数名匹配属性名），套路同 <c>ExportColumn</c>。
 /// </para>
 /// </summary>
-public class DocumentTextExtractionMetadata
+public class DocumentTextExtractionMetadata : ValueObject
 {
     /// <summary>
     /// 胜出 provider 的家族 / 名称（如 <c>PaddleOCR</c> / <c>AzureDocumentIntelligence</c> / <c>ElBruno.MarkItDotNet</c>）；未知时 null。
@@ -36,5 +39,26 @@ public class DocumentTextExtractionMetadata
     {
         ProviderName = providerName;
         NativePayloadManifest = nativePayloadManifest;
+    }
+
+    protected override IEnumerable<object> GetAtomicValues()
+    {
+        // ABP 的 ValueEquals 用 SequenceEqual + 默认比较器，对 atomic 走 object.Equals——嵌套 ValueObject
+        // 不会递归 ValueEquals（默认比较器退化为引用相等）。故这里把 NativePayloadManifest 的各原子值<b>展平</b>
+        // 进父序列，让父级 ValueEquals 真正结构化深比较；可空成员统一取空串/0 占位避免 null atomic + 区分
+        // "manifest 缺席" 与 "manifest 各字段恰为默认值"（前缀 NULL sentinel）。
+        yield return ProviderName ?? string.Empty;
+
+        if (NativePayloadManifest is null)
+        {
+            yield return "\0null-manifest";
+            yield break;
+        }
+
+        yield return NativePayloadManifest.BlobName;
+        yield return NativePayloadManifest.ContentType;
+        yield return NativePayloadManifest.SizeBytes;
+        yield return NativePayloadManifest.Sha256;
+        yield return NativePayloadManifest.SchemaName;
     }
 }

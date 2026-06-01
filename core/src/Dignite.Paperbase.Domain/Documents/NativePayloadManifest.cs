@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using Volo.Abp;
+using Volo.Abp.Domain.Values;
 
 namespace Dignite.Paperbase.Documents;
 
@@ -11,7 +13,7 @@ namespace Dignite.Paperbase.Documents;
 /// <b>无</b> archive 时 <see cref="DocumentTextExtractionMetadata.NativePayloadManifest"/> 整体为 <c>null</c>（不构造空壳）。
 /// </para>
 /// </summary>
-public class NativePayloadManifest
+public class NativePayloadManifest : ValueObject
 {
     /// <summary>
     /// 归档 blob 的稳定 per-document key（<c>extraction-native/{documentId}</c>，重提取覆盖）。
@@ -38,5 +40,14 @@ public class NativePayloadManifest
         SizeBytes = sizeBytes;
         Sha256 = Check.NotNullOrWhiteSpace(sha256, nameof(sha256));
         SchemaName = Check.NotNullOrWhiteSpace(schemaName, nameof(schemaName));
+    }
+
+    protected override IEnumerable<object> GetAtomicValues()
+    {
+        yield return BlobName;
+        yield return ContentType;
+        yield return SizeBytes;
+        yield return Sha256;
+        yield return SchemaName;
     }
 }
