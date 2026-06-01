@@ -8,6 +8,11 @@ import { ToasterService } from '@abp/ng.theme.shared';
 import { CabinetDto, CabinetService, DocumentService, PAPERBASE_PERMISSIONS } from '@dignite/paperbase';
 import { from, of } from 'rxjs';
 import { catchError, map, mergeMap } from 'rxjs/operators';
+import {
+  MAX_UPLOAD_FILE_BYTES,
+  UPLOAD_ACCEPT_ATTRIBUTE,
+  isAllowedUpload,
+} from '../upload-constraints';
 
 // Limits the number of concurrent /api/documents/upload requests to avoid
 // exhausting the browser's per-origin connection pool and overloading the
@@ -42,6 +47,9 @@ export class DocumentUploadComponent implements OnInit {
   );
   cabinets = signal<CabinetDto[]>([]);
   selectedCabinetId = signal<string>('');
+
+  // Picker `accept` filter, derived from the shared whitelist (mirrors backend, #221).
+  readonly acceptAttribute = UPLOAD_ACCEPT_ATTRIBUTE;
 
   isDragOver = signal(false);
   isUploading = signal(false);
@@ -91,15 +99,13 @@ export class DocumentUploadComponent implements OnInit {
   }
 
   private uploadFiles(files: File[]): void {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
-    const maxSizeBytes = 20 * 1024 * 1024;
-
+    // Mirror the backend fail-closed gate (#221): MIME + extension whitelist, then size.
     const valid = files.filter(f => {
-      if (!allowedTypes.includes(f.type)) {
+      if (!isAllowedUpload(f)) {
         this.toaster.error('::Document:UnsupportedFileType', '::Error');
         return false;
       }
-      if (f.size > maxSizeBytes) {
+      if (f.size > MAX_UPLOAD_FILE_BYTES) {
         this.toaster.error('::Document:FileTooLarge', '::Error');
         return false;
       }

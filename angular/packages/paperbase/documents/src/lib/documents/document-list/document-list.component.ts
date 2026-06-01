@@ -12,7 +12,7 @@ import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { LocalizationPipe, PermissionService } from '@abp/ng.core';
+import { LocalizationPipe, LocalizationService, PermissionService } from '@abp/ng.core';
 import type { PagedResultDto } from '@abp/ng.core';
 import { ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
 import { Confirmation } from '@abp/ng.theme.shared';
@@ -31,6 +31,11 @@ import {
   PAPERBASE_PERMISSIONS,
 } from '@dignite/paperbase';
 import { formatExtractedFieldValue } from '../../shared/format-field-value';
+import {
+  MAX_UPLOAD_FILE_BYTES,
+  UPLOAD_ACCEPT_ATTRIBUTE,
+  isAllowedUpload,
+} from '../upload-constraints';
 import { from, of } from 'rxjs';
 import { catchError, map, mergeMap } from 'rxjs/operators';
 
@@ -61,6 +66,7 @@ export class DocumentListComponent implements OnInit {
   private readonly confirmation = inject(ConfirmationService);
   private readonly toaster = inject(ToasterService);
   private readonly permissionService = inject(PermissionService);
+  private readonly localization = inject(LocalizationService);
   private readonly destroyRef = inject(DestroyRef);
 
   // Shared with the detail view so multi-value (#212) / object cells render consistently.
@@ -83,6 +89,9 @@ export class DocumentListComponent implements OnInit {
   isLoading = signal(true);
   isBulkUploading = signal(false);
   bulkUploadResults = signal<UploadResult[]>([]);
+
+  // Picker `accept` filter, derived from the shared whitelist (mirrors backend, #221).
+  readonly acceptAttribute = UPLOAD_ACCEPT_ATTRIBUTE;
 
   reviewStatusFilter = signal<DocumentReviewStatus | undefined>(undefined);
   typeFilter = signal<string>('');
@@ -246,10 +255,39 @@ export class DocumentListComponent implements OnInit {
     if (!input.files?.length) return;
     const files = Array.from(input.files);
 
-    this.isBulkUploading.set(true);
-    this.bulkUploadResults.set([]);
+    // Mirror the backend fail-closed gate (#221): pre-filter MIME + extension + size so
+    // invalid files get instant feedback instead of a round-trip rejection. The backend
+    // remains the authoritative gate; this only spares the obvious cases.
+    const valid: File[] = [];
+    const rejected: UploadResult[] = [];
+    for (const f of files) {
+      if (!isAllowedUpload(f)) {
+        rejected.push({
+          fileName: f.name,
+          succeeded: false,
+          errorMessage: this.localization.instant('::Document:UnsupportedFileType'),
+        });
+      } else if (f.size > MAX_UPLOAD_FILE_BYTES) {
+        rejected.push({
+          fileName: f.name,
+          succeeded: false,
+          errorMessage: this.localization.instant('::Document:FileTooLarge'),
+        });
+      } else {
+        valid.push(f);
+      }
+    }
 
-    from(files)
+    if (valid.length === 0) {
+      this.bulkUploadResults.set(rejected);
+      input.value = '';
+      return;
+    }
+
+    this.isBulkUploading.set(true);
+    this.bulkUploadResults.set(rejected);
+
+    from(valid)
       .pipe(
         mergeMap(
           file =>
