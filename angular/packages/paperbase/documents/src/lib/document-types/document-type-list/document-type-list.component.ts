@@ -169,7 +169,7 @@ export class DocumentTypeListComponent implements OnInit {
           error: () => this.isSubmitting.set(false),
         });
     } else {
-      this.service.update(mode.id, {
+      this.service.update(mode.id!, {
         typeCode: raw.typeCode,
         displayName: raw.displayName,
         confidenceThreshold: raw.confidenceThreshold,
@@ -196,7 +196,7 @@ export class DocumentTypeListComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.service.delete(type.id)
+        this.service.delete(type.id!)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
             next: () => {
@@ -208,7 +208,7 @@ export class DocumentTypeListComponent implements OnInit {
   }
 
   restore(type: DocumentTypeDto): void {
-    this.service.restore(type.id)
+    this.service.restore(type.id!)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {

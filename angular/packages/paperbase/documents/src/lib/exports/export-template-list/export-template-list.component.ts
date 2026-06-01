@@ -200,7 +200,7 @@ export class ExportTemplateListComponent implements OnInit {
         });
     } else {
       this.service
-        .update(mode.id, {
+        .update(mode.id!, {
           name: raw.name,
           format: raw.format,
           documentTypeId: raw.documentTypeId,
@@ -228,7 +228,7 @@ export class ExportTemplateListComponent implements OnInit {
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
         this.service
-          .delete(template.id)
+          .delete(template.id!)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
             next: () => {
@@ -240,11 +240,11 @@ export class ExportTemplateListComponent implements OnInit {
   }
 
   exportTemplate(template: ExportTemplateDto): void {
-    this.exportingId.set(template.id);
+    this.exportingId.set(template.id!);
     // v1: export all documents the template applies to (backend enforces the per-export cap).
     // Document-checkbox / filter selection can be layered on later from the document list.
     this.service
-      .export({ templateId: template.id })
+      .export({ templateId: template.id! })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: blob => {

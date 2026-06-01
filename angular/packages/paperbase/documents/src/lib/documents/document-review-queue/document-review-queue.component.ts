@@ -43,7 +43,7 @@ export class DocumentReviewQueueComponent implements OnInit {
 
   page = signal(0);
   pageSize = 10;
-  totalPages = computed(() => Math.ceil(this.documents().totalCount / this.pageSize));
+  totalPages = computed(() => Math.ceil((this.documents().totalCount ?? 0) / this.pageSize));
   paginationPages = computed(() => Array.from({ length: this.totalPages() }, (_, i) => i));
 
   // Confirm/assign-classification dialog state.
@@ -121,7 +121,7 @@ export class DocumentReviewQueueComponent implements OnInit {
     if (!doc || !this.selectedTypeId()) return;
     this.isSubmitting.set(true);
     this.documentService
-      .confirmClassification(doc.id, this.selectedTypeId())
+      .confirmClassification(doc.id!, this.selectedTypeId())
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {
@@ -154,7 +154,7 @@ export class DocumentReviewQueueComponent implements OnInit {
     this.isSubmitting.set(true);
     const reason = this.rejectReason().trim();
     this.documentService
-      .rejectReview(doc.id, reason || undefined)
+      .rejectReview(doc.id!, reason || undefined)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {

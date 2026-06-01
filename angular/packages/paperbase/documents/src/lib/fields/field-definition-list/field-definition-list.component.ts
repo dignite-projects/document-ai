@@ -239,7 +239,7 @@ export class FieldDefinitionListComponent implements OnInit {
           error: () => this.isSubmitting.set(false),
         });
     } else {
-      this.service.update(mode.id, {
+      this.service.update(mode.id!, {
         name: raw.name,
         displayName: raw.displayName,
         prompt: raw.prompt,
@@ -269,7 +269,7 @@ export class FieldDefinitionListComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.service.delete(field.id)
+        this.service.delete(field.id!)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
             next: () => {
@@ -281,7 +281,7 @@ export class FieldDefinitionListComponent implements OnInit {
   }
 
   restore(field: FieldDefinitionDto): void {
-    this.service.restore(field.id)
+    this.service.restore(field.id!)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {

@@ -14,6 +14,7 @@
     "module": "ES2022",
     "lib": ["ES2022", "dom", "esnext.disposable"],
     "useDefineForClassFields": false,
+    "strict": true,
     "paths": {
       "@dignite/paperbase": ["packages/paperbase/src/public-api.ts"],
       "@dignite/paperbase/documents": ["packages/paperbase/documents/src/public-api.ts"],
@@ -21,6 +22,7 @@
     }
   },
   "angularCompilerOptions": {
-    "enableI18nLegacyMessageIdFormat": false
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictTemplates": true
   }
 }

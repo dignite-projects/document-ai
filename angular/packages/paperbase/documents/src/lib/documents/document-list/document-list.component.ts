@@ -111,10 +111,10 @@ export class DocumentListComponent implements OnInit {
 
   page = signal(0);
   pageSize = 10;
-  totalPages = computed(() => Math.ceil(this.documents().totalCount / this.pageSize));
+  totalPages = computed(() => Math.ceil((this.documents().totalCount ?? 0) / this.pageSize));
   paginationPages = computed(() => Array.from({ length: this.totalPages() }, (_, i) => i));
   pendingReviewCount = computed(() =>
-    this.documents().items.filter(d => d.reviewStatus === DocumentReviewStatus.PendingReview).length
+    (this.documents().items ?? []).filter(d => d.reviewStatus === DocumentReviewStatus.PendingReview).length
   );
 
   readonly DocumentLifecycleStatus = DocumentLifecycleStatus;
@@ -122,12 +122,12 @@ export class DocumentListComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadList();
-    // GetVisible is gated by the ConfirmClassification permission; only fetch when
-    // the operator can actually act on the confirm dialog (avoids a 403 on load
-    // for view-only users).
-    if (this.canConfirm) {
-      this.loadDocumentTypes();
-    }
+    // Document types drive the type filter, the dynamic extracted-field columns, and
+    // the confirm-classification picker. Every Documents.Default user needs them, and
+    // the read is now decoupled from schema-admin permission (#223 — GetVisible no longer
+    // requires DocumentTypes.Default), so load unconditionally; the error fallback keeps
+    // the list usable if it ever 403s.
+    this.loadDocumentTypes();
     // Cabinet getList is gated by Cabinets.Default; only fetch when granted to
     // avoid a 403 for users without cabinet access (cabinet filter/labels hidden).
     if (this.canViewCabinets) {
@@ -318,7 +318,7 @@ export class DocumentListComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status === Confirmation.Status.confirm) {
-          this.documentService.delete(doc.id)
+          this.documentService.delete(doc.id!)
             .pipe(takeUntilDestroyed(this.destroyRef))
             .subscribe({
             next: () => {
@@ -369,7 +369,7 @@ export class DocumentListComponent implements OnInit {
     const doc = this.confirmingDoc();
     if (!doc || !this.selectedTypeId()) return;
     this.isConfirming.set(true);
-    this.documentService.confirmClassification(doc.id, this.selectedTypeId())
+    this.documentService.confirmClassification(doc.id!, this.selectedTypeId())
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
       next: () => {

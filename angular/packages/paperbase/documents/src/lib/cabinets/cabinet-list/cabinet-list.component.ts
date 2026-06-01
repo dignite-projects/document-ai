@@ -106,7 +106,7 @@ export class CabinetListComponent implements OnInit {
           error: () => this.isSubmitting.set(false),
         });
     } else {
-      this.service.update(mode.id, { name: raw.name })
+      this.service.update(mode.id!, { name: raw.name })
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
           next: () => this.onSaved('::Cabinet:UpdatedSuccessfully'),
@@ -128,7 +128,7 @@ export class CabinetListComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.service.delete(cabinet.id)
+        this.service.delete(cabinet.id!)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
             next: () => {

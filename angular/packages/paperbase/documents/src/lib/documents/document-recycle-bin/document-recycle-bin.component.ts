@@ -29,7 +29,7 @@ export class DocumentRecycleBinComponent implements OnInit {
   isLoading = signal(true);
   page = signal(0);
   pageSize = 10;
-  totalPages = computed(() => Math.ceil(this.documents().totalCount / this.pageSize));
+  totalPages = computed(() => Math.ceil((this.documents().totalCount ?? 0) / this.pageSize));
   paginationPages = computed(() => Array.from({ length: this.totalPages() }, (_, i) => i));
 
   readonly canRestore = this.permissionService.getGrantedPolicy(
@@ -77,7 +77,7 @@ export class DocumentRecycleBinComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.documentService.restore(doc.id)
+        this.documentService.restore(doc.id!)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
             next: () => {
@@ -96,7 +96,7 @@ export class DocumentRecycleBinComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.documentService.permanentDelete(doc.id)
+        this.documentService.permanentDelete(doc.id!)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
             next: () => {

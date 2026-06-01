@@ -310,7 +310,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(status => {
         if (status !== Confirmation.Status.confirm) return;
-        this.documentService.delete(doc.id)
+        this.documentService.delete(doc.id!)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
           next: () => {
@@ -443,7 +443,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       fields[key] = this.coerceValue(def, value);
     }
 
-    this.documentService.updateExtractedFields(doc.id, fields)
+    this.documentService.updateExtractedFields(doc.id!, fields)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: updated => {
