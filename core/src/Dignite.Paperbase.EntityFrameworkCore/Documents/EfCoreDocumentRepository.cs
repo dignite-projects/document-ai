@@ -66,11 +66,17 @@ public class EfCoreDocumentRepository
 
     public virtual async Task HardDeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var dbContext = await GetDbContextAsync();
-        await dbContext.Set<Document>()
-            .IgnoreQueryFilters()
-            .Where(d => d.Id == id)
-            .ExecuteDeleteAsync(GetCancellationToken(cancellationToken));
+        // 只穿透软删（物理删已软删的行），保留 IMultiTenant 租户边界——绝不 IgnoreQueryFilters()
+        // （会连同 IMultiTenant 一起关掉，使无应用层租户校验的未来调用方跨租户硬删，#220）。
+        // ExecuteDeleteAsync 依赖 DB 级 ON DELETE CASCADE（DocumentExtractedField / DocumentPipelineRun
+        // 两个 child FK 均 OnDelete(Cascade)），收窄过滤器不影响级联。
+        using (DataFilter.Disable<ISoftDelete>())
+        {
+            var dbContext = await GetDbContextAsync();
+            await dbContext.Set<Document>()
+                .Where(d => d.Id == id)
+                .ExecuteDeleteAsync(GetCancellationToken(cancellationToken));
+        }
     }
 
     public virtual async Task<List<Guid>> GetFieldMatchedIdsAsync(
