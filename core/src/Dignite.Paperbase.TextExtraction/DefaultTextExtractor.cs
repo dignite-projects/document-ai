@@ -67,30 +67,52 @@ public class DefaultTextExtractor : ITextExtractor, ITransientDependency
         TextExtractionContext ctx,
         CancellationToken cancellationToken)
     {
-        using var seekable = new MemoryStream();
-        await fileStream.CopyToAsync(seekable, cancellationToken);
-
-        var languageHints = ctx.LanguageHints?.Count > 0
-            ? ctx.LanguageHints
-            : (IList<string>)_ocrOptions.DefaultLanguageHints;
-
-        seekable.Position = 0;
-        var result = await _ocrProvider.RecognizeAsync(seekable, new OcrOptions
+        Stream seekable;
+        bool ownsStream;
+        if (fileStream is MemoryStream { CanSeek: true })
         {
-            ContentType = ctx.ContentType ?? string.Empty,
-            LanguageHints = languageHints
-        });
-
-        Logger.LogDebug("OCR completed using {Provider}.", result.ProviderName ?? _ocrProvider.GetType().Name);
-
-        return new TextExtractionResult
+            seekable = fileStream;
+            ownsStream = false;
+        }
+        else
         {
-            Markdown = result.Markdown,
-            DetectedLanguage = result.DetectedLanguage,
-            UsedOcr = true,
-            ProviderName = result.ProviderName,
-            NativePayload = MapNativePayload(result)
-        };
+            var ms = new MemoryStream();
+            await fileStream.CopyToAsync(ms, cancellationToken);
+            seekable = ms;
+            ownsStream = true;
+        }
+
+        try
+        {
+            var languageHints = ctx.LanguageHints?.Count > 0
+                ? ctx.LanguageHints
+                : (IList<string>)_ocrOptions.DefaultLanguageHints;
+
+            seekable.Position = 0;
+            var result = await _ocrProvider.RecognizeAsync(seekable, new OcrOptions
+            {
+                ContentType = ctx.ContentType ?? string.Empty,
+                LanguageHints = languageHints
+            });
+
+            Logger.LogDebug("OCR completed using {Provider}.", result.ProviderName ?? _ocrProvider.GetType().Name);
+
+            return new TextExtractionResult
+            {
+                Markdown = result.Markdown,
+                DetectedLanguage = result.DetectedLanguage,
+                UsedOcr = true,
+                ProviderName = result.ProviderName,
+                NativePayload = MapNativePayload(result)
+            };
+        }
+        finally
+        {
+            if (ownsStream)
+            {
+                await seekable.DisposeAsync();
+            }
+        }
     }
 
     // OcrResult → TextExtractionResult 的原生 payload 跨契约映射（Ocr 项目不引用 Abstractions；

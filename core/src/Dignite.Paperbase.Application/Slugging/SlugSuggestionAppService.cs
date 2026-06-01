@@ -118,7 +118,7 @@ public class SlugSuggestionAppService : PaperbaseAppService, ISlugSuggestionAppS
     /// <summary>
     /// 从 LLM 的 JSON 输出里取出 <c>slug</c> 字段并 sanitize。任何解析失败 → 空字符串（前端回退）。
     /// </summary>
-    private string ExtractSlug(string? rawJson)
+    protected virtual string ExtractSlug(string? rawJson)
     {
         if (string.IsNullOrWhiteSpace(rawJson))
         {

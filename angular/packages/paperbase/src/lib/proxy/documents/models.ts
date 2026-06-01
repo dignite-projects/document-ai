@@ -4,7 +4,6 @@ import type { DocumentReviewStatus } from './document-review-status.enum';
 import type { PipelineRunStatus } from './pipeline-run-status.enum';
 
 export interface FileOriginDto {
-  blobName: string;
   uploadedByUserName: string;
   originalFileName?: string;
   contentType: string;

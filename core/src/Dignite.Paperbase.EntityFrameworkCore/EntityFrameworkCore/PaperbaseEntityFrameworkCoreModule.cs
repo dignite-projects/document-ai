@@ -1,4 +1,5 @@
 using Dignite.Paperbase.Documents;
+using Dignite.Paperbase.Documents.Exports;
 using Dignite.Paperbase.Documents.Pipelines;
 using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp.EntityFrameworkCore;
@@ -22,6 +23,7 @@ public class PaperbaseEntityFrameworkCoreModule : AbpModule
             options.AddRepository<DocumentType, EfCoreDocumentTypeRepository>();
             options.AddRepository<FieldDefinition, EfCoreFieldDefinitionRepository>();
             options.AddRepository<Cabinet, EfCoreCabinetRepository>();
+            options.AddRepository<ExportTemplate, EfCoreExportTemplateRepository>();
             // #216：PipelineRun 升级独立聚合根
             options.AddRepository<DocumentPipelineRun, EfCoreDocumentPipelineRunRepository>();
         });

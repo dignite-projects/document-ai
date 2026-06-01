@@ -94,6 +94,9 @@ public static class PaperbaseDbContextModelCreatingExtensions
                 fo.Property(x => x.ContentHash)
                     .IsRequired()
                     .HasMaxLength(FileOriginConsts.MaxContentHashLength);
+
+                fo.HasIndex(x => x.BlobName);
+                fo.HasIndex(x => x.ContentHash);
             });
 
             // DocumentPipelineRun 的 FK + CASCADE 由子侧配置块（#216）显式声明。

@@ -666,10 +666,10 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         return (typeCodes, fields);
     }
 
-    private static string? ResolveTypeCode(Guid? documentTypeId, IReadOnlyDictionary<Guid, string> typeCodes)
+    protected virtual string? ResolveTypeCode(Guid? documentTypeId, IReadOnlyDictionary<Guid, string> typeCodes)
         => documentTypeId.HasValue && typeCodes.TryGetValue(documentTypeId.Value, out var code) ? code : null;
 
-    private static Dictionary<string, JsonElement>? AssembleExtractedFields(
+    protected virtual Dictionary<string, JsonElement>? AssembleExtractedFields(
         IReadOnlyCollection<DocumentExtractedField> values,
         IReadOnlyDictionary<Guid, (string Name, FieldDataType DataType, bool AllowMultiple)> fieldDefs)
     {

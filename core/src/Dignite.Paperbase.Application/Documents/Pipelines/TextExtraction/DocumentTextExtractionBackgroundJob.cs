@@ -104,6 +104,7 @@ public class DocumentTextExtractionBackgroundJob
         catch (Exception ex)
         {
             await FailRunAsync(args.DocumentId, workItem.RunId, ex.Message);
+            throw;
         }
     }
 
@@ -237,7 +238,7 @@ public class DocumentTextExtractionBackgroundJob
             var template = _promptProvider.GetTitleGenerationPrompt(_behaviorOptions.DefaultLanguage);
             var messages = new List<ChatMessage>
             {
-                new(ChatRole.System, template.SystemInstructions),
+                new(ChatRole.System, template.SystemInstructions + "\n\n" + PromptBoundary.BoundaryRule),
                 new(ChatRole.User, PromptBoundary.WrapDocument(truncated))
             };
 
