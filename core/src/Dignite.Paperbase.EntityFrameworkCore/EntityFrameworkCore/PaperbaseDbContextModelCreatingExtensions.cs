@@ -13,6 +13,11 @@ namespace Dignite.Paperbase.EntityFrameworkCore;
 
 public static class PaperbaseDbContextModelCreatingExtensions
 {
+    // 单一来源（#216）：与 PaperbaseHostDbContextModelSnapshot 中 EF 生成的同名 FK 锚定，
+    // 防止后续重命名 source 侧 string 时静默触发 DropForeignKey + AddForeignKey 迁移。
+    private const string DocumentPipelineRunDocumentForeignKey =
+        "FK_PaperbaseDocumentPipelineRuns_PaperbaseDocuments_DocumentId";
+
     // ExportTemplate.Columns 是有序列定义数组，整体读写（无单列查询需求）——走 ABP 框架的
     // AbpJsonValueConverter<T> 整体序列化成大文本列（不绑 provider-specific native json：SQL Server 落
     // nvarchar(max)，其它 provider 自选）。ExportColumn 为 get-only 值对象，System.Text.Json 用其唯一带参
@@ -91,10 +96,7 @@ public static class PaperbaseDbContextModelCreatingExtensions
                     .HasMaxLength(FileOriginConsts.MaxContentHashLength);
             });
 
-            b.HasMany(x => x.PipelineRuns)
-                .WithOne()
-                .HasForeignKey(pr => pr.DocumentId)
-                .OnDelete(DeleteBehavior.Cascade);
+            // DocumentPipelineRun 的 FK + CASCADE 由子侧配置块（#216）显式声明。
 
             // 文件柜外键（#194）：可空 Guid 引用 Cabinet（reference-by-id，无导航属性）。
             // OnDelete NoAction——Cabinet 走软删除（行保留，不触发级联）；同时阻止误硬删仍被引用的柜。
@@ -167,7 +169,20 @@ public static class PaperbaseDbContextModelCreatingExtensions
             b.Property(x => x.PipelineCode).IsRequired().HasMaxLength(DocumentPipelineRunConsts.MaxPipelineCodeLength);
             b.Property(x => x.StatusMessage).HasMaxLength(DocumentPipelineRunConsts.MaxStatusMessageLength);
 
-            b.HasIndex(x => new { x.DocumentId, x.PipelineCode, x.AttemptNumber });
+            // #216：从 child entity 升为独立聚合根后，由子侧显式声明 FK + CASCADE。
+            // HasConstraintName 显式锁定 FK 名 = 拆分前 EF 自动生成的名字，避免 HasMany→HasOne 迁移
+            // 误判为"换 FK"产生 DropForeignKey+AddForeignKey 危险序列（EF Core issue #19137 家族）。
+            b.HasOne<Document>()
+                .WithMany()
+                .HasForeignKey(x => x.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName(DocumentPipelineRunDocumentForeignKey);
+
+            // #216 D2：原非唯一索引升级为 UNIQUE——并发 worker 撞同 (Doc, Pipeline, Attempt) 时
+            // DB 抛 DbUpdateException 兜底，避免静默产生重复 AttemptNumber。背景作业由 job 框架自动重试；
+            // HTTP 同步路径罕见场景 500 是可接受 fail-fast。索引名保持不变，迁移上理论只是 IsUnique 标志改动。
+            b.HasIndex(x => new { x.DocumentId, x.PipelineCode, x.AttemptNumber })
+                .IsUnique();
         });
 
         builder.Entity<DocumentType>(b =>

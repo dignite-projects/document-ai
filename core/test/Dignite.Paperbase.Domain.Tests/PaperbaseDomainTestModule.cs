@@ -1,3 +1,5 @@
+using Dignite.Paperbase.Documents.Pipelines;
+using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp.Modularity;
 
 namespace Dignite.Paperbase;
@@ -8,10 +10,10 @@ namespace Dignite.Paperbase;
 )]
 public class PaperbaseDomainTestModule : AbpModule
 {
-    // DocumentPipelineRunManager 不再依赖 IDocumentTypeRepository——typeCode 校验
-    // 责任已经移到 AppService 层（调用方先 load DocumentType 再传 manager）。
-    // Domain.Tests 无需 mock 仓储，测试自己 new DocumentType 实例传给 manager 即可。
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
+        // Manager 依赖 IDocumentPipelineRunRepository（#216）；用 Domain.Tests 共享的 closure-state fake
+        // 让 QueueAsync / DeriveLifecycle 的 DB 查询路径在内存里就能完整跑通。
+        context.Services.AddSingleton(PipelineRunRepositoryFake.Create());
     }
 }

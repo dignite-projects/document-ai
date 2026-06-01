@@ -15,12 +15,8 @@ public static class PaperbaseEntityFrameworkCoreQueryableExtensions
             return queryable;
         }
 
-        // 两个集合导航（PipelineRuns + ExtractedFieldValues / Issue #206）。单查询会产生
-        // PipelineRuns × ExtractedFieldValues 笛卡尔积、并把大字段 Markdown 在每行重复——
-        // 用 AsSplitQuery 拆成多条查询各取一个集合，避免行爆炸 / Markdown 重复传输。
-        return queryable
-            .Include(x => x.PipelineRuns)
-            .Include(x => x.ExtractedFieldValues)
-            .AsSplitQuery();
+        // 仅剩 ExtractedFieldValues 一个集合 child（#206）；单一 Include，无笛卡尔积风险，AsSplitQuery 已不必要。
+        // PipelineRuns 自 #216 拆为独立聚合根后不在此 eager-load——查询走 IDocumentPipelineRunRepository。
+        return queryable.Include(x => x.ExtractedFieldValues);
     }
 }

@@ -47,6 +47,7 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
     : PaperbaseTestBase<DocumentPipelineBackgroundJobPersistenceTestModule>
 {
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentPipelineRunRepository _runRepository;
     private readonly DocumentPipelineJobScheduler _pipelineJobScheduler;
     private readonly DocumentTextExtractionBackgroundJob _textExtractionJob;
     private readonly ITextExtractor _textExtractor;
@@ -59,6 +60,7 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
     public DocumentPipelineBackgroundJobPersistence_Tests()
     {
         _documentRepository = GetRequiredService<IDocumentRepository>();
+        _runRepository = GetRequiredService<IDocumentPipelineRunRepository>();
         _pipelineJobScheduler = GetRequiredService<DocumentPipelineJobScheduler>();
         _textExtractionJob = GetRequiredService<DocumentTextExtractionBackgroundJob>();
         _textExtractor = GetRequiredService<ITextExtractor>();
@@ -85,9 +87,10 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
         Guid classificationRunId = default;
         await WithUnitOfWorkAsync(async () =>
         {
-            var document = await _documentRepository.GetAsync(documentId, includeDetails: true);
-            var textExtractionRun = document.GetRun(textExtractionRunId);
-            var classificationRuns = document.PipelineRuns
+            // #216：PipelineRun 独立聚合根后改走 runRepo 查询。
+            var textExtractionRun = await _runRepository.FindAsync(textExtractionRunId);
+            var allRuns = await _runRepository.GetListByDocumentAsync(documentId);
+            var classificationRuns = allRuns
                 .Where(x => x.PipelineCode == PaperbasePipelines.Classification)
                 .ToList();
 
@@ -123,12 +126,11 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var document = await _documentRepository.GetAsync(documentId, includeDetails: true);
+            var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+            var allRuns = await _runRepository.GetListByDocumentAsync(documentId);
 
-            document.GetRun(textExtractionRunId)!.Status.ShouldBe(PipelineRunStatus.Succeeded);
-            document.PipelineRuns
-                .Count(x => x.PipelineCode == PaperbasePipelines.Classification)
-                .ShouldBe(1);
+            allRuns.Single(r => r.Id == textExtractionRunId).Status.ShouldBe(PipelineRunStatus.Succeeded);
+            allRuns.Count(x => x.PipelineCode == PaperbasePipelines.Classification).ShouldBe(1);
             document.ReviewStatus.ShouldBe(DocumentReviewStatus.None);
         });
 
@@ -201,8 +203,8 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var document = await _documentRepository.GetAsync(documentId, includeDetails: true);
-            document.GetRun(textExtractionRunId)!.Status.ShouldBe(PipelineRunStatus.Succeeded);
+            var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+            (await _runRepository.FindAsync(textExtractionRunId))!.Status.ShouldBe(PipelineRunStatus.Succeeded);
             document.ExtractionMetadata.ShouldNotBeNull();
             document.ExtractionMetadata!.NativePayloadManifest.ShouldBeNull();
         });
@@ -231,8 +233,8 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var document = await _documentRepository.GetAsync(documentId, includeDetails: true);
-            document.GetRun(textExtractionRunId)!.Status.ShouldBe(PipelineRunStatus.Succeeded);
+            var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+            (await _runRepository.FindAsync(textExtractionRunId))!.Status.ShouldBe(PipelineRunStatus.Succeeded);
             document.ExtractionMetadata.ShouldNotBeNull();
             document.ExtractionMetadata!.NativePayloadManifest.ShouldBeNull();
         });
@@ -259,8 +261,8 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var document = await _documentRepository.GetAsync(documentId, includeDetails: true);
-            document.GetRun(textExtractionRunId)!.Status.ShouldBe(PipelineRunStatus.Succeeded);
+            var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+            (await _runRepository.FindAsync(textExtractionRunId))!.Status.ShouldBe(PipelineRunStatus.Succeeded);
             document.ExtractionMetadata.ShouldNotBeNull();
             document.ExtractionMetadata!.NativePayloadManifest.ShouldBeNull();
         });
@@ -287,8 +289,8 @@ public class DocumentPipelineBackgroundJobPersistence_Tests
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var document = await _documentRepository.GetAsync(documentId, includeDetails: true);
-            document.GetRun(textExtractionRunId)!.Status.ShouldBe(PipelineRunStatus.Succeeded);
+            var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+            (await _runRepository.FindAsync(textExtractionRunId))!.Status.ShouldBe(PipelineRunStatus.Succeeded);
             document.Markdown.ShouldBe("# Scan\n\nbody");
             document.ExtractionMetadata.ShouldNotBeNull();
             document.ExtractionMetadata!.NativePayloadManifest.ShouldBeNull();

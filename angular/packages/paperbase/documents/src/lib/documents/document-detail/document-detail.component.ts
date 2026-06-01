@@ -9,7 +9,7 @@ import {
   computed,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { of, switchMap } from 'rxjs';
+import { forkJoin, of, switchMap } from 'rxjs';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { LocalizationPipe, LocalizationService, PermissionService } from '@abp/ng.core';
@@ -19,6 +19,7 @@ import {
   DocumentDto,
   DocumentLifecycleStatus,
   DocumentPipelineRunDto,
+  DocumentPipelineRunService,
   DocumentReviewStatus,
   DocumentService,
   DocumentTypeService,
@@ -63,6 +64,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly documentService = inject(DocumentService);
+  private readonly documentPipelineRunService = inject(DocumentPipelineRunService);
   private readonly documentTypeService = inject(DocumentTypeService);
   private readonly fieldDefinitionService = inject(FieldDefinitionService);
   private readonly toaster = inject(ToasterService);
@@ -79,6 +81,9 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   );
 
   document = signal<DocumentDto | null>(null);
+  // #216：PipelineRun 已拆为独立聚合根，从 DocumentDto.pipelineRuns 移除——
+  // 改为独立 signal，loadDocument 时通过 DocumentPipelineRunService 单独拉取。
+  pipelineRuns = signal<DocumentPipelineRunDto[]>([]);
   isLoading = signal(true);
   isTextExpanded = signal(false);
   imageError = signal(false);
@@ -95,10 +100,10 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   readonly PipelineRunStatus = PipelineRunStatus;
 
   pipelineRows = computed<PipelineRow[]>(() => {
-    const doc = this.document();
-    if (!doc) return [];
+    if (!this.document()) return [];
 
-    const allRuns = doc.pipelineRuns ?? [];
+    // #216：runs 来源从 doc.pipelineRuns 改为独立 pipelineRuns signal（DocumentPipelineRunService）。
+    const allRuns = this.pipelineRuns();
     const known: PipelineRow[] = KNOWN_PIPELINE_CODES.map(code => this.toPipelineRow(
       code,
       `::Document:Pipeline:${code}`,
@@ -197,27 +202,32 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
 
   private loadDocument(): void {
     this.isLoading.set(true);
-    this.documentService.get(this.documentId)
+    // doc + runs 互相独立（#216 后），并行拉一次；fieldDefinitions 依赖 doc.documentTypeCode 仍串行。
+    forkJoin({
+      doc: this.documentService.get(this.documentId),
+      runs: this.documentPipelineRunService.getListByDocument(this.documentId),
+    })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-      next: doc => {
-        this.document.set(doc);
-        this.isLoading.set(false);
-        // 仅图片需要立即加载（内联预览）；非图片等用户点击"打开文件"时再下载
-        if (doc.fileOrigin?.contentType?.startsWith('image/')) {
-          this.loadBlob();
-        }
-        // 编辑字段需要该类型的字段定义（含 LLM 漏抽的空字段）以支持补全。
-        // getList 需 ConfirmClassification 权限，仅在可编辑时拉取避免 403。
-        this.fieldDefinitions.set([]);
-        if (this.canEditFields && doc.documentTypeCode) {
-          this.loadFieldDefinitions(doc.documentTypeCode);
-        }
-      },
-      error: () => {
-        this.isLoading.set(false);
-      },
-    });
+        next: ({ doc, runs }) => {
+          this.document.set(doc);
+          this.pipelineRuns.set(runs);
+          this.isLoading.set(false);
+          // 仅图片需要立即加载（内联预览）；非图片等用户点击"打开文件"时再下载
+          if (doc.fileOrigin?.contentType?.startsWith('image/')) {
+            this.loadBlob();
+          }
+          // 编辑字段需要该类型的字段定义（含 LLM 漏抽的空字段）以支持补全。
+          // getList 需 ConfirmClassification 权限，仅在可编辑时拉取避免 403。
+          this.fieldDefinitions.set([]);
+          if (this.canEditFields && doc.documentTypeCode) {
+            this.loadFieldDefinitions(doc.documentTypeCode);
+          }
+        },
+        error: () => {
+          this.isLoading.set(false);
+        },
+      });
   }
 
   // doc.documentTypeCode 是 Document 出口契约的当前 code 投影（#207）；字段定义 API 按不可变

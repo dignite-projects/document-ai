@@ -32,6 +32,17 @@ This avoids holding database connections, locks, or transactions while external 
 - Do not introduce repositories for child entities to work around persistence issues.
 - If a job carries an execution/run identifier in its args, persist that same identifier before enqueueing or beginning the job, and use it when completing or failing the job.
 
+### DocumentPipelineRun 例外（#216）
+
+`DocumentPipelineRun` 本身就是 `AggregateRoot<Guid>`，通过 `IDocumentPipelineRunRepository` 直接操作，**不再经 `Document` 聚合根**。后台作业（`DocumentTextExtractionBackgroundJob` / `DocumentClassificationBackgroundJob`）三阶段 UoW 的 BeginRun / CompleteRun / FailRun 都按这个模式：
+
+- 用 `_documentRepository.GetAsync(id, includeDetails: false)` 加载 Document（**不再** `GetWithPipelineRunsAsync`）
+- 用 `_runRepository.FindAsync(runId)` 加载具体的 run（**不再** `document.GetRun(runId)`）
+- 通过 `DocumentPipelineRunManager` 修改 run 状态（manager 内部 `_runRepo.UpdateAsync` 显式持久化）
+- 同 UoW commit 时 Document 主行 UPDATE + PipelineRun 行 UPDATE / INSERT 一并 flush
+
+**这是该实体的唯一例外**——其他流水线相关 child 实体（如未来的 ChunkBlock）仍按"通过聚合根访问"的标准模式管理。具体决策详见 Issue #216。
+
 ## Tests
 
 When changing a background job that performs slow or external work, keep or add tests that verify the external work runs without an ambient UoW. A direct assertion such as `_unitOfWorkManager.Current.ShouldBeNull()` at the external call boundary is preferred.

@@ -21,6 +21,7 @@ public class DocumentClassificationBackgroundJob
     : AsyncBackgroundJob<DocumentClassificationJobArgs>, ITransientDependency
 {
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentPipelineRunRepository _runRepository;
     private readonly IDocumentTypeRepository _documentTypeRepository;
     private readonly DocumentPipelineRunManager _pipelineRunManager;
     private readonly DocumentPipelineRunAccessor _pipelineRunAccessor;
@@ -33,6 +34,7 @@ public class DocumentClassificationBackgroundJob
 
     public DocumentClassificationBackgroundJob(
         IDocumentRepository documentRepository,
+        IDocumentPipelineRunRepository runRepository,
         IDocumentTypeRepository documentTypeRepository,
         DocumentPipelineRunManager pipelineRunManager,
         DocumentPipelineRunAccessor pipelineRunAccessor,
@@ -44,6 +46,7 @@ public class DocumentClassificationBackgroundJob
         IUnitOfWorkManager unitOfWorkManager)
     {
         _documentRepository = documentRepository;
+        _runRepository = runRepository;
         _documentTypeRepository = documentTypeRepository;
         _pipelineRunManager = pipelineRunManager;
         _pipelineRunAccessor = pipelineRunAccessor;
@@ -75,7 +78,7 @@ public class DocumentClassificationBackgroundJob
     {
         using var uow = _unitOfWorkManager.Begin(requiresNew: true);
 
-        var document = await _documentRepository.GetWithPipelineRunsAsync(args.DocumentId);
+        var document = await _documentRepository.GetAsync(args.DocumentId, includeDetails: false);
 
         // 候选集组装：按 Document.TenantId 匹配单层文档类型，不跨层 union；按 Priority DESC + 截断。
         List<DocumentType> candidates;
@@ -130,8 +133,8 @@ public class DocumentClassificationBackgroundJob
     {
         using var uow = _unitOfWorkManager.Begin(requiresNew: true);
 
-        var document = await _documentRepository.GetWithPipelineRunsAsync(workItem.DocumentId);
-        var run = document.GetRun(workItem.RunId)
+        var document = await _documentRepository.GetAsync(workItem.DocumentId, includeDetails: false);
+        var run = await _runRepository.FindAsync(workItem.RunId)
             ?? await _pipelineRunAccessor.BeginOrStartAsync(
                 document, workItem.RunId, PaperbasePipelines.Classification);
 
@@ -145,8 +148,8 @@ public class DocumentClassificationBackgroundJob
     {
         using var uow = _unitOfWorkManager.Begin(requiresNew: true);
 
-        var document = await _documentRepository.GetWithPipelineRunsAsync(documentId);
-        var run = document.GetRun(runId)
+        var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+        var run = await _runRepository.FindAsync(runId)
             ?? await _pipelineRunAccessor.BeginOrStartAsync(
                 document, runId, PaperbasePipelines.Classification);
 

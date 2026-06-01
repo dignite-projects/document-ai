@@ -23,6 +23,7 @@ namespace Dignite.Paperbase.Documents;
 public class DocumentAppService : PaperbaseAppService, IDocumentAppService
 {
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentPipelineRunRepository _runRepository;
     private readonly IDocumentTypeRepository _documentTypeRepository;
     private readonly IFieldDefinitionRepository _fieldDefinitionRepository;
     private readonly ICabinetRepository _cabinetRepository;
@@ -33,6 +34,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
 
     public DocumentAppService(
         IDocumentRepository documentRepository,
+        IDocumentPipelineRunRepository runRepository,
         IDocumentTypeRepository documentTypeRepository,
         IFieldDefinitionRepository fieldDefinitionRepository,
         ICabinetRepository cabinetRepository,
@@ -42,6 +44,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         IDistributedEventBus distributedEventBus)
     {
         _documentRepository = documentRepository;
+        _runRepository = runRepository;
         _documentTypeRepository = documentTypeRepository;
         _fieldDefinitionRepository = fieldDefinitionRepository;
         _cabinetRepository = cabinetRepository;
@@ -381,9 +384,10 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
                 .WithData("PipelineCode", input.PipelineCode);
         }
 
-        // 只需 run 历史（取最近一次 Run 判可重试）；不碰字段值。租户隔离由 ambient IMultiTenant 过滤器施加，
-        // GetWithPipelineRunsAsync 对跨租户 / 不存在 id 同样抛 EntityNotFound。
-        var document = await _documentRepository.GetWithPipelineRunsAsync(id);
+        // 只需文档主行（IsDeleted / FileOrigin）+ 最近一次该 pipeline 的 run（判可重试）；不碰字段值。
+        // 租户隔离由 ambient IMultiTenant 过滤器施加，GetAsync / runRepo 查询对跨租户 / 不存在 id 行为一致。
+        // #216：PipelineRun 独立聚合根后改走 runRepo.FindLatestByDocumentAndCodeAsync。
+        var document = await _documentRepository.GetAsync(id, includeDetails: false);
 
         if (document.IsDeleted)
         {
@@ -391,7 +395,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
                 .WithData("FileName", document.FileOrigin.BlobName);
         }
 
-        var latestRun = document.GetLatestRun(input.PipelineCode);
+        var latestRun = await _runRepository.FindLatestByDocumentAndCodeAsync(id, input.PipelineCode);
         if (latestRun == null)
         {
             throw new BusinessException(PaperbaseErrorCodes.Pipeline.NeverRan)

@@ -1,9 +1,7 @@
 using System;
 using Dignite.Paperbase.Documents;
-using Volo.Abp.Data;
 using Volo.Abp.Domain.Entities;
 using Volo.Abp.MultiTenancy;
-using Volo.Abp.ObjectExtending;
 
 namespace Dignite.Paperbase.Documents.Pipelines;
 
@@ -14,10 +12,17 @@ namespace Dignite.Paperbase.Documents.Pipelines;
 ///
 /// 实现 <see cref="IHasExtraProperties"/>：各 pipeline 的产物（分类候选、chunk 数量等）
 /// 以 key-value 形式写入 ExtraProperties，避免为每种 pipeline 扩列。
+/// <para>
+/// 拆于 #216：从 <see cref="Document"/> 聚合 child entity 升为独立 <see cref="AggregateRoot{Guid}"/>，
+/// 通过 <see cref="IDocumentPipelineRunRepository"/> 操作；与 <see cref="Document"/> 通过 <see cref="DocumentId"/>
+/// reference-by-id 关联（无导航属性），DB 层仍保留 FK + CASCADE（Document 硬删时一并清除）。
+/// 仍由 <see cref="DocumentPipelineRunManager"/> 编排状态流转——<c>internal</c> 修饰符把 Mark 方法和构造器
+/// 钳在 Domain assembly 内，禁止任何外部直接 new / 改状态。
+/// </para>
 /// </summary>
-public class DocumentPipelineRun : Entity<Guid>, IMultiTenant, IHasExtraProperties
+public class DocumentPipelineRun : AggregateRoot<Guid>, IMultiTenant
 {
-    public virtual ExtraPropertyDictionary ExtraProperties { get; protected set; }
+    // ExtraProperties / IHasExtraProperties 由 AggregateRoot<TKey> 基类提供，无需再次声明（拆于 #216）。
 
     public virtual Guid? TenantId { get; private set; }
 
@@ -46,8 +51,7 @@ public class DocumentPipelineRun : Entity<Guid>, IMultiTenant, IHasExtraProperti
 
     protected DocumentPipelineRun()
     {
-        ExtraProperties = new ExtraPropertyDictionary();
-        this.SetDefaultsForExtraProperties();
+        // AggregateRoot<TKey> 基类构造已初始化 ExtraProperties + SetDefaultsForExtraProperties。
     }
 
     internal DocumentPipelineRun(
@@ -63,8 +67,6 @@ public class DocumentPipelineRun : Entity<Guid>, IMultiTenant, IHasExtraProperti
         PipelineCode = pipelineCode;
         AttemptNumber = attemptNumber;
         Status = PipelineRunStatus.Pending;
-        ExtraProperties = new ExtraPropertyDictionary();
-        this.SetDefaultsForExtraProperties();
     }
 
     internal void MarkRunning(DateTime now)
@@ -98,6 +100,11 @@ public class DocumentPipelineRun : Entity<Guid>, IMultiTenant, IHasExtraProperti
         Status = PipelineRunStatus.Skipped;
         StatusMessage = Truncate(statusMessage);
         CompletedAt = now;
+    }
+
+    internal void PublishRunCompletedEvent()
+    {
+        AddLocalEvent(new DocumentPipelineRunCompletedEvent(DocumentId, PipelineCode, Status));
     }
 
     private static string? Truncate(string? value) =>

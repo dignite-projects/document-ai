@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Text.Json;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Documents.Fields;
-using Dignite.Paperbase.Documents.Pipelines;
 using Volo.Abp.Application.Dtos;
 
 namespace Dignite.Paperbase.Documents;
@@ -42,5 +41,6 @@ public class DocumentDto : EntityDto<Guid>
     public Dictionary<string, JsonElement>? ExtractedFields { get; set; }
 
     public DateTime CreationTime { get; set; }
-    public IList<DocumentPipelineRunDto> PipelineRuns { get; set; } = new List<DocumentPipelineRunDto>();
+
+    // 运行记录 → IDocumentPipelineRunAppService.GetListAsync(documentId)（#216 拆为独立聚合根）。
 }

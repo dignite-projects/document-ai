@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Documents.DocumentTypes;
+using Microsoft.Extensions.Logging;
 using Volo.Abp;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Services;
@@ -15,42 +16,111 @@ namespace Dignite.Paperbase.Documents.Pipelines;
 /// 负责创建 Run、驱动状态流转、在每次状态变化后重新派生 Document.LifecycleStatus。
 /// 所有向 Document 写入流水线结果的代码都必须通过此服务。
 /// <para>
-/// 设计选择：本 manager <b>不查 DB</b>——typeCode 校验责任在 AppService（调用方负责
+/// 设计选择：本 manager <b>不查 DocumentType</b>——typeCode 校验责任在 AppService（调用方负责
 /// 通过 <c>IDocumentTypeRepository.FindByTypeCodeAsync</c> 加载 <see cref="DocumentType"/>
 /// 并传给本 manager）。这避免热路径重复查 DB（BackgroundJob 已 load 一次，manager 再查一次浪费），
-/// 并让 Domain 层 manager 纯净不依赖 Repository。
+/// 并让 Domain 层 manager 不耦合上层数据访问关心。
+/// </para>
+/// <para>
+/// #216 起 <see cref="DocumentPipelineRun"/> 是独立聚合根：状态流转通过 <see cref="IDocumentPipelineRunRepository"/>
+/// 持久化；<see cref="DeriveLifecycleAsync"/> 查仓储算最新 run，但 <b>EF Core 默认 LINQ 查 DB</b>，看不到
+/// 本 UoW 内尚未 flush 的 Insert/Modify——故每次 Manager 方法都把"刚改动的 run 实例"以 <c>runJustChanged</c>
+/// 参数传入，在 DeriveLifecycleAsync 内 in-memory override DB 结果，确保派生用的是 post-change 视图。
+/// </para>
+/// <para>
+/// <b>AttemptNumber 并发安全</b>（#216 D2）：拆分前 Document 主行 UPDATE 提供隐式行级锁；拆分后无此互斥。
+/// 防御分两层：
+/// (1) DB 层 <b>unique index</b> <c>(DocumentId, PipelineCode, AttemptNumber)</c> 硬约束；
+/// (2) <see cref="QueueAsync"/> 内捕获撞键异常 → 经
+/// <see cref="IDocumentPipelineRunRepository.DetachAsync"/> 从 EF tracker 移除失败实体 → 重新读 latest +
+/// 重算 attempt + 重试（最多 <see cref="MaxAttemptNumberRetries"/> 次）。HTTP 同步路径（<c>RetryPipelineAsync</c>）
+/// 不再裸 500。仅当超过重试上限才抛——此时通常是真实病态并发或 DB 不可用。
 /// </para>
 /// </summary>
 public class DocumentPipelineRunManager : DomainService
 {
-    public DocumentPipelineRunManager()
+    /// <summary>AttemptNumber 撞 unique 索引时 QueueAsync 的最大重试次数（含首发；总尝试上限）。</summary>
+    public const int MaxAttemptNumberRetries = 3;
+
+    private readonly IDocumentPipelineRunRepository _runRepo;
+
+    public DocumentPipelineRunManager(IDocumentPipelineRunRepository runRepo)
     {
+        _runRepo = runRepo;
     }
 
-    public virtual Task<DocumentPipelineRun> QueueAsync(
+    public virtual async Task<DocumentPipelineRun> QueueAsync(
         Document document,
         string pipelineCode,
         Guid? pipelineRunId = null)
     {
-        var attemptNumber = document.PipelineRuns
-            .Where(r => r.PipelineCode == pipelineCode)
-            .Select(r => r.AttemptNumber)
-            .DefaultIfEmpty(0)
-            .Max() + 1;
+        Exception? lastCollision = null;
+        DocumentPipelineRun? failedAttempt = null;
 
-        var run = new DocumentPipelineRun(
-            pipelineRunId ?? GuidGenerator.Create(),
-            document.Id,
-            document.TenantId,
-            pipelineCode,
-            attemptNumber);
+        for (var attempt = 0; attempt < MaxAttemptNumberRetries; attempt++)
+        {
+            // Retry 前先把上一次撞键失败的实体从 EF tracker 移除——SaveChanges 失败后 EF 把它留在 Added 状态，
+            // 不 detach 的话下一次 SaveChanges 会重新尝试同一个失败实体（且持有原冲突的 AttemptNumber）。
+            if (failedAttempt != null)
+            {
+                await _runRepo.DetachAsync(failedAttempt);
+                failedAttempt = null;
+            }
 
-        run.MarkPending(Clock.Now);
-        document.AddPipelineRun(run);
+            var latest = await _runRepo.FindLatestByDocumentAndCodeAsync(document.Id, pipelineCode);
+            var attemptNumber = (latest?.AttemptNumber ?? 0) + 1;
 
-        DeriveLifecycle(document);
+            var run = new DocumentPipelineRun(
+                pipelineRunId ?? GuidGenerator.Create(),
+                document.Id,
+                document.TenantId,
+                pipelineCode,
+                attemptNumber);
 
-        return Task.FromResult(run);
+            run.MarkPending(Clock.Now);
+
+            try
+            {
+                // autoSave:true → 触发本 UoW 立即 SaveChanges，撞键当场抛 DbUpdateException 而非延后到外层 commit。
+                // 同 UoW / 同事务：成功的 INSERT 仍由外层 UoW commit 才真正可见给其他事务；失败 / 外层回滚一并撤销。
+                await _runRepo.InsertAsync(run, autoSave: true);
+                await DeriveLifecycleAsync(document, runJustChanged: run);
+                return run;
+            }
+            catch (Exception ex) when (IsAttemptNumberUniqueViolation(ex)
+                                       && attempt < MaxAttemptNumberRetries - 1)
+            {
+                Logger.LogWarning(ex,
+                    "AttemptNumber collision on document {DocumentId} pipeline {PipelineCode} attempt {AttemptNumber}; retrying ({Retry}/{Max}).",
+                    document.Id, pipelineCode, attemptNumber, attempt + 1, MaxAttemptNumberRetries);
+                lastCollision = ex;
+                failedAttempt = run;
+            }
+        }
+
+        throw new BusinessException(PaperbaseErrorCodes.Pipeline.AttemptNumberRetryExhausted, innerException: lastCollision)
+            .WithData("DocumentId", document.Id)
+            .WithData("PipelineCode", pipelineCode);
+    }
+
+    /// <summary>
+    /// 判断异常链是否表征 (DocumentId, PipelineCode, AttemptNumber) unique 索引撞键。
+    /// 不引用 EF Core / Microsoft.Data.SqlClient（Domain 层禁止）——按异常链 message 字符串 / SQL Server 错误码侦测，
+    /// 误判面窄到只剩"消息恰好含 UNIQUE / duplicate key / 2601 / 2627 之一"的其他场景，可接受。
+    /// </summary>
+    private static bool IsAttemptNumberUniqueViolation(Exception ex)
+    {
+        for (var current = ex; current != null; current = current.InnerException)
+        {
+            var msg = current.Message ?? string.Empty;
+            if (msg.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("2601") || msg.Contains("2627"))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     public virtual async Task<DocumentPipelineRun> StartAsync(
@@ -59,49 +129,26 @@ public class DocumentPipelineRunManager : DomainService
         Guid? pipelineRunId = null)
     {
         var run = await QueueAsync(document, pipelineCode, pipelineRunId);
-        run.MarkRunning(Clock.Now);
-        DeriveLifecycle(document);
+        await BeginAsync(document, run);
         return run;
     }
 
     public virtual Task BeginAsync(Document document, DocumentPipelineRun run)
     {
         run.MarkRunning(Clock.Now);
-        DeriveLifecycle(document);
-        return Task.CompletedTask;
+        return PersistAndDeriveAsync(document, run, publishCompletion: false);
     }
 
-    public virtual Task CompleteAsync(
-        Document document,
-        DocumentPipelineRun run)
+    public virtual Task CompleteAsync(Document document, DocumentPipelineRun run)
     {
         run.MarkSucceeded(Clock.Now);
-
-        document.PublishPipelineRunCompletedEvent(new DocumentPipelineRunCompletedEvent(
-            document.Id,
-            run.PipelineCode,
-            run.Status));
-
-        DeriveLifecycle(document);
-
-        return Task.CompletedTask;
+        return PersistAndDeriveAsync(document, run, publishCompletion: true);
     }
 
-    public virtual Task FailAsync(
-        Document document,
-        DocumentPipelineRun run,
-        string errorMessage)
+    public virtual Task FailAsync(Document document, DocumentPipelineRun run, string errorMessage)
     {
         run.MarkFailed(Clock.Now, errorMessage);
-
-        document.PublishPipelineRunCompletedEvent(new DocumentPipelineRunCompletedEvent(
-            document.Id,
-            run.PipelineCode,
-            run.Status));
-
-        DeriveLifecycle(document);
-
-        return Task.CompletedTask;
+        return PersistAndDeriveAsync(document, run, publishCompletion: true);
     }
 
     /// <summary>
@@ -194,37 +241,63 @@ public class DocumentPipelineRunManager : DomainService
         return CompleteAsync(document, run);
     }
 
-    public virtual Task SkipAsync(
-        Document document,
-        DocumentPipelineRun run,
-        string reason)
+    public virtual Task SkipAsync(Document document, DocumentPipelineRun run, string reason)
     {
         run.MarkSkipped(Clock.Now, reason);
+        return PersistAndDeriveAsync(document, run, publishCompletion: true);
+    }
 
-        document.PublishPipelineRunCompletedEvent(new DocumentPipelineRunCompletedEvent(
-            document.Id,
-            run.PipelineCode,
-            run.Status));
+    /// <summary>
+    /// Shared tail of every state transition: persist the run via repo, optionally fire the run-completed
+    /// LocalEvent, then re-derive Document.LifecycleStatus. BeginAsync skips the event (run is just starting,
+    /// not completing); Complete/Fail/Skip all publish it.
+    /// </summary>
+    private async Task PersistAndDeriveAsync(
+        Document document,
+        DocumentPipelineRun run,
+        bool publishCompletion)
+    {
+        await _runRepo.UpdateAsync(run);
 
-        DeriveLifecycle(document);
+        if (publishCompletion)
+        {
+            run.PublishRunCompletedEvent();
+        }
 
-        return Task.CompletedTask;
+        await DeriveLifecycleAsync(document, runJustChanged: run);
     }
 
     /// <summary>
     /// 根据所有关键流水线的最新 Run 派生 Document.LifecycleStatus。
+    /// <para>
+    /// <paramref name="runJustChanged"/>：本次 Manager 调用刚 Insert/Update 的 run。EF Core 默认 LINQ 查 DB，
+    /// 看不到本 UoW 内尚未 flush 的更改——故把内存 run 实例显式 in-memory override 进结果集，
+    /// 确保派生用的是 post-change 视图。
+    /// </para>
     /// </summary>
-    protected virtual void DeriveLifecycle(Document document)
+    protected virtual async Task DeriveLifecycleAsync(
+        Document document,
+        DocumentPipelineRun? runJustChanged = null)
     {
-        var derivedStatus = DocumentLifecycleStatus.Processing;
+        var latestRuns = await _runRepo.GetLatestRunsByCodesAsync(
+            document.Id, PaperbasePipelines.KeyPipelines);
 
+        // In-memory override：刚改动的 run 比 DB 读到的更新；按 AttemptNumber 比较接管同一 PipelineCode。
+        if (runJustChanged != null && PaperbasePipelines.KeyPipelines.Contains(runJustChanged.PipelineCode))
+        {
+            if (!latestRuns.TryGetValue(runJustChanged.PipelineCode, out var existing)
+                || runJustChanged.AttemptNumber >= existing.AttemptNumber)
+            {
+                latestRuns[runJustChanged.PipelineCode] = runJustChanged;
+            }
+        }
+
+        var derivedStatus = DocumentLifecycleStatus.Processing;
         var allSucceeded = true;
 
         foreach (var pipelineCode in PaperbasePipelines.KeyPipelines)
         {
-            var latestRun = document.GetLatestRun(pipelineCode);
-
-            if (latestRun == null)
+            if (!latestRuns.TryGetValue(pipelineCode, out var latestRun))
             {
                 allSucceeded = false;
                 continue;

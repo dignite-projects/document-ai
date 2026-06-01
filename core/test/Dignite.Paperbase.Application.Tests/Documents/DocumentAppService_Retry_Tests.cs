@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Dignite.Paperbase.Documents.Pipelines;
 using Dignite.Paperbase.Documents.Pipelines.Classification;
 using Dignite.Paperbase.Documents.Pipelines.TextExtraction;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +31,8 @@ public class DocumentAppServiceRetryTestModule : AbpModule
         context.Services.AddSingleton(Substitute.For<IBlobContainer<PaperbaseDocumentContainer>>());
         context.Services.AddSingleton(Substitute.For<IBackgroundJobManager>());
         context.Services.AddSingleton(Substitute.For<IDistributedEventBus>());
+        // #216：Manager 依赖 IDocumentPipelineRunRepository——用 closure-state fake 让 QueueAsync/DeriveLifecycle 正确工作。
+        context.Services.AddSingleton(PipelineRunRepositoryFake.Create());
     }
 }
 
@@ -43,6 +46,7 @@ public class DocumentAppService_Retry_Tests
 {
     private readonly IDocumentAppService _appService;
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentPipelineRunRepository _runRepository;
     private readonly IBackgroundJobManager _backgroundJobManager;
     private readonly DocumentPipelineRunManager _pipelineRunManager;
     private readonly ICurrentTenant _currentTenant;
@@ -51,6 +55,7 @@ public class DocumentAppService_Retry_Tests
     {
         _appService = GetRequiredService<IDocumentAppService>();
         _documentRepository = GetRequiredService<IDocumentRepository>();
+        _runRepository = GetRequiredService<IDocumentPipelineRunRepository>();
         _backgroundJobManager = GetRequiredService<IBackgroundJobManager>();
         _pipelineRunManager = GetRequiredService<DocumentPipelineRunManager>();
         _currentTenant = GetRequiredService<ICurrentTenant>();
@@ -68,7 +73,7 @@ public class DocumentAppService_Retry_Tests
             doc.Id,
             new RetryPipelineInput { PipelineCode = PaperbasePipelines.TextExtraction });
 
-        var retryRun = doc.GetLatestRun(PaperbasePipelines.TextExtraction);
+        var retryRun = await _runRepository.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.TextExtraction);
         retryRun.ShouldNotBeNull();
         retryRun.Status.ShouldBe(PipelineRunStatus.Pending);
         retryRun.AttemptNumber.ShouldBe(2);
@@ -183,8 +188,8 @@ public class DocumentAppService_Retry_Tests
         ex.Code.ShouldBe(PaperbaseErrorCodes.Pipeline.UnknownCode);
         // 未知 PipelineCode 必须在读 Document 之前就被拒绝——
         // 否则给业务模块一个旁路调度核心 Job 的口子。
-        await _documentRepository.DidNotReceive().GetWithPipelineRunsAsync(
-            Arg.Any<Guid>(), Arg.Any<CancellationToken>());
+        await _documentRepository.DidNotReceive().GetAsync(
+            Arg.Any<Guid>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -196,7 +201,7 @@ public class DocumentAppService_Retry_Tests
         var docTenant = Guid.NewGuid();
         var callerTenant = Guid.NewGuid();
         var doc = CreateDocument(tenantId: docTenant);
-        _documentRepository.GetWithPipelineRunsAsync(doc.Id, Arg.Any<CancellationToken>())
+        _documentRepository.GetAsync(doc.Id, false, Arg.Any<CancellationToken>())
             .ThrowsAsync(new EntityNotFoundException(typeof(Document), doc.Id));
 
         using (_currentTenant.Change(callerTenant))
@@ -262,8 +267,8 @@ public class DocumentAppService_Retry_Tests
 
     private void StubGet(Document doc)
     {
-        // RetryPipelineAsync 只需 run 历史，改走 GetWithPipelineRunsAsync。
-        _documentRepository.GetWithPipelineRunsAsync(doc.Id, Arg.Any<CancellationToken>())
+        // #216：RetryPipelineAsync 改走 GetAsync(includeDetails:false) + runRepo.FindLatestByDocumentAndCodeAsync。
+        _documentRepository.GetAsync(doc.Id, false, Arg.Any<CancellationToken>())
             .Returns(doc);
     }
 

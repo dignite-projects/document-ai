@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Documents;
+using Dignite.Paperbase.Documents.Pipelines;
 using Shouldly;
 using Volo.Abp;
 using Xunit;
@@ -10,10 +11,12 @@ namespace Dignite.Paperbase.Documents;
 public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<PaperbaseDomainTestModule>
 {
     private readonly DocumentPipelineRunManager _manager;
+    private readonly IDocumentPipelineRunRepository _runRepo;
 
     public DocumentPipelineRunManagerTests()
     {
         _manager = GetRequiredService<DocumentPipelineRunManager>();
+        _runRepo = GetRequiredService<IDocumentPipelineRunRepository>();
     }
 
     // ────────────────────────────────────────────────────────────────────────────
@@ -57,7 +60,8 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
 
         run.Status.ShouldBe(PipelineRunStatus.Pending);
         run.AttemptNumber.ShouldBe(1);
-        doc.GetLatestRun(PaperbasePipelines.TextExtraction).ShouldBe(run);
+        (await _runRepo.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.TextExtraction))
+            .ShouldBe(run);
         doc.LifecycleStatus.ShouldBe(DocumentLifecycleStatus.Processing);
     }
 
@@ -124,8 +128,8 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
         // Latest run for TextExtraction is now Succeeded; Classification still missing → Processing
         doc.LifecycleStatus.ShouldBe(DocumentLifecycleStatus.Processing);
 
-        // Verify GetLatestRun returns attempt 2
-        var latestRun = doc.GetLatestRun(PaperbasePipelines.TextExtraction);
+        // Verify latest run for TextExtraction is attempt 2 (via runRepo, #216 拆分后从聚合根读取)
+        var latestRun = await _runRepo.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.TextExtraction);
         latestRun.ShouldNotBeNull();
         latestRun.AttemptNumber.ShouldBe(2);
         latestRun.Status.ShouldBe(PipelineRunStatus.Succeeded);
@@ -148,7 +152,7 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
 
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
 
-        var latestRun = doc.GetLatestRun(PaperbasePipelines.Classification);
+        var latestRun = await _runRepo.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         latestRun!.Status.ShouldBe(PipelineRunStatus.Succeeded);
     }
 
@@ -192,7 +196,7 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
         doc.ClassificationConfidence.ShouldBe(1.0);
         doc.ReviewStatus.ShouldBe(DocumentReviewStatus.Reviewed);
 
-        var latestRun = doc.GetLatestRun(PaperbasePipelines.Classification);
+        var latestRun = await _runRepo.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         latestRun!.Status.ShouldBe(PipelineRunStatus.Succeeded);
     }
 

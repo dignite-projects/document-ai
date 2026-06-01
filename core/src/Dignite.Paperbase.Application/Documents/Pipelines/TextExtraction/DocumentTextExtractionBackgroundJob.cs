@@ -25,6 +25,7 @@ public class DocumentTextExtractionBackgroundJob
     : AsyncBackgroundJob<DocumentTextExtractionJobArgs>, ITransientDependency
 {
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentPipelineRunRepository _runRepository;
     private readonly DocumentPipelineRunManager _pipelineRunManager;
     private readonly DocumentPipelineRunAccessor _pipelineRunAccessor;
     private readonly DocumentPipelineJobScheduler _pipelineJobScheduler;
@@ -45,6 +46,7 @@ public class DocumentTextExtractionBackgroundJob
 
     public DocumentTextExtractionBackgroundJob(
         IDocumentRepository documentRepository,
+        IDocumentPipelineRunRepository runRepository,
         DocumentPipelineRunManager pipelineRunManager,
         DocumentPipelineRunAccessor pipelineRunAccessor,
         DocumentPipelineJobScheduler pipelineJobScheduler,
@@ -58,6 +60,7 @@ public class DocumentTextExtractionBackgroundJob
         IOptions<PaperbaseAIBehaviorOptions> behaviorOptions)
     {
         _documentRepository = documentRepository;
+        _runRepository = runRepository;
         _pipelineRunManager = pipelineRunManager;
         _pipelineRunAccessor = pipelineRunAccessor;
         _pipelineJobScheduler = pipelineJobScheduler;
@@ -108,7 +111,7 @@ public class DocumentTextExtractionBackgroundJob
     {
         using var uow = _unitOfWorkManager.Begin(requiresNew: true);
 
-        var document = await _documentRepository.GetWithPipelineRunsAsync(args.DocumentId);
+        var document = await _documentRepository.GetAsync(args.DocumentId, includeDetails: false);
         var run = await _pipelineRunAccessor.BeginOrStartAsync(
             document, args.PipelineRunId, PaperbasePipelines.TextExtraction);
         await _documentRepository.UpdateAsync(document, autoSave: true);
@@ -131,8 +134,8 @@ public class DocumentTextExtractionBackgroundJob
     {
         using var uow = _unitOfWorkManager.Begin(requiresNew: true);
 
-        var document = await _documentRepository.GetWithPipelineRunsAsync(documentId);
-        var run = document.GetRun(runId)
+        var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+        var run = await _runRepository.FindAsync(runId)
             ?? await _pipelineRunAccessor.BeginOrStartAsync(
                 document, runId, PaperbasePipelines.TextExtraction);
 
@@ -282,8 +285,8 @@ public class DocumentTextExtractionBackgroundJob
     {
         using var uow = _unitOfWorkManager.Begin(requiresNew: true);
 
-        var document = await _documentRepository.GetWithPipelineRunsAsync(documentId);
-        var run = document.GetRun(runId)
+        var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+        var run = await _runRepository.FindAsync(runId)
             ?? await _pipelineRunAccessor.BeginOrStartAsync(
                 document, runId, PaperbasePipelines.TextExtraction);
 

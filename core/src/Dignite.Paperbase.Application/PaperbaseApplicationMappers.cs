@@ -10,24 +10,23 @@ using Volo.Abp.Mapperly;
 namespace Dignite.Paperbase;
 
 /// <summary>
-/// Document -> DocumentDto
-/// FileOrigin and PipelineRun nested mappings are consolidated here (Mapperly compile-time constraint).
+/// Document -> DocumentDto。
 /// <para>
 /// <c>DocumentTypeCode</c>（外部 wire-format）与 <c>ExtractedFields</c> 字典 key（字段名）是 Id → code/name 的查找投影
 /// （#207：内部存 <see cref="Document.DocumentTypeId"/> 与 <see cref="DocumentExtractedField.FieldDefinitionId"/>），
 /// 需穿透 soft-delete 的批量 join，mapper 无法独立完成——故 <see cref="MapperIgnoreTargetAttribute"/> 忽略后由
-/// <c>DocumentAppService</c> 批量填充（无 N+1）。PipelineRuns 经 <c>[UseMapper]</c> 嵌套映射，其
-/// <c>Candidates</c> AfterMap 由子 mapper 自身的 Map wrapper 触发，与本 mapper 无关。
+/// <c>DocumentAppService</c> 批量填充（无 N+1）。
 /// ExtractionMetadata 在 Document 上是 typed JSON 值对象，Mapperly 自动映射字段到 DTO 时会找不到对应的目标——
 /// DocumentDto 不透出 ExtractionMetadata，故字段不包含在 DTO 中。
+/// </para>
+/// <para>
+/// #216：PipelineRuns 已从 DocumentDto 出口契约移除，<see cref="DocumentPipelineRunToDocumentPipelineRunDtoMapper"/>
+/// 不再以 <c>[UseMapper]</c> 嵌套调用，改由独立 <c>IDocumentPipelineRunAppService</c> 直接调用其 <c>Map</c>。
 /// </para>
 /// </summary>
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class DocumentToDocumentDtoMapper : MapperBase<Document, DocumentDto>
 {
-    [UseMapper]
-    private readonly DocumentPipelineRunToDocumentPipelineRunDtoMapper _pipelineRunMapper = new();
-
     [MapperIgnoreTarget(nameof(DocumentDto.DocumentTypeCode))]
     [MapperIgnoreTarget(nameof(DocumentDto.ExtractedFields))]
     public override partial DocumentDto Map(Document source);

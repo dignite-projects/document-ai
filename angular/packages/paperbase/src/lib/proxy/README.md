@@ -9,11 +9,15 @@ Notable hand edits (do **not** lose these if you ever regenerate):
 - `http-api/documents/document.service.ts`
   - `upload(file: File)` posts `FormData` (the auto-generated shape was wrong)
   - `retryPipeline(id, pipelineCode)` — endpoint added after the last regeneration
-- `http-api/documents/document-relation.service.ts`
-  - `getList` query param fixed: `documentId` (matches backend `IDocumentRelationAppService.GetListAsync(Guid documentId)`)
+- `http-api/documents/document-pipeline-run.service.ts`
+  - **#216**: surfaces independent `IDocumentPipelineRunAppService` (added when
+    `DocumentPipelineRun` was promoted from Document child entity to its own
+    aggregate root). Consumed by `document-detail.component.ts`.
 - `documents/models.ts`
-  - `DocumentDto.classificationConfidence`, `DocumentReviewStatus`, `pipelineRuns`
-    promoted to required to match what the UI actually reads
+  - `DocumentDto.classificationConfidence`, `DocumentReviewStatus` promoted to
+    required to match what the UI actually reads
+  - **#216**: `DocumentDto.pipelineRuns` removed — pipeline runs come from the
+    new `DocumentPipelineRunService.getListByDocument(id)` endpoint
   - `DocumentPipelineRunDto.extraProperties` retained (generic ExtraProperties
     bag for future per-pipeline payloads)
   - `DocumentPipelineRunDto.candidates` + `PipelineRunCandidate` mirror the

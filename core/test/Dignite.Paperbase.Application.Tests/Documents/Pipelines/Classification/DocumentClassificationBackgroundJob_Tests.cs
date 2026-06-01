@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Dignite.Paperbase.Abstractions.Documents;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents;
+using Dignite.Paperbase.Documents.Pipelines;
 using Dignite.Paperbase.Documents.Pipelines.Classification;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +31,8 @@ public class DocumentClassificationJobTestModule : AbpModule
         context.Services.AddSingleton(Substitute.For<IDocumentRepository>());
         context.Services.AddSingleton(Substitute.For<IDistributedEventBus>());
         context.Services.AddSingleton(Substitute.For<IBackgroundJobManager>());
+        // #216：Manager + 后台作业 BeginRun/CompleteRun/FailRun 都走 IDocumentPipelineRunRepository。
+        context.Services.AddSingleton(PipelineRunRepositoryFake.Create());
 
         // 字段架构 v2：候选集来自 IDocumentTypeRepository（DB），按 Document.TenantId 精确匹配单层
         var contractType = new DocumentType(
@@ -69,6 +72,7 @@ public class DocumentClassificationBackgroundJob_Tests
 {
     private readonly DocumentClassificationBackgroundJob _job;
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentPipelineRunRepository _runRepository;
     private readonly DocumentClassificationWorkflow _workflow;
     private readonly IDistributedEventBus _eventBus;
 
@@ -76,6 +80,7 @@ public class DocumentClassificationBackgroundJob_Tests
     {
         _job = GetRequiredService<DocumentClassificationBackgroundJob>();
         _documentRepository = GetRequiredService<IDocumentRepository>();
+        _runRepository = GetRequiredService<IDocumentPipelineRunRepository>();
         _workflow = GetRequiredService<DocumentClassificationWorkflow>();
         _eventBus = GetRequiredService<IDistributedEventBus>();
     }
@@ -100,7 +105,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         await _job.ExecuteAsync(new DocumentClassificationJobArgs { DocumentId = doc.Id });
 
-        var run = doc.GetLatestRun(PaperbasePipelines.Classification);
+        var run = await _runRepository.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
@@ -136,7 +141,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         await _job.ExecuteAsync(new DocumentClassificationJobArgs { DocumentId = doc.Id });
 
-        var run = doc.GetLatestRun(PaperbasePipelines.Classification);
+        var run = await _runRepository.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
@@ -167,7 +172,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         await _job.ExecuteAsync(new DocumentClassificationJobArgs { DocumentId = doc.Id });
 
-        var run = doc.GetLatestRun(PaperbasePipelines.Classification);
+        var run = await _runRepository.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
         doc.DocumentTypeId.ShouldBeNull();
@@ -195,7 +200,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         await _job.ExecuteAsync(new DocumentClassificationJobArgs { DocumentId = doc.Id });
 
-        var run = doc.GetLatestRun(PaperbasePipelines.Classification);
+        var run = await _runRepository.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
@@ -223,7 +228,7 @@ public class DocumentClassificationBackgroundJob_Tests
         await Should.ThrowAsync<TimeoutException>(
             async () => await _job.ExecuteAsync(new DocumentClassificationJobArgs { DocumentId = doc.Id }));
 
-        var run = doc.GetLatestRun(PaperbasePipelines.Classification);
+        var run = await _runRepository.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Failed);
 
@@ -246,7 +251,7 @@ public class DocumentClassificationBackgroundJob_Tests
 
         await _job.ExecuteAsync(new DocumentClassificationJobArgs { DocumentId = doc.Id });
 
-        var run = doc.GetLatestRun(PaperbasePipelines.Classification);
+        var run = await _runRepository.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         run.ShouldNotBeNull();
         run.Status.ShouldBe(PipelineRunStatus.Succeeded);
 
@@ -285,9 +290,10 @@ public class DocumentClassificationBackgroundJob_Tests
 
     private void SetupDocumentRepository(Document doc)
     {
-        // 分类作业三处加载均走 GetWithPipelineRunsAsync（只 eager-load PipelineRuns，不含字段值）。
+        // #216：分类作业三处加载从 GetWithPipelineRunsAsync 改为 GetAsync(includeDetails:false)——
+        // PipelineRun 独立聚合根后通过 runRepo 单独查。
         _documentRepository
-            .GetWithPipelineRunsAsync(doc.Id, Arg.Any<CancellationToken>())
+            .GetAsync(doc.Id, false, Arg.Any<CancellationToken>())
             .Returns(doc);
     }
 

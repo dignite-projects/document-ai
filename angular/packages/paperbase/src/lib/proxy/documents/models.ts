@@ -34,8 +34,10 @@ export interface DocumentPipelineRunDto extends ExtensibleObject {
   extraProperties?: Record<string, unknown>;
 }
 
-// Returned by GetAsync — full document aggregate including Markdown payload and
-// pipeline run history. The list endpoint returns the slim DocumentListItemDto.
+// Returned by GetAsync — full document aggregate including Markdown payload.
+// Pipeline run history moved to a separate aggregate (#216): fetch via
+// DocumentPipelineRunService.getListByDocument(id). The list endpoint returns
+// the slim DocumentListItemDto.
 export interface DocumentDto extends EntityDto<string> {
   tenantId?: string;
   fileOrigin: FileOriginDto;
@@ -56,7 +58,6 @@ export interface DocumentDto extends EntityDto<string> {
   // value may be a string, number, boolean, or null.
   extractedFields?: Record<string, unknown> | null;
   creationTime: string;
-  pipelineRuns: DocumentPipelineRunDto[];
 }
 
 // Returned by GetListAsync — deliberately slim (no Markdown, no pipelineRuns).

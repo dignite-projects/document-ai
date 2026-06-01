@@ -1,7 +1,7 @@
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Documents;
+using Dignite.Paperbase.Documents.Pipelines;
 using Shouldly;
 using Volo.Abp.Guids;
 using Xunit;
@@ -12,18 +12,20 @@ public class DocumentPipelineRunAggregatePersistence_Tests
     : PaperbaseEntityFrameworkCoreTestBase
 {
     private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentPipelineRunRepository _runRepository;
     private readonly DocumentPipelineRunManager _pipelineRunManager;
     private readonly IGuidGenerator _guidGenerator;
 
     public DocumentPipelineRunAggregatePersistence_Tests()
     {
         _documentRepository = GetRequiredService<IDocumentRepository>();
+        _runRepository = GetRequiredService<IDocumentPipelineRunRepository>();
         _pipelineRunManager = GetRequiredService<DocumentPipelineRunManager>();
         _guidGenerator = GetRequiredService<IGuidGenerator>();
     }
 
     [Fact]
-    public async Task Aggregate_Update_Persists_New_Run_Appended_To_Loaded_Document()
+    public async Task Independent_Aggregate_Persists_New_Run_For_Document()
     {
         var documentId = _guidGenerator.Create();
         Guid runId = default;
@@ -35,7 +37,8 @@ public class DocumentPipelineRunAggregatePersistence_Tests
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var document = await _documentRepository.GetAsync(documentId, includeDetails: true);
+            // #216：PipelineRun 拆为独立聚合根后 GetAsync 不再 eager-load runs；Manager.QueueAsync 经 runRepo InsertAsync。
+            var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
             var run = await _pipelineRunManager.QueueAsync(document, PaperbasePipelines.Classification);
             runId = run.Id;
 
@@ -44,12 +47,12 @@ public class DocumentPipelineRunAggregatePersistence_Tests
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var document = await _documentRepository.GetAsync(documentId, includeDetails: true);
-            var runs = document.PipelineRuns.Where(r => r.Id == runId).ToList();
-
-            runs.Count.ShouldBe(1);
-            runs[0].PipelineCode.ShouldBe(PaperbasePipelines.Classification);
-            runs[0].Status.ShouldBe(PipelineRunStatus.Pending);
+            // 通过 runRepo 直接查（不再经 Document 聚合根）——验证独立聚合根持久化路径生效。
+            var persistedRun = await _runRepository.FindAsync(runId);
+            persistedRun.ShouldNotBeNull();
+            persistedRun.DocumentId.ShouldBe(documentId);
+            persistedRun.PipelineCode.ShouldBe(PaperbasePipelines.Classification);
+            persistedRun.Status.ShouldBe(PipelineRunStatus.Pending);
         });
     }
 

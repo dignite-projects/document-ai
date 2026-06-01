@@ -78,13 +78,16 @@ public class DocumentPipelineJobScheduler : ITransientDependency
 public class DocumentPipelineRunAccessor : ITransientDependency
 {
     private readonly DocumentPipelineRunManager _pipelineRunManager;
+    private readonly IDocumentPipelineRunRepository _runRepository;
     private readonly ILogger<DocumentPipelineRunAccessor> _logger;
 
     public DocumentPipelineRunAccessor(
         DocumentPipelineRunManager pipelineRunManager,
+        IDocumentPipelineRunRepository runRepository,
         ILogger<DocumentPipelineRunAccessor> logger)
     {
         _pipelineRunManager = pipelineRunManager;
+        _runRepository = runRepository;
         _logger = logger;
     }
 
@@ -98,7 +101,8 @@ public class DocumentPipelineRunAccessor : ITransientDependency
             return await _pipelineRunManager.StartAsync(document, pipelineCode);
         }
 
-        var run = document.GetRun(pipelineRunId.Value);
+        // #216：PipelineRun 独立聚合根后，按 runId 走仓储直接定位（不再经 Document.GetRun）。
+        var run = await _runRepository.FindAsync(pipelineRunId.Value);
         if (run?.PipelineCode == pipelineCode)
         {
             await _pipelineRunManager.BeginAsync(document, run);
@@ -112,7 +116,7 @@ public class DocumentPipelineRunAccessor : ITransientDependency
                 pipelineRunId.Value, document.Id, run.PipelineCode, pipelineCode);
         }
 
-        var pendingRun = document.GetLatestRun(pipelineCode);
+        var pendingRun = await _runRepository.FindLatestByDocumentAndCodeAsync(document.Id, pipelineCode);
         if (pendingRun?.Status == PipelineRunStatus.Pending)
         {
             _logger.LogWarning(
