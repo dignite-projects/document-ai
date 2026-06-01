@@ -80,7 +80,7 @@
                   {{ '::Document:BrowseFiles' | abpLocalization }}
                   <input
                     type="file"
-                    accept="image/*,application/pdf"
+                    [attr.accept]="acceptAttribute"
                     multiple
                     class="d-none"
                     (change)="onFileSelected($event)"
