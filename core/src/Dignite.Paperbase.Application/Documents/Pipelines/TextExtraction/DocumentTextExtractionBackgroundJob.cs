@@ -71,7 +71,10 @@ public class DocumentTextExtractionBackgroundJob
 
         try
         {
-            var blobStream = await _blobContainer.GetAsync(workItem.BlobName);
+            // blob 流由调用方拥有：FileSystem provider 下是持有 OS 文件句柄的 FileStream，
+            // 必须 dispose（与 DocumentAppService.GetBlobAsync 的 disposeStream:true 一致）。
+            // 用 await using——本 try 块（External 段）结束即释放，CompleteRunAsync 不再需要它。
+            await using var blobStream = await _blobContainer.GetAsync(workItem.BlobName);
             var ctx = new TextExtractionContext
             {
                 ContentType = workItem.ContentType,

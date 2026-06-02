@@ -175,7 +175,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         // Host 启动期 seed 入口已删除（HostDocumentTypeDataSeedContributor / DocumentTypeOptions），
         // DocumentType 现在只能通过 IDocumentTypeAppService 运行时创建——所以新部署 / 新租户必须先建类型才能上传。
         // 不做这个 fail-fast 检查的话，上传成功 → 分类候选集为空 → 文档永远卡 PendingReview。
-        var hasType = (await _documentTypeRepository.GetListAsync()).Any();
+        var hasType = await _documentTypeRepository.GetCountAsync() > 0;
         if (!hasType)
         {
             throw new BusinessException(PaperbaseErrorCodes.DocumentType.NoneConfigured);

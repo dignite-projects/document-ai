@@ -89,7 +89,7 @@ public class OpenIddictDataSeedContributor : OpenIddictDataSeedContributorBase, 
         var swaggerClientId = configurationSection["Paperbase_Swagger:ClientId"];
         if (!swaggerClientId.IsNullOrWhiteSpace())
         {
-            var swaggerRootUrl = configurationSection["Paperbase_Swagger:RootUrl"].TrimEnd('/');
+            var swaggerRootUrl = configurationSection["Paperbase_Swagger:RootUrl"]?.TrimEnd('/');
 
             await CreateOrUpdateApplicationAsync(
                 applicationType: OpenIddictConstants.ApplicationTypes.Web,

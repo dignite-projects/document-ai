@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
 using Dignite.Paperbase.Documents;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 namespace Dignite.Paperbase.Mcp.Documents;
@@ -50,6 +51,17 @@ public sealed class DocumentSearchTool
         int? maxResultCount = null,
         CancellationToken cancellationToken = default)
     {
+        // documentTypeCode 是 required 契约（每次检索锚定单一文档类型——字段值查询需要它解析每个字段
+        // 的数据类型；description 亦明示 required）。空串会让 GetListAsync 退化成跨所有类型的元数据检索，
+        // 与契约相悖——fail-loud 拒绝而非静默放宽（权限 / 租户 / 上限仍在 AppService 内生效，非安全风险）。
+        if (string.IsNullOrWhiteSpace(documentTypeCode))
+        {
+            throw new McpException(
+                "documentTypeCode is required: every search anchors to a single document type. "
+                + "If the user has not said which type to search, ask them first; discover a type's "
+                + "filterable fields via its paperbase://document-types/{code} resource.");
+        }
+
         // 容错解析 lifecycle 过滤值——LLM 客户端通常传字符串名（"Ready"）。无法解析则当作"不过滤"
         // （filter 缺失只会多返回结果，受结果上限约束；权限 / 租户 / 上限在 AppService 内仍生效）。
         DocumentLifecycleStatus? lifecycle = null;
