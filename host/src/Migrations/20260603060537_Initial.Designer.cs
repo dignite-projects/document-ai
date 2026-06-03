@@ -13,8 +13,8 @@ using Volo.Abp.EntityFrameworkCore;
 namespace Dignite.Paperbase.Host.Migrations
 {
     [DbContext(typeof(PaperbaseHostDbContext))]
-    [Migration("20260531075501_Add_DocumentExtractedField_Order_And_FieldDefinition_AllowMultiple")]
-    partial class Add_DocumentExtractedField_Order_And_FieldDefinition_AllowMultiple
+    [Migration("20260603060537_Initial")]
+    partial class Initial
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -106,7 +106,8 @@ namespace Dignite.Paperbase.Host.Migrations
                         .HasColumnType("float");
 
                     b.Property<string>("ClassificationReason")
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
 
                     b.Property<string>("ConcurrencyStamp")
                         .IsConcurrencyToken()
@@ -166,15 +167,7 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.Property<string>("Markdown")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("OriginalFileBlobName")
-                        .IsRequired()
-                        .HasMaxLength(512)
-                        .HasColumnType("nvarchar(512)");
-
                     b.Property<int>("ReviewStatus")
-                        .HasColumnType("int");
-
-                    b.Property<int>("SourceType")
                         .HasColumnType("int");
 
                     b.Property<Guid?>("TenantId")
@@ -511,6 +504,13 @@ namespace Dignite.Paperbase.Host.Migrations
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
                     b.Property<Guid>("DocumentId")
                         .HasColumnType("uniqueidentifier");
 
@@ -540,7 +540,8 @@ namespace Dignite.Paperbase.Host.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DocumentId", "PipelineCode", "AttemptNumber");
+                    b.HasIndex("DocumentId", "PipelineCode", "AttemptNumber")
+                        .IsUnique();
 
                     b.ToTable("PaperbaseDocumentPipelineRuns", (string)null);
                 });
@@ -2445,6 +2446,11 @@ namespace Dignite.Paperbase.Host.Migrations
                             b1.Property<Guid>("DocumentId")
                                 .HasColumnType("uniqueidentifier");
 
+                            b1.Property<string>("BlobName")
+                                .IsRequired()
+                                .HasMaxLength(512)
+                                .HasColumnType("nvarchar(512)");
+
                             b1.Property<string>("ContentHash")
                                 .IsRequired()
                                 .HasMaxLength(64)
@@ -2468,6 +2474,10 @@ namespace Dignite.Paperbase.Host.Migrations
                                 .HasColumnType("nvarchar(256)");
 
                             b1.HasKey("DocumentId");
+
+                            b1.HasIndex("BlobName");
+
+                            b1.HasIndex("ContentHash");
 
                             b1.ToTable("PaperbaseDocuments");
 
@@ -2515,10 +2525,11 @@ namespace Dignite.Paperbase.Host.Migrations
             modelBuilder.Entity("Dignite.Paperbase.Documents.Pipelines.DocumentPipelineRun", b =>
                 {
                     b.HasOne("Dignite.Paperbase.Documents.Document", null)
-                        .WithMany("PipelineRuns")
+                        .WithMany()
                         .HasForeignKey("DocumentId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_PaperbaseDocumentPipelineRuns_PaperbaseDocuments_DocumentId");
                 });
 
             modelBuilder.Entity("Volo.Abp.AuditLogging.AuditLogAction", b =>
@@ -2713,8 +2724,6 @@ namespace Dignite.Paperbase.Host.Migrations
             modelBuilder.Entity("Dignite.Paperbase.Documents.Document", b =>
                 {
                     b.Navigation("ExtractedFieldValues");
-
-                    b.Navigation("PipelineRuns");
                 });
 
             modelBuilder.Entity("Volo.Abp.AuditLogging.AuditLog", b =>
