@@ -110,9 +110,12 @@ public class FieldExtractionWorkflow : ITransientDependency
         "DateTime as an offset-free ISO-8601 \"YYYY-MM-DDThh:mm:ss\" JSON string (local wall-clock time, no timezone offset or trailing Z); " +
         "Boolean as JSON true or false; " +
         "Text as the original text. " +
-        "When a field cannot be confidently extracted or normalized to its declared type, set its value to null. " +
+        "When a value cannot be normalized to its declared data type, set that field to null. " +
         "A field whose schema type is array accepts multiple values: return a JSON array of strings (each a distinct value found in the document), or an empty array when none apply. " +
-        "The input document is provided as Markdown — treat headings, tables, and lists as semantic structure signals.";
+        "The document is Markdown produced by automated extraction (digital parsing or OCR), so its layout is best-effort and table grids are frequently flattened into plain lines: " +
+        "a line of column labels followed by one or more lines of space- or tab-separated values is still a table — read each such line as a row and align its cells to the column labels from left to right. " +
+        "Use headings, tables, and lists as structure signals, but never require Markdown table syntax: extract tabular values even when the pipes and separators have been stripped during extraction. " +
+        "Set a field to null only when its information is genuinely absent from the document — not merely because the text is unformatted, split across lines, or lacks table syntax.";
 
     private static string BuildSchemaUserMessage(IReadOnlyList<FieldExtractionDescriptor> fields)
     {
