@@ -97,11 +97,11 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   // 改为独立 signal，loadDocument 时通过 DocumentPipelineRunService 单独拉取。
   pipelineRuns = signal<DocumentPipelineRunDto[]>([]);
   isLoading = signal(true);
-  imageError = signal(false);
   // 左栏 3-Tab（#274）：默认 Markdown 预览；切到 'file' 才触发原文件 blob 懒加载。
   activeTab = signal<'preview' | 'source' | 'file'>('preview');
   isBlobLoading = signal(false);
-  blobError = signal(false);
+  // 原文件预览失败（blob 下载失败 或 <img> 渲染失败）的统一信号；进 file Tab / reload 时复位。
+  previewError = signal(false);
   retryingPipeline = signal<string | null>(null);
   isRerecognizing = signal(false);
   blobUrl = signal<string | null>(null);
@@ -217,11 +217,15 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     this.document()?.fileOrigin?.contentType === 'application/pdf'
   );
 
+  // Markdown 源文本中间 computed（#274 review）：document() 变更但 markdown 未变时（改字段 /
+  // 文件柜等），返回相同字符串 → 下游 renderedMarkdown 凭值相等性短路，避免重复 marked.parse。
+  private markdownSource = computed(() => this.document()?.markdown ?? '');
+
   // Markdown 预览（#274）：marked 渲染为 HTML 字符串，模板 [innerHTML] 绑定时由 Angular 内置
   // DomSanitizer 自动消毒（剥离 <script> / on* / javascript:）。绝不 bypassSecurityTrustHtml——
   // Markdown 是攻击者可影响内容（VLM OCR 可被图内文字 prompt-inject），消毒器必须全程开。
   renderedMarkdown = computed<string>(() => {
-    const md = this.document()?.markdown;
+    const md = this.markdownSource();
     return md ? (marked.parse(md, { gfm: true, async: false }) as string) : '';
   });
 
@@ -288,8 +292,12 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
           this.document.set(doc);
           this.pipelineRuns.set(runs);
           this.isLoading.set(false);
-          // 原文件 blob 懒加载（#274）：不在加载文档时拉取，仅当用户切到「原文件」Tab 才首次下载
-          // （见 selectTab）。文档重排不改原文件本体，故已缓存的 blob 在 reload 后继续复用。
+          // 原文件 blob 懒加载（#274）：默认不在加载文档时拉取，仅「原文件」Tab 才下载（见 selectTab）。
+          // 若用户已在该 Tab，reload（Refresh / rerecognize）后调一次 ensureFilePreview——blob 已缓存
+          // 则早退、上次失败则复位错误重试，避免「Refresh 对卡住的预览无效」（#274 review）。
+          if (this.activeTab() === 'file') {
+            this.ensureFilePreview();
+          }
           // 字段定义用于：① 抽取字段展示用 displayName（所有查看者）；② 可编辑时补全空字段。
           // 后端 GetListAsync 自 #223 起对 Documents.Default 即放开，故只要有类型就加载，不再门控编辑权限。
           this.fieldDefinitions.set([]);
@@ -371,13 +379,11 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       });
   }
 
-  // 原文件 blob 懒加载（#274）：仅「原文件」Tab 首次激活时调用。已加载 / 加载中则跳过，
+  // 原文件 blob 懒加载（#274）：仅「原文件」Tab 激活时调用。已加载 / 加载中则跳过，
   // blob 缓存至组件销毁（ngOnDestroy revoke）。
   private loadBlob(): void {
     if (this.blobUrl() || this.isBlobLoading()) return;
     this.isBlobLoading.set(true);
-    this.blobError.set(false);
-    this.imageError.set(false);
 
     this.documentService.getBlob(this.documentId)
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -393,26 +399,24 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
         },
         error: () => {
           this.isBlobLoading.set(false);
-          this.blobError.set(true);
+          this.previewError.set(true);
         },
       });
   }
 
-  // Tab 切换（#274）：切到「原文件」时触发 blob 懒加载（loadBlob 自身防重复请求）。
+  // 进入「原文件」Tab 的统一入口（#274 review）：先复位上次的预览错误（给 <img> 重建一次重试、
+  // 让上次下载失败可重拉），再 loadBlob（自身防重复请求）。修复 imageError 卡死 + Refresh 无效。
+  private ensureFilePreview(): void {
+    this.previewError.set(false);
+    this.loadBlob();
+  }
+
+  // Tab 切换（#274）：切到「原文件」时确保原文件预览就绪。
   selectTab(tab: 'preview' | 'source' | 'file'): void {
     this.activeTab.set(tab);
     if (tab === 'file') {
-      this.loadBlob();
+      this.ensureFilePreview();
     }
-  }
-
-  // 在新标签打开独立文件预览页（documents/:id/file）看全屏（#274）。预览页自己经带 token 的
-  // getBlob 拉取内嵌，token 不进地址栏。serializeUrl 把路由树转成可 window.open 的 URL。
-  openFileInNewTab(): void {
-    const url = this.router.serializeUrl(
-      this.router.createUrlTree(['/documents', this.documentId, 'file']),
-    );
-    window.open(url, '_blank', 'noopener');
   }
 
   ngOnDestroy(): void {
@@ -420,8 +424,9 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     if (url) URL.revokeObjectURL(url);
   }
 
-  onImageError(): void {
-    this.imageError.set(true);
+  // <img> 渲染失败（blob 已下载但解码失败）——并入统一预览错误信号。
+  onPreviewError(): void {
+    this.previewError.set(true);
   }
 
   goBack(): void {

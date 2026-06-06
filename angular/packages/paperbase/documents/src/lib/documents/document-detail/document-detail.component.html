@@ -128,16 +128,16 @@
                   <div class="text-center py-5">
                     <div class="spinner-border text-primary" role="status"></div>
                   </div>
-                } @else if (blobError()) {
+                } @else if (previewError()) {
                   <div class="text-center text-muted py-5">
                     <i class="fas fa-exclamation-triangle fa-3x mb-3 d-block"></i>
                     <p class="mb-0">{{ '::Document:PreviewUnavailable' | abpLocalization }}</p>
                   </div>
-                } @else if (isImage() && blobUrl() && !imageError()) {
+                } @else if (isImage() && blobUrl()) {
                   <div class="text-center">
                     <img
                       [src]="blobUrl()"
-                      (error)="onImageError()"
+                      (error)="onPreviewError()"
                       alt="{{ document()!.fileOrigin?.originalFileName }}"
                       class="img-fluid preview-image"
                       style="max-height: 70vh; object-fit: contain;"
@@ -164,10 +164,10 @@
             <span class="text-truncate">{{ document()!.fileOrigin?.originalFileName }}</span>
             <span>·</span>
             <span class="flex-shrink-0">{{ document()!.fileOrigin?.contentType }}</span>
-            <button type="button" class="btn btn-sm btn-link p-0 ms-auto flex-shrink-0"
-                    (click)="openFileInNewTab()">
+            <a [routerLink]="['/documents', document()!.id, 'file']" target="_blank" rel="noopener"
+               class="btn btn-sm btn-link p-0 ms-auto flex-shrink-0">
               <i class="fas fa-external-link-alt me-1"></i>{{ '::Document:OpenFile' | abpLocalization }}
-            </button>
+            </a>
           </div>
         </div>
       </div>
