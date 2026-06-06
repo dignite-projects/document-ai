@@ -13,6 +13,8 @@ import { forkJoin, of, switchMap, tap } from 'rxjs';
 import { ActivatedRoute, Router, RouterModule } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { marked } from 'marked';
 import { LocalizationPipe, LocalizationService, PermissionService } from '@abp/ng.core';
 import { DynamicFormComponent, type FormFieldConfig } from '@abp/ng.components/dynamic-form';
 import { Confirmation, ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
@@ -77,6 +79,7 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   private readonly confirmation = inject(ConfirmationService);
   private readonly permissionService = inject(PermissionService);
   private readonly localization = inject(LocalizationService);
+  private readonly sanitizer = inject(DomSanitizer);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly canDelete = this.permissionService.getGrantedPolicy(
@@ -94,11 +97,16 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
   // 改为独立 signal，loadDocument 时通过 DocumentPipelineRunService 单独拉取。
   pipelineRuns = signal<DocumentPipelineRunDto[]>([]);
   isLoading = signal(true);
-  isTextExpanded = signal(false);
   imageError = signal(false);
+  // 左栏 3-Tab（#274）：默认 Markdown 预览；切到 'file' 才触发原文件 blob 懒加载。
+  activeTab = signal<'preview' | 'source' | 'file'>('preview');
+  isBlobLoading = signal(false);
+  blobError = signal(false);
   retryingPipeline = signal<string | null>(null);
   isRerecognizing = signal(false);
   blobUrl = signal<string | null>(null);
+  // PDF iframe 的 resource URL 必须经 DomSanitizer 放行（自造同源 blob:，安全）。
+  safeBlobUrl = signal<SafeResourceUrl | null>(null);
   isEditingFields = signal(false);
   isSavingFields = signal(false);
   fieldDefinitions = signal<FieldDefinitionDto[]>([]);
@@ -205,6 +213,18 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
     this.document()?.fileOrigin?.contentType?.startsWith('image/') ?? false
   );
 
+  isPdf = computed(() =>
+    this.document()?.fileOrigin?.contentType === 'application/pdf'
+  );
+
+  // Markdown 预览（#274）：marked 渲染为 HTML 字符串，模板 [innerHTML] 绑定时由 Angular 内置
+  // DomSanitizer 自动消毒（剥离 <script> / on* / javascript:）。绝不 bypassSecurityTrustHtml——
+  // Markdown 是攻击者可影响内容（VLM OCR 可被图内文字 prompt-inject），消毒器必须全程开。
+  renderedMarkdown = computed<string>(() => {
+    const md = this.document()?.markdown;
+    return md ? (marked.parse(md, { gfm: true, async: false }) as string) : '';
+  });
+
   // 文档所属文件柜名（cabinetId → name）；未归类或解析不到（无权限 / 已删柜）返回 null。
   cabinetName = computed<string | null>(() => {
     const id = this.document()?.cabinetId;
@@ -268,10 +288,8 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
           this.document.set(doc);
           this.pipelineRuns.set(runs);
           this.isLoading.set(false);
-          // 仅图片需要立即加载（内联预览）；非图片等用户点击"打开文件"时再下载
-          if (doc.fileOrigin?.contentType?.startsWith('image/')) {
-            this.loadBlob();
-          }
+          // 原文件 blob 懒加载（#274）：不在加载文档时拉取，仅当用户切到「原文件」Tab 才首次下载
+          // （见 selectTab）。文档重排不改原文件本体，故已缓存的 blob 在 reload 后继续复用。
           // 字段定义用于：① 抽取字段展示用 displayName（所有查看者）；② 可编辑时补全空字段。
           // 后端 GetListAsync 自 #223 起对 Documents.Default 即放开，故只要有类型就加载，不再门控编辑权限。
           this.fieldDefinitions.set([]);
@@ -353,22 +371,48 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
       });
   }
 
+  // 原文件 blob 懒加载（#274）：仅「原文件」Tab 首次激活时调用。已加载 / 加载中则跳过，
+  // blob 缓存至组件销毁（ngOnDestroy revoke）。
   private loadBlob(): void {
-    const oldUrl = this.blobUrl();
-    if (oldUrl) URL.revokeObjectURL(oldUrl);
-    this.blobUrl.set(null);
+    if (this.blobUrl() || this.isBlobLoading()) return;
+    this.isBlobLoading.set(true);
+    this.blobError.set(false);
+    this.imageError.set(false);
 
     this.documentService.getBlob(this.documentId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: blob => this.blobUrl.set(URL.createObjectURL(blob)),
+        next: blob => {
+          const url = URL.createObjectURL(blob);
+          this.blobUrl.set(url);
+          // PDF 走 iframe，resource URL 必须经 DomSanitizer 放行（自造同源 blob:，安全）。
+          if (this.isPdf()) {
+            this.safeBlobUrl.set(this.sanitizer.bypassSecurityTrustResourceUrl(url));
+          }
+          this.isBlobLoading.set(false);
+        },
+        error: () => {
+          this.isBlobLoading.set(false);
+          this.blobError.set(true);
+        },
       });
   }
 
-  // 打开干净路由的文件预览页（documents/:id/file）——替代旧的 blob: 新标签直开。
-  // 文件本体由预览页自己经带 token 的 getBlob 拉取内嵌，token 不进地址栏。
-  openFile(): void {
-    this.router.navigate(['/documents', this.documentId, 'file']);
+  // Tab 切换（#274）：切到「原文件」时触发 blob 懒加载（loadBlob 自身防重复请求）。
+  selectTab(tab: 'preview' | 'source' | 'file'): void {
+    this.activeTab.set(tab);
+    if (tab === 'file') {
+      this.loadBlob();
+    }
+  }
+
+  // 在新标签打开独立文件预览页（documents/:id/file）看全屏（#274）。预览页自己经带 token 的
+  // getBlob 拉取内嵌，token 不进地址栏。serializeUrl 把路由树转成可 window.open 的 URL。
+  openFileInNewTab(): void {
+    const url = this.router.serializeUrl(
+      this.router.createUrlTree(['/documents', this.documentId, 'file']),
+    );
+    window.open(url, '_blank', 'noopener');
   }
 
   ngOnDestroy(): void {
@@ -378,10 +422,6 @@ export class DocumentDetailComponent implements OnInit, OnDestroy {
 
   onImageError(): void {
     this.imageError.set(true);
-  }
-
-  toggleText(): void {
-    this.isTextExpanded.set(!this.isTextExpanded());
   }
 
   goBack(): void {
