@@ -33,4 +33,8 @@
         <Project Path="host/src/Dignite.Paperbase.Host.csproj" />
     </Folder>
 
+    <Folder Name="/host/test/">
+        <Project Path="host/test/Dignite.Paperbase.Host.Tests/Dignite.Paperbase.Host.Tests.csproj" />
+    </Folder>
+
 </Solution>
