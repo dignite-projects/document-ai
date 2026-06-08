@@ -100,6 +100,8 @@
         <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.0" />
         <PackageVersion Include="ElBruno.MarkItDotNet" Version="0.6.0" />
         <PackageVersion Include="PDFtoImage" Version="5.2.1" />
+        <!-- 版本须与 PDFtoImage 5.2.1 传递的 SkiaSharp 主包 (3.119.2) 严格一致 -->
+        <PackageVersion Include="SkiaSharp.NativeAssets.Linux" Version="3.119.2" />
         <PackageVersion Include="Markdig" Version="1.1.3" />
         <PackageVersion Include="ClosedXML" Version="0.104.2" />
         <PackageVersion Include="IdentityModel" Version="7.0.0" />

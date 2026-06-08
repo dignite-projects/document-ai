@@ -98,6 +98,14 @@
     <!-- <ProjectReference Include="..\..\core\src\Dignite.Paperbase.Ocr.AzureDocumentIntelligence\Dignite.Paperbase.Ocr.AzureDocumentIntelligence.csproj" /> -->
   </ItemGroup>
 
+  <!-- 默认 OCR provider 是 VisionLlm（见上方 ProjectReference），经 PDFtoImage 用 PDFium + SkiaSharp
+       光栅化 PDF 页。SkiaSharp 的 Linux 原生库 (libSkiaSharp.so) 必须由最终可执行项目落地，故在 host
+       显式引用 NativeAssets.Linux；镜像另需安装 libfontconfig1（见 host/Dockerfile）。Windows 开发机用
+       各自 RID 的原生资产，不受影响。详见 docs/ocr-vision-llm.md。 -->
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Volo.Abp.Studio.Client.AspNetCore" />
   </ItemGroup>
