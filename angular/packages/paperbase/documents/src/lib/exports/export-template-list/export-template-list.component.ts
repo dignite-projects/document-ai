@@ -9,8 +9,18 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormArray, FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { LocalizationPipe, PermissionService } from '@abp/ng.core';
+import { escapeHtmlChars, ListService, LocalizationPipe, LocalizationService, PermissionService } from '@abp/ng.core';
+import type { ABP } from '@abp/ng.core';
+import {
+  EntityProp,
+  EXTENSIONS_IDENTIFIER,
+  ExtensionsService,
+  ExtensibleTableComponent,
+  ePropType,
+} from '@abp/ng.components/extensible';
 import { Confirmation, ConfirmationService, ToasterService } from '@abp/ng.theme.shared';
+import { NgbDropdownModule } from '@ng-bootstrap/ng-bootstrap';
+import { of } from 'rxjs';
 import {
   CabinetDto,
   CabinetService,
@@ -28,15 +38,42 @@ import {
   documentLifecycleStatusOptions,
   exportFormatOptions,
 } from '@dignite/paperbase';
+import {
+  ClientPagedResult,
+  configureEntityTable,
+  pageClientItems,
+  PAPERBASE_TABLES,
+  SortAccessors,
+} from '../../shared/extensible-table';
 
 // Mirrors ExportTemplateConsts (Domain.Shared).
 const MAX_NAME_LENGTH = 128;
+
+const EXPORT_TEMPLATE_SORTS: SortAccessors<ExportTemplateDto> = {
+  name: template => template.name,
+  format: template => template.format,
+  documentTypeId: template => template.documentTypeId,
+  columns: template => template.columns?.length ?? 0,
+};
 
 @Component({
   selector: 'lib-export-template-list',
   templateUrl: './export-template-list.component.html',
   styleUrls: ['./export-template-list.component.scss'],
-  imports: [CommonModule, ReactiveFormsModule, LocalizationPipe],
+  imports: [
+    CommonModule,
+    ReactiveFormsModule,
+    LocalizationPipe,
+    ExtensibleTableComponent,
+    NgbDropdownModule,
+  ],
+  providers: [
+    ListService,
+    {
+      provide: EXTENSIONS_IDENTIFIER,
+      useValue: PAPERBASE_TABLES.ExportTemplates,
+    },
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ExportTemplateListComponent implements OnInit {
@@ -49,6 +86,9 @@ export class ExportTemplateListComponent implements OnInit {
   private readonly toaster = inject(ToasterService);
   private readonly permissionService = inject(PermissionService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly extensions = inject(ExtensionsService);
+
+  readonly list = inject(ListService);
 
   readonly canManage = this.permissionService.getGrantedPolicy(
     PAPERBASE_PERMISSIONS.Documents.Templates.Default,
@@ -62,7 +102,8 @@ export class ExportTemplateListComponent implements OnInit {
   readonly DocumentLifecycleStatus = DocumentLifecycleStatus;
   readonly lifecycleStatusOptions = documentLifecycleStatusOptions;
 
-  templates = signal<ExportTemplateDto[]>([]);
+  allTemplates = signal<ExportTemplateDto[]>([]);
+  templates = signal<ClientPagedResult<ExportTemplateDto>>({ totalCount: 0, items: [] });
   documentTypes = signal<DocumentTypeDto[]>([]);
   fieldDefinitions = signal<FieldDefinitionDto[]>([]);
   cabinets = signal<CabinetDto[]>([]);
@@ -72,6 +113,7 @@ export class ExportTemplateListComponent implements OnInit {
   exportingId = signal<string | null>(null);
   /** 正在配置筛选条件的导出模板；非 null 时显示筛选 modal。 */
   filteringTemplate = signal<ExportTemplateDto | null>(null);
+  private tableQuery: Partial<ABP.PageQueryParams> = {};
 
   readonly filterForm = this.fb.nonNullable.group({
     lifecycleStatus: [null as DocumentLifecycleStatus | null],
@@ -91,7 +133,51 @@ export class ExportTemplateListComponent implements OnInit {
     return this.form.controls.columns;
   }
 
+  constructor() {
+    configureEntityTable<ExportTemplateDto>(this.extensions, PAPERBASE_TABLES.ExportTemplates, [
+      EntityProp.create<ExportTemplateDto>({
+        type: ePropType.String,
+        name: 'name',
+        displayName: '::ExportTemplate:Name',
+        sortable: true,
+      }),
+      EntityProp.create<ExportTemplateDto>({
+        type: ePropType.String,
+        name: 'format',
+        displayName: '::ExportTemplate:Format',
+        sortable: true,
+        columnWidth: 150,
+        valueResolver: data => {
+          const localization = data.getInjected(LocalizationService);
+          return of(`<span class="badge bg-secondary">${escapeHtmlChars(localization.instant(this.formatLabel(data.record.format)))}</span>`);
+        },
+      }),
+      EntityProp.create<ExportTemplateDto>({
+        type: ePropType.String,
+        name: 'documentTypeId',
+        displayName: '::ExportTemplate:DocumentType',
+        sortable: true,
+        columnWidth: 220,
+        valueResolver: data => {
+          const label = this.documentTypeLabel(data.record.documentTypeId);
+          return of(label
+            ? `<span class="badge bg-info text-dark">${escapeHtmlChars(label)}</span>`
+            : '<span class="text-muted">-</span>');
+        },
+      }),
+      EntityProp.create<ExportTemplateDto>({
+        type: ePropType.Number,
+        name: 'columns',
+        displayName: '::ExportTemplate:Columns',
+        sortable: true,
+        columnWidth: 150,
+        valueResolver: data => of(data.record.columns?.length ?? 0),
+      }),
+    ]);
+  }
+
   ngOnInit(): void {
+    this.hookTableQuery();
     this.load();
     this.loadDocumentTypes();
     this.loadCabinets();
@@ -108,18 +194,41 @@ export class ExportTemplateListComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: list => {
-          this.templates.set(list);
+          this.allTemplates.set(list);
+          this.list.totalCount = list.length;
+          this.applyTableQuery();
           this.isLoading.set(false);
         },
-        error: () => this.isLoading.set(false),
+        error: () => {
+          this.allTemplates.set([]);
+          this.templates.set({ totalCount: 0, items: [] });
+          this.list.totalCount = 0;
+          this.isLoading.set(false);
+        },
       });
+  }
+
+  private hookTableQuery(): void {
+    this.list.query$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(query => this.applyTableQuery(query));
+  }
+
+  private applyTableQuery(query: Partial<ABP.PageQueryParams> = this.tableQuery): void {
+    this.tableQuery = query;
+    this.templates.set(pageClientItems(this.allTemplates(), query, EXPORT_TEMPLATE_SORTS));
   }
 
   private loadDocumentTypes(): void {
     this.documentTypeService
       .getVisible()
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({ next: list => this.documentTypes.set(list) });
+      .subscribe({
+        next: list => {
+          this.documentTypes.set(list);
+          this.applyTableQuery();
+        },
+      });
   }
 
   private loadCabinets(): void {
