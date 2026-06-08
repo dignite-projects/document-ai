@@ -1,7 +1,13 @@
 services:
+  # 本地 PaddleOCR sidecar。host 默认 OCR provider 已切到 VisionLlm（云端 Qwen3-VL，#259），
+  # 默认无需本地 sidecar，故 profile-gate——仅在 [DependsOn] 切回 Ocr.PaddleOcr 时按需启动：
+  #
+  #   docker compose --profile paddleocr up -d paddleocr
+  #
   paddleocr:
     build:
       context: ./paddleocr-server
+    profiles: ["paddleocr"]
     ports:
       - "8866:8866"
     environment:

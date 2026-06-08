@@ -76,3 +76,10 @@ jobs:
       - name: Unit tests
         run: npx vitest run
         working-directory: angular
+
+      # 验证前端 .local 镜像可构建（COPY 路径不回归）。上面的 nx build host 已产出
+      # dist/host/browser，此处只打包不推送；context = angular/。
+      - name: Build Angular Docker image
+        run: docker build -f apps/host/Dockerfile.local -t paperbase-web:${{ github.sha }} .
+        working-directory: angular
+        if: github.event_name == 'push'
