@@ -242,11 +242,13 @@ public class Document : FullAuditedAggregateRoot<Guid>, IMultiTenant
     }
 
     /// <summary>
-    /// 按位 set / clear 单个待审原因（#284）——原因写入的<b>唯一</b>入口。每个 bit 由唯一一个 pipeline 阶段
-    /// 维护（UnresolvedClassification←分类、MissingRequiredFields←字段抽取），用按位操作保证两阶段互不覆盖
+    /// 按位 set / clear 单个待审原因（#284）——原因写入的<b>唯一</b>入口。每个 bit 由唯一一个阶段维护
+    /// （UnresolvedClassification←分类阶段，内联于本类方法；MissingRequiredFields←字段抽取阶段，由 Application 层
+    /// handler / appservice 在写字段同一 UoW 内评估后调用），用按位操作保证两阶段互不覆盖
     /// （聚合根不暴露整体 setter，防一个阶段误覆盖另一阶段的判定）。
+    /// <c>public</c> 是因 MRF 维度的写入点在 Application 层（跨程序集）；可见性放宽但仍约定"每 bit 单阶段维护"。
     /// </summary>
-    internal void SetReviewReason(DocumentReviewReasons reason, bool present)
+    public void SetReviewReason(DocumentReviewReasons reason, bool present)
     {
         ReviewReasons = present ? (ReviewReasons | reason) : (ReviewReasons & ~reason);
     }

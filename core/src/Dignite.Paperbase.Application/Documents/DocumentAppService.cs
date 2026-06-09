@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Dignite.Paperbase.Abstractions.Documents;
 using Dignite.Paperbase.Documents;
 using Dignite.Paperbase.Documents.Pipelines;
+using Dignite.Paperbase.Documents.Review;
 using Dignite.Paperbase.Permissions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
@@ -30,6 +31,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     private readonly DocumentPipelineRunManager _pipelineRunManager;
     private readonly DocumentPipelineJobScheduler _pipelineJobScheduler;
     private readonly IDistributedEventBus _distributedEventBus;
+    private readonly ReviewStateEvaluator _reviewEvaluator;
 
     public DocumentAppService(
         IDocumentRepository documentRepository,
@@ -39,7 +41,8 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         IBlobContainer<PaperbaseDocumentContainer> blobContainer,
         DocumentPipelineRunManager pipelineRunManager,
         DocumentPipelineJobScheduler pipelineJobScheduler,
-        IDistributedEventBus distributedEventBus)
+        IDistributedEventBus distributedEventBus,
+        ReviewStateEvaluator reviewEvaluator)
     {
         _documentRepository = documentRepository;
         _documentTypeRepository = documentTypeRepository;
@@ -49,6 +52,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         _pipelineRunManager = pipelineRunManager;
         _pipelineJobScheduler = pipelineJobScheduler;
         _distributedEventBus = distributedEventBus;
+        _reviewEvaluator = reviewEvaluator;
     }
 
     public virtual async Task<DocumentDto> GetAsync(Guid id)
@@ -549,6 +553,15 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
 
         // 整组替换（与 FieldExtractionEventHandler 一致：空则清空全部字段行）。
         document.SetFields(fieldValues);
+
+        // #284：操作员补录后重新评估必填缺失——补齐则 clear MissingRequiredFields（退出审核队列闭环），
+        // 仍缺则保持。复用已加载的 definitions（筛 IsRequired）+ 写入后的 ExtractedFieldValues。
+        var requiredIds = definitions.Where(d => d.IsRequired).Select(d => d.Id).ToList();
+        var extractedIds = document.ExtractedFieldValues.Select(f => f.FieldDefinitionId).Distinct().ToList();
+        document.SetReviewReason(
+            DocumentReviewReasons.MissingRequiredFields,
+            _reviewEvaluator.MissingRequiredFieldsPresent(requiredIds, extractedIds));
+
         await _documentRepository.UpdateAsync(document, autoSave: true);
 
         // FieldsExtractedEto.FieldCount 是逻辑字段数（产生 ≥1 个值的不同字段个数），非展开后的行数——

@@ -5,6 +5,7 @@ using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Documents.Pipelines;
+using Dignite.Paperbase.Documents.Review;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using Shouldly;
@@ -164,7 +165,8 @@ public class DocumentAppService_Review_Tests
                 Substitute.For<IDocumentRepository>(),
                 new DocumentPipelineRunManager(runRepoSubstitute),
                 Substitute.For<IBackgroundJobManager>()),
-            Substitute.For<IDistributedEventBus>());
+            Substitute.For<IDistributedEventBus>(),
+            new ReviewStateEvaluator());
 
         var method = typeof(DocumentAppService).GetMethod(
             "ApplyFilter",
