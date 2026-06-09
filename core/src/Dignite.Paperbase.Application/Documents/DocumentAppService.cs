@@ -716,6 +716,9 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         // #268：透出提取完整性质量信号（非 provenance）。null metadata（历史 / 数字版 / 未提取）按完整处理。
         dto.ExtractionIsComplete = document.ExtractionMetadata?.IsComplete ?? true;
         dto.ExtractionIncompleteReason = document.ExtractionMetadata?.IncompleteReason;
+        // #284：审核轴——RequiresReview 派生 + 详情厚明细（含缺失必填字段名）。服务端算，客户端纯渲染。
+        dto.RequiresReview = ReviewReasonPolicy.RequiresAttention(document.ReviewReasons);
+        dto.ReviewReasonDetails = await BuildReviewReasonDetailsAsync(document);
         return dto;
     }
 
@@ -733,7 +736,60 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         {
             dtos[i].DocumentTypeCode = ResolveTypeCode(documents[i].DocumentTypeId, typeCodes);
             dtos[i].ExtractedFields = AssembleExtractedFields(documents[i].ExtractedFieldValues, fieldNames);
+            // #284：列表薄——只出 RequiresReview（badge 用），不组装明细（详情页才有，避免列表 N+1）。
+            dtos[i].RequiresReview = ReviewReasonPolicy.RequiresAttention(documents[i].ReviewReasons);
         }
+    }
+
+    /// <summary>
+    /// 组装待审原因结构化明细（#284，仅详情页调用——详情厚）。每个 set 的原因位生成一条：IsBlocking 按 policy 填；
+    /// MissingRequiredFields 额外算缺失必填字段的 DisplayName。无未解决原因 → null。
+    /// </summary>
+    protected virtual async Task<List<ReviewReasonDetailDto>?> BuildReviewReasonDetailsAsync(Document document)
+    {
+        if (document.ReviewReasons == DocumentReviewReasons.None)
+        {
+            return null;
+        }
+
+        var details = new List<ReviewReasonDetailDto>();
+
+        if ((document.ReviewReasons & DocumentReviewReasons.UnresolvedClassification) != DocumentReviewReasons.None)
+        {
+            details.Add(new ReviewReasonDetailDto
+            {
+                Reason = DocumentReviewReasons.UnresolvedClassification,
+                IsBlocking = ReviewReasonPolicy.IsBlocking(DocumentReviewReasons.UnresolvedClassification)
+            });
+        }
+
+        if ((document.ReviewReasons & DocumentReviewReasons.MissingRequiredFields) != DocumentReviewReasons.None)
+        {
+            details.Add(new ReviewReasonDetailDto
+            {
+                Reason = DocumentReviewReasons.MissingRequiredFields,
+                IsBlocking = ReviewReasonPolicy.IsBlocking(DocumentReviewReasons.MissingRequiredFields),
+                MissingFieldNames = await BuildMissingRequiredFieldNamesAsync(document)
+            });
+        }
+
+        return details;
+    }
+
+    /// <summary>缺失必填字段的 DisplayName（该类型当前 IsRequired 定义中未出现在已抽到值集合里的）。</summary>
+    protected virtual async Task<List<string>> BuildMissingRequiredFieldNamesAsync(Document document)
+    {
+        if (!document.DocumentTypeId.HasValue)
+        {
+            return new List<string>();
+        }
+
+        var definitions = await _fieldDefinitionRepository.GetListAsync(document.DocumentTypeId.Value);
+        var extractedIds = document.ExtractedFieldValues.Select(f => f.FieldDefinitionId).ToHashSet();
+        return definitions
+            .Where(d => d.IsRequired && !extractedIds.Contains(d.Id))
+            .Select(d => d.DisplayName)
+            .ToList();
     }
 
     /// <summary>

@@ -18,6 +18,19 @@ public class DocumentDto : EntityDto<Guid>
     public string? DocumentTypeCode { get; set; }
     public DocumentLifecycleStatus LifecycleStatus { get; set; }
     public DocumentReviewDisposition ReviewDisposition { get; set; }
+
+    /// <summary>待审原因集合（#284，<c>[Flags]</c>）。客户端直接渲染原因 badge，不自行推断。</summary>
+    public DocumentReviewReasons ReviewReasons { get; set; }
+
+    /// <summary>是否需要操作员关注（#284）= <c>ReviewReasons != None</c>。服务端出口以免客户端推断。</summary>
+    public bool RequiresReview { get; set; }
+
+    /// <summary>待审原因结构化明细（#284）。详情厚/列表薄——仅单文档详情组装；无未解决原因时为 null。</summary>
+    public List<ReviewReasonDetailDto>? ReviewReasonDetails { get; set; }
+
+    /// <summary>操作员拒绝理由（#284，仅 <see cref="ReviewDisposition"/>=Rejected 时有值）。</summary>
+    public string? RejectionReason { get; set; }
+
     public double ClassificationConfidence { get; set; }
 
     /// <summary>

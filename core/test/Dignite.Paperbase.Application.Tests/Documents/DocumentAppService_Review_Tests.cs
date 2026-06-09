@@ -114,6 +114,40 @@ public class DocumentAppService_Review_Tests
         result.ShouldContain(rejected);
     }
 
+    [Fact]
+    public async Task GetAsync_With_Missing_Required_Field_Exposes_Review_Reason_Detail()
+    {
+        // #284：详情 DTO 出口审核明细——必填缺失原因(non-blocking) + 缺失字段 DisplayName，服务端算/客户端纯渲染。
+        var typeId = Guid.NewGuid();
+        var doc = CreateDocument();
+        typeof(Document)
+            .GetMethod("ApplyAutomaticClassificationResult",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(doc, [typeId, 0.99]);
+        doc.SetReviewReason(DocumentReviewReasons.MissingRequiredFields, present: true);
+        StubGet(doc);
+
+        // 该类型有一个必填字段 "amount"(DisplayName "金额")，文档未抽到 → 缺失。
+        var amountDef = new FieldDefinition(
+            Guid.NewGuid(), tenantId: null, documentTypeId: typeId,
+            name: "amount", displayName: "金额", prompt: null,
+            dataType: FieldDataType.Number, displayOrder: 0, isRequired: true);
+        GetRequiredService<IFieldDefinitionRepository>()
+            .GetListAsync(typeId, Arg.Any<CancellationToken>())
+            .Returns(new List<FieldDefinition> { amountDef });
+
+        var dto = await _appService.GetAsync(doc.Id);
+
+        dto.RequiresReview.ShouldBeTrue();
+        dto.ReviewReasons.ShouldBe(DocumentReviewReasons.MissingRequiredFields);
+        dto.ReviewReasonDetails.ShouldNotBeNull();
+        var detail = dto.ReviewReasonDetails.ShouldHaveSingleItem();
+        detail.Reason.ShouldBe(DocumentReviewReasons.MissingRequiredFields);
+        detail.IsBlocking.ShouldBeFalse();   // MRF 是 non-blocking
+        detail.MissingFieldNames.ShouldNotBeNull();
+        detail.MissingFieldNames.ShouldContain("金额");
+    }
+
     private void StubGet(Document doc)
     {
         _documentRepository.GetAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
