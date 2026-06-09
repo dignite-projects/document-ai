@@ -120,7 +120,7 @@ public class DocumentClassificationWorkflow : ITransientDependency
         // LLM 偶发返回百分制置信度（如 99.9）或真正非法值（NaN / <0 / >100）。
         // 百分制先归一化到 0..1；真正非法值按"无可信结论"处理：
         // typeCode 置 null、confidence 置 0，由 BackgroundJob 走 LowConfidence 分支
-        // 触发 PendingReview，避免 Document.ApplyAutomaticClassificationResult 的
+        // 进待人工审核队列（置 UnresolvedClassification 原因），避免 Document.ApplyAutomaticClassificationResult 的
         // Check.Range 抛异常导致整条 PipelineRun 翻成 Failed。
         var rawConfidence = parsed?.Confidence ?? 0d;
         var typeCode = parsed?.TypeCode;

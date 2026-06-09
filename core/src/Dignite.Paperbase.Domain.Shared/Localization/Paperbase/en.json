@@ -117,7 +117,7 @@
     "Document:Review:Empty": "The review queue is empty.",
     "Document:Review:Reject": "Reject",
     "Document:Review:RejectReason": "Rejection Reason",
-    "Document:Review:RejectReasonHint": "Optional. Recorded on the document for audit.",
+    "Document:Review:RejectReasonHint": "Required. Recorded on the document for audit.",
     "Document:Review:RejectedSuccessfully": "Document rejected.",
     "Document:Review:ActionFailed": "Action failed.",
     "Document:Filter:AllStatuses": "All Statuses",

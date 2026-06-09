@@ -174,7 +174,7 @@
     "Document:Review:Empty": "审核队列已清空。",
     "Document:Review:Reject": "拒绝",
     "Document:Review:RejectReason": "拒绝原因",
-    "Document:Review:RejectReasonHint": "选填，将记录到文档用于审计。",
+    "Document:Review:RejectReasonHint": "必填，将记录到文档用于审计。",
     "Document:Review:RejectedSuccessfully": "已拒绝。",
     "Document:Review:ActionFailed": "操作失败。",
     "Document:Filter:AllStatuses": "全部状态",

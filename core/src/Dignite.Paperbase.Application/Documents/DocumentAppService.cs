@@ -178,7 +178,7 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
         // 前置检查：当前层至少要有一个 DocumentType（CLAUDE.md "两层文档类型体系" 单层精确匹配）。
         // Host 启动期 seed 入口已删除（HostDocumentTypeDataSeedContributor / DocumentTypeOptions），
         // DocumentType 现在只能通过 IDocumentTypeAppService 运行时创建——所以新部署 / 新租户必须先建类型才能上传。
-        // 不做这个 fail-fast 检查的话，上传成功 → 分类候选集为空 → 文档永远卡 PendingReview。
+        // 不做这个 fail-fast 检查的话，上传成功 → 分类候选集为空 → 文档永远卡在待人工审核队列。
         var hasType = await _documentTypeRepository.GetCountAsync() > 0;
         if (!hasType)
         {
