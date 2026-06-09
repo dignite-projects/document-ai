@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Abstractions.Documents;
+using Dignite.Paperbase.Documents.Review;
 using Microsoft.Extensions.Logging;
 using Volo.Abp.DependencyInjection;
 using Volo.Abp.EventBus.Distributed;
@@ -43,6 +44,7 @@ public class FieldExtractionService : ITransientDependency
     private readonly IDocumentRepository _documentRepository;
     private readonly IDocumentTypeRepository _documentTypeRepository;
     private readonly IFieldDefinitionRepository _fieldDefinitionRepository;
+    private readonly ReviewStateEvaluator _reviewEvaluator;
     private readonly FieldExtractionWorkflow _workflow;
     private readonly IDistributedEventBus _distributedEventBus;
     private readonly IClock _clock;
@@ -54,6 +56,7 @@ public class FieldExtractionService : ITransientDependency
         IDocumentRepository documentRepository,
         IDocumentTypeRepository documentTypeRepository,
         IFieldDefinitionRepository fieldDefinitionRepository,
+        ReviewStateEvaluator reviewEvaluator,
         FieldExtractionWorkflow workflow,
         IDistributedEventBus distributedEventBus,
         IClock clock,
@@ -64,6 +67,7 @@ public class FieldExtractionService : ITransientDependency
         _documentRepository = documentRepository;
         _documentTypeRepository = documentTypeRepository;
         _fieldDefinitionRepository = fieldDefinitionRepository;
+        _reviewEvaluator = reviewEvaluator;
         _workflow = workflow;
         _distributedEventBus = distributedEventBus;
         _clock = clock;
@@ -199,9 +203,14 @@ public class FieldExtractionService : ITransientDependency
                     return FieldExtractionResult.Skipped;
                 }
 
-                if (blankDocument.ExtractedFieldValues.Count > 0)
+                // #284：无字段定义 ⟹ 无必填可言，清 MissingRequiredFields（reclassify 到无字段类型时退出必填队列）。
+                var hadFields = blankDocument.ExtractedFieldValues.Count > 0;
+                var hadMissingRequired =
+                    (blankDocument.ReviewReasons & DocumentReviewReasons.MissingRequiredFields) != DocumentReviewReasons.None;
+                if (hadFields || hadMissingRequired)
                 {
                     blankDocument.SetFields(Array.Empty<DocumentFieldValue>());
+                    blankDocument.SetReviewReason(DocumentReviewReasons.MissingRequiredFields, present: false);
                     await _documentRepository.UpdateAsync(blankDocument, autoSave: true);
                 }
 
@@ -307,6 +316,15 @@ public class FieldExtractionService : ITransientDependency
             }
 
             document.SetFields(fieldValues);
+
+            // #284：抽取完成那一刻评估必填缺失并物化 MissingRequiredFields（读路径无法判断「是否已抽取」，故必须写时定）。
+            // 复用写入前重读的 currentDefinitions（筛 IsRequired）+ 写入后的 ExtractedFieldValues；本处在 stale 守卫之后，
+            // stale 事件到不了此处，零新增 race。non-blocking——置 MRF 不会把已 Ready 文档打回（DeriveLifecycle 只看 blocking）。
+            var requiredIds = currentDefinitions.Where(cd => cd.IsRequired).Select(cd => cd.Id).ToList();
+            var extractedIds = document.ExtractedFieldValues.Select(v => v.FieldDefinitionId).Distinct().ToList();
+            document.SetReviewReason(
+                DocumentReviewReasons.MissingRequiredFields,
+                _reviewEvaluator.MissingRequiredFieldsPresent(requiredIds, extractedIds));
 
             // FieldsExtractedEto.FieldCount 是逻辑字段数（拿到值的不同字段个数），非展开后的行数。
             var fieldCount = fieldValues.Select(v => v.FieldDefinitionId).Distinct().Count();

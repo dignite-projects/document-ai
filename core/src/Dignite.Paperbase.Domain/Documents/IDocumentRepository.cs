@@ -79,13 +79,13 @@ public interface IDocumentRepository : IRepository<Document, Guid>
     /// <para>范围条件（互相 AND）：</para>
     /// <list type="bullet">
     ///   <item><paramref name="documentTypeId"/> 非空 → 仅该类型（字段重抽固定按类型；重新分类「仅已归该类型」范围）；为空 → 不限类型（重新分类「全量 / 跨类型」范围）。</item>
-    ///   <item><paramref name="reviewStatus"/> 非空 → 仅该审核状态（重新分类「待审核队列」范围传 <see cref="DocumentReviewStatus.PendingReview"/>）。</item>
-    ///   <item><paramref name="excludeManuallyConfirmed"/> = true → 排除 <see cref="DocumentReviewStatus.Reviewed"/>（保护人工确认，#289 默认开启）。</item>
+    ///   <item><paramref name="withReason"/> 非空 → 仅含该待审原因的文档（重新分类「待审核队列」范围传 <see cref="DocumentReviewReasons.UnresolvedClassification"/>，即旧 PendingReview，#284 两轴模型）。</item>
+    ///   <item><paramref name="excludeManuallyConfirmed"/> = true → 排除 <see cref="DocumentReviewDisposition.Confirmed"/>（保护人工确认，#289 默认开启）。</item>
     /// </list>
     /// </summary>
     Task<long> CountForReprocessingAsync(
         Guid? documentTypeId,
-        DocumentReviewStatus? reviewStatus,
+        DocumentReviewReasons? withReason,
         bool excludeManuallyConfirmed,
         CancellationToken cancellationToken = default);
 
@@ -97,7 +97,7 @@ public interface IDocumentRepository : IRepository<Document, Guid>
     /// </summary>
     Task<List<Guid>> GetIdsForReprocessingAsync(
         Guid? documentTypeId,
-        DocumentReviewStatus? reviewStatus,
+        DocumentReviewReasons? withReason,
         bool excludeManuallyConfirmed,
         Guid? afterId,
         int maxCount,

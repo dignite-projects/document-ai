@@ -40,7 +40,7 @@ public class DocumentReprocessing_Tests : PaperbaseEntityFrameworkCoreTestBase
         var ids = await SeedAsync();
 
         var count = await WithUnitOfWorkAsync(() =>
-            _documentRepository.CountForReprocessingAsync(TypeAId, reviewStatus: null, excludeManuallyConfirmed: false));
+            _documentRepository.CountForReprocessingAsync(TypeAId, withReason: null, excludeManuallyConfirmed: false));
         // typeA 有文本: d1(auto) + d2(reviewed)；d4 无 markdown、d6 软删 —— 均排除。
         count.ShouldBe(2);
 
@@ -55,7 +55,7 @@ public class DocumentReprocessing_Tests : PaperbaseEntityFrameworkCoreTestBase
         var ids = await SeedAsync();
 
         var count = await WithUnitOfWorkAsync(() =>
-            _documentRepository.CountForReprocessingAsync(TypeAId, reviewStatus: null, excludeManuallyConfirmed: true));
+            _documentRepository.CountForReprocessingAsync(TypeAId, withReason: null, excludeManuallyConfirmed: true));
         // 保护人工确认：d2(Reviewed) 被排除，只剩 d1。
         count.ShouldBe(1);
 
@@ -71,11 +71,11 @@ public class DocumentReprocessing_Tests : PaperbaseEntityFrameworkCoreTestBase
 
         var count = await WithUnitOfWorkAsync(() =>
             _documentRepository.CountForReprocessingAsync(
-                documentTypeId: null, reviewStatus: DocumentReviewStatus.PendingReview, excludeManuallyConfirmed: false));
+                documentTypeId: null, withReason: DocumentReviewReasons.UnresolvedClassification, excludeManuallyConfirmed: false));
         count.ShouldBe(1);
 
         var pageIds = await WithUnitOfWorkAsync(() =>
-            _documentRepository.GetIdsForReprocessingAsync(null, DocumentReviewStatus.PendingReview, false, null, 100));
+            _documentRepository.GetIdsForReprocessingAsync(null, DocumentReviewReasons.UnresolvedClassification, false, null, 100));
         pageIds.ShouldBe(new[] { ids.D5 });
     }
 
@@ -177,7 +177,7 @@ public class DocumentReprocessing_Tests : PaperbaseEntityFrameworkCoreTestBase
             // d4: typeA, 无 markdown（never-extracted）—— 应被排除
             await InsertAsync(ids.D4, markdown: null, d => d.ApplyAutomaticClassificationResult(TypeAId, 0.9));
             // d5: 无类型, 有文本, 待审核(PendingReview)
-            await InsertAsync(ids.D5, markdown: "# d5", d => d.RequestClassificationReview("low"));
+            await InsertAsync(ids.D5, markdown: "# d5", d => d.RequestClassificationReview());
             // d6: typeA, 有文本, 自动分类, 软删除 —— 应被排除
             await InsertAsync(ids.D6, markdown: "# d6", d => d.ApplyAutomaticClassificationResult(TypeAId, 0.9));
             await _documentRepository.DeleteAsync(ids.D6); // soft delete

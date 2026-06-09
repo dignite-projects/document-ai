@@ -57,7 +57,7 @@ public class DocumentReclassificationDispatcherJob
             {
                 ids = await _documentRepository.GetIdsForReprocessingAsync(
                     documentTypeId: args.DocumentTypeId,
-                    reviewStatus: args.ReviewStatus,
+                    withReason: args.WithReason,
                     excludeManuallyConfirmed: args.ExcludeManuallyConfirmed,
                     afterId: args.AfterId,
                     maxCount: batchSize);
@@ -75,7 +75,7 @@ public class DocumentReclassificationDispatcherJob
                         new DocumentReclassificationDispatcherArgs
                         {
                             DocumentTypeId = args.DocumentTypeId,
-                            ReviewStatus = args.ReviewStatus,
+                            WithReason = args.WithReason,
                             ExcludeManuallyConfirmed = args.ExcludeManuallyConfirmed,
                             TenantId = args.TenantId,
                             AfterId = ids[^1]
@@ -86,8 +86,8 @@ public class DocumentReclassificationDispatcherJob
             }
 
             Logger.LogInformation(
-                "Reclassification dispatcher: enqueued {Count} document(s) (type={DocumentTypeId}, reviewStatus={ReviewStatus}, excludeConfirmed={ExcludeConfirmed}, afterId={AfterId}, continued={Continued}).",
-                ids.Count, args.DocumentTypeId, args.ReviewStatus, args.ExcludeManuallyConfirmed, args.AfterId, ids.Count == batchSize);
+                "Reclassification dispatcher: enqueued {Count} document(s) (type={DocumentTypeId}, withReason={WithReason}, excludeConfirmed={ExcludeConfirmed}, afterId={AfterId}, continued={Continued}).",
+                ids.Count, args.DocumentTypeId, args.WithReason, args.ExcludeManuallyConfirmed, args.AfterId, ids.Count == batchSize);
         }
     }
 }
@@ -97,10 +97,10 @@ public class DocumentReclassificationDispatcherArgs
     /// <summary>非空 = 仅该类型（<see cref="ReclassificationScope.OnlyCurrentType"/>）；空 = 全量 / 跨类型。</summary>
     public Guid? DocumentTypeId { get; set; }
 
-    /// <summary>非空 = 仅该审核状态（待审核队列范围传 <see cref="DocumentReviewStatus.PendingReview"/>）。</summary>
-    public DocumentReviewStatus? ReviewStatus { get; set; }
+    /// <summary>非空 = 仅含该待审原因（待审核队列范围传 <see cref="DocumentReviewReasons.UnresolvedClassification"/>，#284 两轴模型）。</summary>
+    public DocumentReviewReasons? WithReason { get; set; }
 
-    /// <summary>true = 排除已人工确认（<see cref="DocumentReviewStatus.Reviewed"/>）的文档（保护人工确认）。</summary>
+    /// <summary>true = 排除已人工确认（<see cref="DocumentReviewDisposition.Confirmed"/>）的文档（保护人工确认）。</summary>
     public bool ExcludeManuallyConfirmed { get; set; }
 
     public Guid? TenantId { get; set; }

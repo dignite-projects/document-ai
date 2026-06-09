@@ -52,7 +52,7 @@ public class DocumentReprocessingAppService_Tests
         _documentTypeRepository.FindAsync(Arg.Any<Guid>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(ci => new DocumentType(ci.ArgAt<Guid>(0), null, "type.x", "Type X"));
         _documentRepository.CountForReprocessingAsync(
-                Arg.Any<Guid?>(), Arg.Any<DocumentReviewStatus?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+                Arg.Any<Guid?>(), Arg.Any<DocumentReviewReasons?>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(7L);
     }
 
@@ -109,7 +109,7 @@ public class DocumentReprocessingAppService_Tests
 
         await _backgroundJobManager.Received(1).EnqueueAsync(
             Arg.Is<DocumentReclassificationDispatcherArgs>(a =>
-                a.DocumentTypeId == null && a.ReviewStatus == null && a.ExcludeManuallyConfirmed && a.AfterId == null),
+                a.DocumentTypeId == null && a.WithReason == null && a.ExcludeManuallyConfirmed && a.AfterId == null),
             Arg.Any<BackgroundJobPriority>(), Arg.Any<TimeSpan?>());
     }
 
@@ -137,7 +137,7 @@ public class DocumentReprocessingAppService_Tests
 
         await _backgroundJobManager.Received(1).EnqueueAsync(
             Arg.Is<DocumentReclassificationDispatcherArgs>(a =>
-                a.DocumentTypeId == null && a.ReviewStatus == DocumentReviewStatus.PendingReview && !a.ExcludeManuallyConfirmed),
+                a.DocumentTypeId == null && a.WithReason == DocumentReviewReasons.UnresolvedClassification && !a.ExcludeManuallyConfirmed),
             Arg.Any<BackgroundJobPriority>(), Arg.Any<TimeSpan?>());
     }
 }

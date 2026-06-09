@@ -19,6 +19,6 @@ public enum ReclassificationScope
     /// </summary>
     AllDocuments = 10,
 
-    /// <summary>待审核队列（捞回之前没分成功的，<see cref="DocumentReviewStatus.PendingReview"/>）。范围小、安全。</summary>
+    /// <summary>待审核队列（捞回之前没分成功的——含 <see cref="DocumentReviewReasons.UnresolvedClassification"/> 原因，#284 两轴模型，即旧 PendingReview）。范围小、安全。</summary>
     PendingReviewQueue = 20
 }

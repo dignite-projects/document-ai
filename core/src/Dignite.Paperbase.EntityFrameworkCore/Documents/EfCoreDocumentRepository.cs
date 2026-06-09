@@ -126,25 +126,25 @@ public class EfCoreDocumentRepository
 
     public virtual async Task<long> CountForReprocessingAsync(
         Guid? documentTypeId,
-        DocumentReviewStatus? reviewStatus,
+        DocumentReviewReasons? withReason,
         bool excludeManuallyConfirmed,
         CancellationToken cancellationToken = default)
     {
         var dbSet = await GetDbSetAsync();
-        return await ApplyReprocessingScope(dbSet, documentTypeId, reviewStatus, excludeManuallyConfirmed)
+        return await ApplyReprocessingScope(dbSet, documentTypeId, withReason, excludeManuallyConfirmed)
             .LongCountAsync(GetCancellationToken(cancellationToken));
     }
 
     public virtual async Task<List<Guid>> GetIdsForReprocessingAsync(
         Guid? documentTypeId,
-        DocumentReviewStatus? reviewStatus,
+        DocumentReviewReasons? withReason,
         bool excludeManuallyConfirmed,
         Guid? afterId,
         int maxCount,
         CancellationToken cancellationToken = default)
     {
         var dbSet = await GetDbSetAsync();
-        var query = ApplyReprocessingScope(dbSet, documentTypeId, reviewStatus, excludeManuallyConfirmed);
+        var query = ApplyReprocessingScope(dbSet, documentTypeId, withReason, excludeManuallyConfirmed);
 
         // keyset 游标：WHERE Id > afterId ORDER BY Id Take(N)，走主键索引、O(batch)，优于 OFFSET 深翻页。
         if (afterId.HasValue)
@@ -169,7 +169,7 @@ public class EfCoreDocumentRepository
     private static IQueryable<Document> ApplyReprocessingScope(
         IQueryable<Document> query,
         Guid? documentTypeId,
-        DocumentReviewStatus? reviewStatus,
+        DocumentReviewReasons? withReason,
         bool excludeManuallyConfirmed)
     {
         query = query.Where(d => d.Markdown != null && d.Markdown != "");
@@ -180,15 +180,17 @@ public class EfCoreDocumentRepository
             query = query.Where(d => d.DocumentTypeId == typeId);
         }
 
-        if (reviewStatus.HasValue)
+        if (withReason.HasValue && withReason.Value != DocumentReviewReasons.None)
         {
-            var status = reviewStatus.Value;
-            query = query.Where(d => d.ReviewStatus == status);
+            // #284 两轴模型：待审原因是 [Flags] 位集。「含该原因」= 按位与非零。
+            var reason = withReason.Value;
+            query = query.Where(d => (d.ReviewReasons & reason) != DocumentReviewReasons.None);
         }
 
         if (excludeManuallyConfirmed)
         {
-            query = query.Where(d => d.ReviewStatus != DocumentReviewStatus.Reviewed);
+            // 保护人工确认：排除操作员已确认（Confirmed 处置）的文档。
+            query = query.Where(d => d.ReviewDisposition != DocumentReviewDisposition.Confirmed);
         }
 
         return query;

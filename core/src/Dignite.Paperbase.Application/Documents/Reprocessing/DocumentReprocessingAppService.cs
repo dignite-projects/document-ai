@@ -46,7 +46,7 @@ public class DocumentReprocessingAppService : PaperbaseAppService, IDocumentRepr
         await EnsureTypeInCurrentLayerAsync(documentTypeId);
 
         var count = await _documentRepository.CountForReprocessingAsync(
-            documentTypeId, reviewStatus: null, excludeManuallyConfirmed: false);
+            documentTypeId, withReason: null, excludeManuallyConfirmed: false);
         var definitions = await _fieldDefinitionRepository.GetListAsync(documentTypeId);
 
         return new FieldReextractionPreviewDto
@@ -63,7 +63,7 @@ public class DocumentReprocessingAppService : PaperbaseAppService, IDocumentRepr
         await EnsureTypeInCurrentLayerAsync(input.DocumentTypeId);
 
         var count = await _documentRepository.CountForReprocessingAsync(
-            input.DocumentTypeId, reviewStatus: null, excludeManuallyConfirmed: false);
+            input.DocumentTypeId, withReason: null, excludeManuallyConfirmed: false);
 
         Logger.LogInformation(
             "StartFieldExtraction user={UserId} tenant={TenantId} type={DocumentTypeId} estimatedCount={Count}",
@@ -83,9 +83,9 @@ public class DocumentReprocessingAppService : PaperbaseAppService, IDocumentRepr
     [Authorize(PaperbasePermissions.Documents.Reprocessing.Reclassification)]
     public virtual async Task<ReclassificationPreviewDto> PreviewReclassificationAsync(ReclassificationScopeInput input)
     {
-        var (typeId, reviewStatus, excludeConfirmed) = await ResolveScopeAsync(input);
+        var (typeId, withReason, excludeConfirmed) = await ResolveScopeAsync(input);
 
-        var count = await _documentRepository.CountForReprocessingAsync(typeId, reviewStatus, excludeConfirmed);
+        var count = await _documentRepository.CountForReprocessingAsync(typeId, withReason, excludeConfirmed);
 
         return new ReclassificationPreviewDto { DocumentCount = count };
     }
@@ -93,19 +93,19 @@ public class DocumentReprocessingAppService : PaperbaseAppService, IDocumentRepr
     [Authorize(PaperbasePermissions.Documents.Reprocessing.Reclassification)]
     public virtual async Task<ReprocessingStartResultDto> StartReclassificationAsync(ReclassificationScopeInput input)
     {
-        var (typeId, reviewStatus, excludeConfirmed) = await ResolveScopeAsync(input);
+        var (typeId, withReason, excludeConfirmed) = await ResolveScopeAsync(input);
 
-        var count = await _documentRepository.CountForReprocessingAsync(typeId, reviewStatus, excludeConfirmed);
+        var count = await _documentRepository.CountForReprocessingAsync(typeId, withReason, excludeConfirmed);
 
         Logger.LogInformation(
-            "StartReclassification user={UserId} tenant={TenantId} scope={Scope} type={DocumentTypeId} reviewStatus={ReviewStatus} excludeConfirmed={ExcludeConfirmed} estimatedCount={Count}",
-            CurrentUser.Id, CurrentTenant.Id, input.Scope, typeId, reviewStatus, excludeConfirmed, count);
+            "StartReclassification user={UserId} tenant={TenantId} scope={Scope} type={DocumentTypeId} withReason={WithReason} excludeConfirmed={ExcludeConfirmed} estimatedCount={Count}",
+            CurrentUser.Id, CurrentTenant.Id, input.Scope, typeId, withReason, excludeConfirmed, count);
 
         await _backgroundJobManager.EnqueueAsync(
             new DocumentReclassificationDispatcherArgs
             {
                 DocumentTypeId = typeId,
-                ReviewStatus = reviewStatus,
+                WithReason = withReason,
                 ExcludeManuallyConfirmed = excludeConfirmed,
                 TenantId = CurrentTenant.Id,
                 AfterId = null
@@ -115,7 +115,7 @@ public class DocumentReprocessingAppService : PaperbaseAppService, IDocumentRepr
     }
 
     /// <summary>把范围 DTO 翻译成仓储范围查询三元组，并校验 OnlyCurrentType 的类型存在于当前层。</summary>
-    protected virtual async Task<(Guid? TypeId, DocumentReviewStatus? ReviewStatus, bool ExcludeConfirmed)> ResolveScopeAsync(
+    protected virtual async Task<(Guid? TypeId, DocumentReviewReasons? WithReason, bool ExcludeConfirmed)> ResolveScopeAsync(
         ReclassificationScopeInput input)
     {
         switch (input.Scope)
@@ -129,8 +129,9 @@ public class DocumentReprocessingAppService : PaperbaseAppService, IDocumentRepr
                 return (null, null, !input.IncludeManuallyConfirmed);
 
             case ReclassificationScope.PendingReviewQueue:
-                // 待审核队列本就未确认，IncludeManuallyConfirmed 无意义。
-                return (null, DocumentReviewStatus.PendingReview, false);
+                // 待审核队列 = 分类未定（#284 两轴：UnresolvedClassification 原因，取代旧 PendingReview）。
+                // 这些文档本就无已确认类型，IncludeManuallyConfirmed 无意义。
+                return (null, DocumentReviewReasons.UnresolvedClassification, false);
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(input), input.Scope, "Unknown reclassification scope.");

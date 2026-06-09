@@ -47,7 +47,7 @@ public class ReclassificationScopeInput : IValidatableObject
     public Guid? DocumentTypeId { get; set; }
 
     /// <summary>
-    /// 是否连「已人工确认（<see cref="DocumentReviewStatus.Reviewed"/>）」的文档也重分。
+    /// 是否连「已人工确认（<see cref="DocumentReviewDisposition.Confirmed"/>）」的文档也重分。
     /// 默认 <c>false</c>（保护人工确认，#289 默认开启）——把「覆盖人工成果」变成显式 opt-in。
     /// 对 <see cref="ReclassificationScope.PendingReviewQueue"/> 无意义（待审核文档本就未确认）。
     /// </summary>

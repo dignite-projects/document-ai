@@ -61,7 +61,7 @@ public class DocumentFieldReextractionDispatcherJob
                 // 过滤器也会让 GetIdsForReprocessingAsync 命中零行（fail-closed，不泄漏）。
                 ids = await _documentRepository.GetIdsForReprocessingAsync(
                     documentTypeId: args.DocumentTypeId,
-                    reviewStatus: null,
+                    withReason: null,
                     excludeManuallyConfirmed: false,
                     afterId: args.AfterId,
                     maxCount: batchSize);
