@@ -71,4 +71,35 @@ public interface IDocumentRepository : IRepository<Document, Guid>
     Task<bool> AnyExtractedFieldValueAsync(
         Guid fieldDefinitionId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 批量重处理（#289）的范围计数——预览模态用。返回当前 ambient 层（<c>IMultiTenant</c> + <c>ISoftDelete</c>
+    /// 全局过滤器按 ambient 状态自动隔离，软删 / 回收站文档不计入）内、已完成文本提取（<c>Markdown</c> 非空，
+    /// 重分类 / 字段抽取都需要文本载荷）且满足范围条件的文档数。
+    /// <para>范围条件（互相 AND）：</para>
+    /// <list type="bullet">
+    ///   <item><paramref name="documentTypeId"/> 非空 → 仅该类型（字段重抽固定按类型；重新分类「仅已归该类型」范围）；为空 → 不限类型（重新分类「全量 / 跨类型」范围）。</item>
+    ///   <item><paramref name="reviewStatus"/> 非空 → 仅该审核状态（重新分类「待审核队列」范围传 <see cref="DocumentReviewStatus.PendingReview"/>）。</item>
+    ///   <item><paramref name="excludeManuallyConfirmed"/> = true → 排除 <see cref="DocumentReviewStatus.Reviewed"/>（保护人工确认，#289 默认开启）。</item>
+    /// </list>
+    /// </summary>
+    Task<long> CountForReprocessingAsync(
+        Guid? documentTypeId,
+        DocumentReviewStatus? reviewStatus,
+        bool excludeManuallyConfirmed,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 批量重处理（#289）分发任务的 keyset 分页只读 Id 查询。返回与 <see cref="CountForReprocessingAsync"/> 同范围、
+    /// <c>Id &gt; <paramref name="afterId"/></c>（<paramref name="afterId"/> 为空表示从头）、按 <c>Id</c> 升序的前
+    /// <paramref name="maxCount"/> 个文档 Id（<c>AsNoTracking</c> + <c>Select(d =&gt; d.Id)</c>，绝不读整行尤其 Markdown，
+    /// 防 OOM）。dispatcher 据末尾 Id 作为下一批游标链式自延续。
+    /// </summary>
+    Task<List<Guid>> GetIdsForReprocessingAsync(
+        Guid? documentTypeId,
+        DocumentReviewStatus? reviewStatus,
+        bool excludeManuallyConfirmed,
+        Guid? afterId,
+        int maxCount,
+        CancellationToken cancellationToken = default);
 }

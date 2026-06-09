@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Documents.Pipelines.Classification;
+using Dignite.Paperbase.Documents.Pipelines.FieldExtraction;
 using Dignite.Paperbase.Documents.Pipelines.TextExtraction;
 using Microsoft.Extensions.Logging;
 using Volo.Abp;
@@ -64,6 +65,13 @@ public class DocumentPipelineJobScheduler : ITransientDependency
                 delay: effectiveDelay),
             PaperbasePipelines.Classification => _backgroundJobManager.EnqueueAsync(
                 new DocumentClassificationJobArgs
+                {
+                    DocumentId = documentId,
+                    PipelineRunId = pipelineRunId
+                },
+                delay: effectiveDelay),
+            PaperbasePipelines.FieldExtraction => _backgroundJobManager.EnqueueAsync(
+                new DocumentFieldExtractionJobArgs
                 {
                     DocumentId = documentId,
                     PipelineRunId = pipelineRunId

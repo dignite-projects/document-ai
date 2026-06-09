@@ -500,6 +500,46 @@ public class DocumentAppService : PaperbaseAppService, IDocumentAppService
     }
 
     /// <summary>
+    /// 「仅重抽字段」（#289 场景二单篇版）——在现有分类上只重跑 <c>field-extraction</c> pipeline，不重排分类、不重 OCR。
+    /// 复用与批量字段重抽相同的后台作业 + 共享抽取引擎；<c>field-extraction</c> 是生命周期中性 pipeline（不在 KeyPipelines），
+    /// 已 Ready 文档重抽后仍 Ready，不被打回 Processing。
+    /// </summary>
+    [Authorize(PaperbasePermissions.Documents.ConfirmClassification)]
+    public virtual async Task ReextractFieldsAsync(Guid id)
+    {
+        // 只需标量（IsDeleted / DocumentTypeId / Markdown）；不碰字段值。租户隔离由 ambient IMultiTenant 过滤器施加。
+        var document = await _documentRepository.GetAsync(id, includeDetails: false);
+
+        if (document.IsDeleted)
+        {
+            throw new BusinessException(PaperbaseErrorCodes.Document.InRecycleBin)
+                .WithData("FileName", document.FileOrigin.BlobName);
+        }
+
+        // 字段抽取挂在 DocumentType 下——未分类无从抽取。
+        if (!document.DocumentTypeId.HasValue)
+        {
+            throw new BusinessException(PaperbaseErrorCodes.Document.NotClassified);
+        }
+
+        // 字段抽取的输入是 Document.Markdown——文本提取尚未产出文本则无从抽取。
+        if (string.IsNullOrEmpty(document.Markdown))
+        {
+            throw new BusinessException(PaperbaseErrorCodes.Document.NotTextExtracted);
+        }
+
+        // 并发护栏：field-extraction 正 Pending/Running 时不重排（避免双击叠加；新 attempt 不撞 Running 的唯一索引，须显式拦）。
+        await _pipelineRunManager.EnsureNotInProgressAsync(id, PaperbasePipelines.FieldExtraction);
+
+        Logger.LogInformation(
+            "ReextractFieldsAsync user={UserId} tenant={TenantId} doc={DocumentId}",
+            CurrentUser.Id, CurrentTenant.Id, document.Id);
+
+        // 建 Pending field-extraction run + 入队后台作业（生命周期中性，不动 LifecycleStatus）。
+        await _pipelineJobScheduler.QueueAsync(document, PaperbasePipelines.FieldExtraction);
+    }
+
+    /// <summary>
     /// 操作员手改字段抽取结果（个别纠错）。整体替换 ExtractedFields；key 必须是该文档所属层、
     /// 该 DocumentType 下已定义的字段名；完成后复用 FieldsExtractedEto 重发让下游同步。
     /// </summary>

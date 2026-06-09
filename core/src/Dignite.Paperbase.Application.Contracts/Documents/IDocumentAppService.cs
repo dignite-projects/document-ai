@@ -62,6 +62,17 @@ public interface IDocumentAppService : IApplicationService
     Task RerecognizeAsync(Guid id);
 
     /// <summary>
+    /// 「仅重抽字段」（#289 场景二的单篇版）——在**现有分类**上只重跑类型绑定字段抽取（<c>field-extraction</c> pipeline），
+    /// **不重排分类、不重新 OCR**。详情页区别于「重新识别」的轻量按钮：当只调了字段定义、不想触碰分类时用。
+    /// <para>
+    /// 区别于 <see cref="RerecognizeAsync"/>（重排分类 + 级联，破坏性）：本路径是安全叶子操作，仅整组替换字段值
+    /// （会覆盖操作员手改过的字段值，轻代价）。完成后引擎发 <see cref="Abstractions.Documents.FieldsExtractedEto"/>。
+    /// 文档在回收站、尚未分类（无类型）、尚未产出 Markdown、或字段抽取正在进行时拒绝。
+    /// </para>
+    /// </summary>
+    Task ReextractFieldsAsync(Guid id);
+
+    /// <summary>
     /// 操作员手改类型绑定字段抽取结果（个别纠错）。整体替换该文档的字段值集合；
     /// 每个 key 必须是该文档所属层、该 DocumentType 下已定义的 <see cref="FieldDefinition.Name"/>。
     /// 完成后复用 <see cref="Abstractions.Documents.FieldsExtractedEto"/> 重发，下游按

@@ -22,6 +22,19 @@ public class PaperbasePermissions
             public const string Retry = Default + ".Retry";
         }
 
+        // 存量文档批量重处理（#289）——admin 级操作：配置（分类提示词 / 字段定义）调整后对存量重跑。
+        // 单篇「仅重抽字段」走 ConfirmClassification（操作员级，与「重新识别」对称）；批量入口走这里。
+        public static class Reprocessing
+        {
+            public const string Default = Documents.Default + ".Reprocessing";
+
+            /// <summary>批量字段重抽（叶子操作，轻警告）。</summary>
+            public const string FieldExtraction = Default + ".FieldExtraction";
+
+            /// <summary>批量重新分类（级联 + 破坏性，重警告）。</summary>
+            public const string Reclassification = Default + ".Reclassification";
+        }
+
         public static class Templates
         {
             public const string Default = Documents.Default + ".Templates";

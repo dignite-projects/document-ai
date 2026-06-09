@@ -68,4 +68,11 @@ public static class DocumentConsts
     /// 设为编译期 <c>const</c>——安全边界不可被运行时配置放大。
     /// </summary>
     public const int MaxSearchFieldFilters = 10;
+
+    /// <summary>
+    /// 批量重处理（#289）分发任务每批读取 / 入队的文档 Id 数量。dispatcher 链式自延续：每批 keyset 分页
+    /// 只读 Id（<c>WHERE Id &gt; lastId ORDER BY Id Take(N)</c>）+ 入队 N 个单篇任务 + 入队下一个 dispatcher，
+    /// 每个 dispatcher 都是几秒短任务，不长占 worker。static mutable——host 可按 LLM provider 并发 / DB 连接池调。
+    /// </summary>
+    public static int ReprocessingDispatchBatchSize { get; set; } = 100;
 }
