@@ -147,12 +147,12 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
     public async Task CompleteClassificationWithLowConfidence_Sets_ReviewStatus_And_Completes_Run()
     {
         var doc = CreateDocument();
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.None);
+        doc.ReviewDisposition.ShouldBe(DocumentReviewDisposition.NotReviewed);
 
         var run = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
         await _manager.CompleteClassificationWithLowConfidenceAsync(doc, run, "AI confidence too low");
 
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
+        doc.ReviewReasons.ShouldBe(DocumentReviewReasons.UnresolvedClassification);
 
         var latestRun = await _runRepo.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         latestRun!.Status.ShouldBe(PipelineRunStatus.Succeeded);
@@ -189,7 +189,7 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
         var classRun = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
         await _manager.CompleteClassificationWithLowConfidenceAsync(doc, classRun, "AI confidence too low");
 
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
+        doc.ReviewReasons.ShouldBe(DocumentReviewReasons.UnresolvedClassification);
         doc.DocumentTypeId.ShouldBeNull();
         doc.LifecycleStatus.ShouldBe(DocumentLifecycleStatus.Processing);
     }
@@ -207,7 +207,7 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
         // 先模拟低置信度进入待审核
         var run1 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
         await _manager.CompleteClassificationWithLowConfidenceAsync(doc, run1);
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
+        doc.ReviewReasons.ShouldBe(DocumentReviewReasons.UnresolvedClassification);
 
         // 人工确认
         var run2 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
@@ -216,7 +216,7 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
 
         doc.DocumentTypeId.ShouldBe(contractType.Id);
         doc.ClassificationConfidence.ShouldBe(1.0);
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.Reviewed);
+        doc.ReviewDisposition.ShouldBe(DocumentReviewDisposition.Confirmed);
 
         var latestRun = await _runRepo.FindLatestByDocumentAndCodeAsync(doc.Id, PaperbasePipelines.Classification);
         latestRun!.Status.ShouldBe(PipelineRunStatus.Succeeded);
@@ -234,18 +234,18 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
         // 第一次低置信度 → PendingReview（写入 ClassificationReason）
         var run1 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
         await _manager.CompleteClassificationWithLowConfidenceAsync(doc, run1, "AI confidence too low");
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
-        doc.ClassificationReason.ShouldBe("AI confidence too low");
+        doc.ReviewReasons.ShouldBe(DocumentReviewReasons.UnresolvedClassification);
+        doc.ReviewDisposition.ShouldBe(DocumentReviewDisposition.NotReviewed);
 
         // 重试自动分类成功 → 高置信度路径必须清空 ClassificationReason
         var run2 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
         var contractType = CreateContractType();
         await _manager.CompleteClassificationAsync(doc, run2, contractType, 0.95);
 
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.None);
+        doc.ReviewDisposition.ShouldBe(DocumentReviewDisposition.NotReviewed);
         doc.DocumentTypeId.ShouldBe(contractType.Id);
         doc.ClassificationConfidence.ShouldBe(0.95);
-        doc.ClassificationReason.ShouldBeNull(); // 高置信度路径固定清空
+        doc.ReviewReasons.ShouldBe(DocumentReviewReasons.None); // 高置信度路径清除待审原因
     }
 
     // ────────────────────────────────────────────────────────────────────────────
@@ -264,7 +264,7 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
 
         doc.DocumentTypeId.ShouldBe(contractType.Id);
         doc.ClassificationConfidence.ShouldBe(0.92);
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.None);
+        doc.ReviewDisposition.ShouldBe(DocumentReviewDisposition.NotReviewed);
 
         // 第二次：重跑分类落入 LowConfidence
         var run2 = await _manager.StartAsync(doc, PaperbasePipelines.Classification);
@@ -273,8 +273,8 @@ public class DocumentPipelineRunManagerTests : PaperbaseDomainTestBase<Paperbase
         // 历史 TypeId/Confidence 必须清空，避免外部读到「类型已确定 + 待审核」自相矛盾
         doc.DocumentTypeId.ShouldBeNull();
         doc.ClassificationConfidence.ShouldBe(0);
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.PendingReview);
-        doc.ClassificationReason.ShouldBe("AI confidence too low");
+        doc.ReviewReasons.ShouldBe(DocumentReviewReasons.UnresolvedClassification);
+        doc.ReviewDisposition.ShouldBe(DocumentReviewDisposition.NotReviewed);
     }
 
     // ────────────────────────────────────────────────────────────────────────────

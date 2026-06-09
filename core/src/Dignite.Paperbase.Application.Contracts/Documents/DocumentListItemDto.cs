@@ -15,7 +15,7 @@ public class DocumentListItemDto : EntityDto<Guid>
 
     public string? DocumentTypeCode { get; set; }
     public DocumentLifecycleStatus LifecycleStatus { get; set; }
-    public DocumentReviewStatus ReviewStatus { get; set; }
+    public DocumentReviewDisposition ReviewDisposition { get; set; }
     public double ClassificationConfidence { get; set; }
 
     /// <summary>

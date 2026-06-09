@@ -74,8 +74,8 @@ public class DocumentAppService_Review_Tests
         await _appService.RejectReviewAsync(doc.Id, new RejectReviewInput { Reason = "scan unusable" });
 
         doc.LifecycleStatus.ShouldBe(DocumentLifecycleStatus.Failed);
-        doc.ReviewStatus.ShouldBe(DocumentReviewStatus.Rejected);
-        doc.ClassificationReason.ShouldBe("scan unusable");
+        doc.ReviewDisposition.ShouldBe(DocumentReviewDisposition.Rejected);
+        doc.RejectionReason.ShouldBe("scan unusable");
     }
 
     [Fact]
@@ -83,13 +83,14 @@ public class DocumentAppService_Review_Tests
     {
         var activePending = await CreatePendingReviewDocumentAsync("needs review");
 
-        // 被拒绝的文档落 ReviewStatus=Rejected（#237），自然不匹配 PendingReview 过滤。
+        // 被拒绝的文档落 ReviewDisposition=Rejected（#284）；它仍保留 UC 原因，但审核队列
+        // （HasReviewReasons）显式排除已拒绝文档，故不出现在队列里。
         var rejected = await CreatePendingReviewDocumentAsync("low confidence");
         rejected.RejectReview("scan unusable");
 
         var result = ApplyFilterForTest(
                 new[] { activePending, rejected }.AsQueryable(),
-                new GetDocumentListInput { ReviewStatus = DocumentReviewStatus.PendingReview })
+                new GetDocumentListInput { HasReviewReasons = true })
             .ToList();
 
         result.ShouldContain(activePending);
@@ -106,7 +107,7 @@ public class DocumentAppService_Review_Tests
 
         var result = ApplyFilterForTest(
                 new[] { rejected }.AsQueryable(),
-                new GetDocumentListInput { ReviewStatus = DocumentReviewStatus.Rejected })
+                new GetDocumentListInput { ReviewDisposition = DocumentReviewDisposition.Rejected })
             .ToList();
 
         result.ShouldContain(rejected);

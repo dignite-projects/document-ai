@@ -142,7 +142,7 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
                 {
                     Title = d.Title,
                     LifecycleStatus = d.LifecycleStatus,
-                    ReviewStatus = d.ReviewStatus,
+                    ReviewDisposition = d.ReviewDisposition,
                     // typed child 行随文档一并投影（单查询相关子查询，非逐文档 N+1）；按 FieldDefinitionId 匹配模板列。
                     ExtractedFields = d.ExtractedFieldValues
                         .Select(f => new ExtractedFieldProjection
@@ -197,7 +197,7 @@ public class ExportTemplateAppService : PaperbaseAppService, IExportTemplateAppS
             {
                 var cells = new string?[headers.Count];
                 cells[0] = r.LifecycleStatus.ToString();
-                cells[1] = r.ReviewStatus.ToString();
+                cells[1] = r.ReviewDisposition.ToString();
                 cells[2] = r.Title;
                 for (var i = 0; i < template.Columns.Count; i++)
                 {

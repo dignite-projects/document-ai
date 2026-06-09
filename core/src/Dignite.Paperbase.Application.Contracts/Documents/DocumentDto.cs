@@ -17,9 +17,8 @@ public class DocumentDto : EntityDto<Guid>
 
     public string? DocumentTypeCode { get; set; }
     public DocumentLifecycleStatus LifecycleStatus { get; set; }
-    public DocumentReviewStatus ReviewStatus { get; set; }
+    public DocumentReviewDisposition ReviewDisposition { get; set; }
     public double ClassificationConfidence { get; set; }
-    public string? ClassificationReason { get; set; }
 
     /// <summary>
     /// 展示标题（文本提取流水线 Run 成功后写入）。
