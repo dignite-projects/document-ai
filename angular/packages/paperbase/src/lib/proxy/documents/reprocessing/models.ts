@@ -1,7 +1,7 @@
 import type { ReclassificationScope } from './reclassification-scope.enum';
 
 export interface FieldReextractionPreviewDto {
-  documentTypeId?: string;
+  documentTypeId: string;
   documentCount: number;
   fieldNames: string[];
 }

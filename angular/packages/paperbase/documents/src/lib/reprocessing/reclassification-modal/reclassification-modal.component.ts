@@ -121,6 +121,11 @@ export class ReclassificationModalComponent implements OnInit {
     }
   }
 
+  // 预览失败后的显式重试（与字段重抽模态 UX 对齐）；switchMap 会取消任何在途请求。
+  refreshPreview(): void {
+    this.previewTrigger.next();
+  }
+
   private buildInput(): ReclassificationScopeInput {
     const raw = this.form.getRawValue();
     return {

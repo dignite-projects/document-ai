@@ -66,7 +66,12 @@
             <span class="spinner-border spinner-border-sm me-2"></span>
             {{ '::Document:Reprocess:Counting' | abpLocalization }}
           } @else if (previewFailed()) {
-            <span class="text-danger">{{ '::Document:Reprocess:PreviewFailed' | abpLocalization }}</span>
+            <span class="d-flex justify-content-between align-items-center">
+              <span class="text-danger">{{ '::Document:Reprocess:PreviewFailed' | abpLocalization }}</span>
+              <button type="button" class="btn btn-sm btn-outline-danger" (click)="refreshPreview()">
+                {{ '::Refresh' | abpLocalization }}
+              </button>
+            </span>
           } @else {
             <span class="fw-semibold">{{ '::Document:Reprocess:AffectedCount' | abpLocalization: (((documentCount() ?? 0) | number) ?? '') }}</span>
           }

@@ -310,6 +310,9 @@ public class PaperbaseHostModule : AbpModule
         var workerCount = configuration.GetValue<int?>("Hangfire:WorkerCount") ?? 5;
         Configure<AbpHangfireOptions>(options =>
         {
+            // 整体替换 ServerOptions：当前只需 WorkerCount，队列走 Hangfire 默认 "default"（与 ABP 入队队列匹配）。
+            // 未来若多实例共享同一 Hangfire 存储需隔离，在此 BackgroundJobServerOptions 上一并设 Queues / 配 DefaultQueuePrefix，
+            // 否则除 WorkerCount 外的字段取 Hangfire 裸默认（ABP 不会回填）。
             options.ServerOptions = new BackgroundJobServerOptions { WorkerCount = workerCount };
         });
     }
