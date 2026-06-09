@@ -47,17 +47,20 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
     // FK RESTRICT 真实生效（#207）：Document.DocumentTypeId / ExportTemplate.DocumentTypeId → DocumentType，
     // DocumentExtractedField.FieldDefinitionId → FieldDefinition。插入前先 seed 父行（ExportColumn 内的 FieldDefinitionId
     // 在序列化 JSON 内无 FK，但文档字段值有，故按文档字段值 seed）。
-    private async Task SeedSchemaAsync(Guid typeId, params DocumentFieldValue[] fields)
+    // 导出列标题改用字段 DisplayName（7a9402b）——seed 时按列序赋有意义的 DisplayName，让 header 断言可读。
+    private async Task SeedSchemaAsync(Guid typeId, DocumentFieldValue[] fields, string[]? displayNames = null)
     {
         await _documentTypeRepository.InsertAsync(
             new DocumentType(typeId, null, "t" + typeId.ToString("N"), "Type"), autoSave: true);
-        foreach (var f in fields)
+        for (var i = 0; i < fields.Length; i++)
         {
+            var f = fields[i];
             await _fieldDefinitionRepository.InsertAsync(
                 new FieldDefinition(
                     f.FieldDefinitionId, null, typeId,
                     name: "f" + f.FieldDefinitionId.ToString("N"),
-                    displayName: "field", prompt: "extract", dataType: f.DataType),
+                    displayName: displayNames != null ? displayNames[i] : "field",
+                    prompt: "extract", dataType: f.DataType),
                 autoSave: true);
         }
     }
@@ -77,7 +80,7 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                 new DocumentFieldValue(amountFieldId, FieldDataType.Text, Json("1000")),
                 new DocumentFieldValue(partnerFieldId, FieldDataType.Text, Json("Acme")),
             };
-            await SeedSchemaAsync(typeId, fields);
+            await SeedSchemaAsync(typeId, fields, new[] { "金额", "对方" });
             await _documentRepository.InsertAsync(
                 CreateDocument(_guidGenerator.Create(), typeId, "Invoice A", fields),
                 autoSave: true);
@@ -91,8 +94,8 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                     documentTypeId: typeId,
                     new[]
                     {
-                        new ExportColumn(amountFieldId, "金额", 0),
-                        new ExportColumn(partnerFieldId, "对方", 1),
+                        new ExportColumn(amountFieldId, 0),
+                        new ExportColumn(partnerFieldId, 1),
                     }),
                 autoSave: true);
         });
@@ -126,7 +129,7 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                 new DocumentFieldValue(amountFieldId, FieldDataType.Number, JsonSerializer.SerializeToElement(1234.5m)),
                 new DocumentFieldValue(issuedFieldId, FieldDataType.Date, JsonSerializer.SerializeToElement("2024-03-09")),
             };
-            await SeedSchemaAsync(typeId, fields);
+            await SeedSchemaAsync(typeId, fields, new[] { "金额", "日期" });
             await _documentRepository.InsertAsync(
                 CreateDocument(_guidGenerator.Create(), typeId, "Invoice T", fields),
                 autoSave: true);
@@ -140,8 +143,8 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                     documentTypeId: typeId,
                     new[]
                     {
-                        new ExportColumn(amountFieldId, "金额", 0),
-                        new ExportColumn(issuedFieldId, "日期", 1),
+                        new ExportColumn(amountFieldId, 0),
+                        new ExportColumn(issuedFieldId, 1),
                     }),
                 autoSave: true);
         });
@@ -193,7 +196,7 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                 new ExportTemplate(
                     templateId, tenantId: null, name: "Tags Export", format: ExportFormat.Csv,
                     documentTypeId: typeId,
-                    new[] { new ExportColumn(tagsFieldId, "标签", 0) }),
+                    new[] { new ExportColumn(tagsFieldId, 0) }),
                 autoSave: true);
         });
 
@@ -221,7 +224,7 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
 
             await WithUnitOfWorkAsync(async () =>
             {
-                await SeedSchemaAsync(typeId);   // 文档无字段值，仅需 seed 父类型供 Document/Template FK。
+                await SeedSchemaAsync(typeId, Array.Empty<DocumentFieldValue>());   // 文档无字段值，仅需 seed 父类型供 Document/Template FK。
                 for (var i = 0; i < 3; i++)
                 {
                     await _documentRepository.InsertAsync(
@@ -236,7 +239,7 @@ public class ExportTemplateExport_Tests : PaperbaseEntityFrameworkCoreTestBase
                         name: "Capped",
                         format: ExportFormat.Csv,
                         documentTypeId: typeId,
-                        new[] { new ExportColumn(_guidGenerator.Create(), "T", 0) }),
+                        new[] { new ExportColumn(_guidGenerator.Create(), 0) }),
                     autoSave: true);
             });
 

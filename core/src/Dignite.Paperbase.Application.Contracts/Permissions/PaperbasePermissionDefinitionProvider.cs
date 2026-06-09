@@ -21,6 +21,10 @@ public class PaperbasePermissionDefinitionProvider : PermissionDefinitionProvide
         var pipelines = documents.AddChild(PaperbasePermissions.Documents.Pipelines.Default, L("Permission:Documents.Pipelines"));
         pipelines.AddChild(PaperbasePermissions.Documents.Pipelines.Retry, L("Permission:Documents.Pipelines.Retry"));
 
+        var reprocessing = documents.AddChild(PaperbasePermissions.Documents.Reprocessing.Default, L("Permission:Documents.Reprocessing"));
+        reprocessing.AddChild(PaperbasePermissions.Documents.Reprocessing.FieldExtraction, L("Permission:Documents.Reprocessing.FieldExtraction"));
+        reprocessing.AddChild(PaperbasePermissions.Documents.Reprocessing.Reclassification, L("Permission:Documents.Reprocessing.Reclassification"));
+
         var templates = documents.AddChild(PaperbasePermissions.Documents.Templates.Default, L("Permission:Documents.Templates"));
         templates.AddChild(PaperbasePermissions.Documents.Templates.Create, L("Permission:Documents.Templates.Create"));
         templates.AddChild(PaperbasePermissions.Documents.Templates.Update, L("Permission:Documents.Templates.Update"));

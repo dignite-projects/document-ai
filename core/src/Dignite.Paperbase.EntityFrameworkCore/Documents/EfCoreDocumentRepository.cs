@@ -124,6 +124,76 @@ public class EfCoreDocumentRepository
             .AnyAsync(f => f.FieldDefinitionId == fieldDefinitionId, GetCancellationToken(cancellationToken));
     }
 
+    public virtual async Task<long> CountForReprocessingAsync(
+        Guid? documentTypeId,
+        DocumentReviewStatus? reviewStatus,
+        bool excludeManuallyConfirmed,
+        CancellationToken cancellationToken = default)
+    {
+        var dbSet = await GetDbSetAsync();
+        return await ApplyReprocessingScope(dbSet, documentTypeId, reviewStatus, excludeManuallyConfirmed)
+            .LongCountAsync(GetCancellationToken(cancellationToken));
+    }
+
+    public virtual async Task<List<Guid>> GetIdsForReprocessingAsync(
+        Guid? documentTypeId,
+        DocumentReviewStatus? reviewStatus,
+        bool excludeManuallyConfirmed,
+        Guid? afterId,
+        int maxCount,
+        CancellationToken cancellationToken = default)
+    {
+        var dbSet = await GetDbSetAsync();
+        var query = ApplyReprocessingScope(dbSet, documentTypeId, reviewStatus, excludeManuallyConfirmed);
+
+        // keyset 游标：WHERE Id > afterId ORDER BY Id Take(N)，走主键索引、O(batch)，优于 OFFSET 深翻页。
+        if (afterId.HasValue)
+        {
+            var cursor = afterId.Value;
+            query = query.Where(d => d.Id.CompareTo(cursor) > 0);
+        }
+
+        return await query
+            .OrderBy(d => d.Id)
+            .Take(maxCount)
+            .AsNoTracking()
+            .Select(d => d.Id)   // 绝不读整行（尤其 Markdown），防 OOM
+            .ToListAsync(GetCancellationToken(cancellationToken));
+    }
+
+    /// <summary>
+    /// 批量重处理（#289）的共享范围谓词。<c>IMultiTenant</c> + <c>ISoftDelete</c> 全局过滤器按 ambient 状态
+    /// 自动施加（回收站 / 跨租户文档不入范围）。恒要求已完成文本提取（<c>Markdown</c> 非空——重分类 / 字段抽取
+    /// 都需要文本载荷，never-extracted 文档无从重处理）。其余条件见 <see cref="IDocumentRepository.CountForReprocessingAsync"/>。
+    /// </summary>
+    private static IQueryable<Document> ApplyReprocessingScope(
+        IQueryable<Document> query,
+        Guid? documentTypeId,
+        DocumentReviewStatus? reviewStatus,
+        bool excludeManuallyConfirmed)
+    {
+        query = query.Where(d => d.Markdown != null && d.Markdown != "");
+
+        if (documentTypeId.HasValue)
+        {
+            var typeId = documentTypeId.Value;
+            query = query.Where(d => d.DocumentTypeId == typeId);
+        }
+
+        if (reviewStatus.HasValue)
+        {
+            var status = reviewStatus.Value;
+            query = query.Where(d => d.ReviewStatus == status);
+        }
+
+        if (excludeManuallyConfirmed)
+        {
+            query = query.Where(d => d.ReviewStatus != DocumentReviewStatus.Reviewed);
+        }
+
+        return query;
+    }
+
     /// <summary>
     /// 把单字段值查询编译成一个对 <see cref="Document.ExtractedFieldValues"/> 的 <c>Any</c>（EXISTS）谓词，
     /// 按 <see cref="FieldDataType"/> 分派到对应类型化列做普通比较：

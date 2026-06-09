@@ -91,6 +91,12 @@ public class DocumentController : PaperbaseController, IDocumentAppService
         return _documentAppService.RerecognizeAsync(id);
     }
 
+    [HttpPost("{id}/reextract-fields")]
+    public virtual Task ReextractFieldsAsync(Guid id)
+    {
+        return _documentAppService.ReextractFieldsAsync(id);
+    }
+
     [HttpPost("{id}/extracted-fields")]
     public virtual Task<DocumentDto> UpdateExtractedFieldsAsync(Guid id, [FromBody] UpdateExtractedFieldsInput input)
     {
