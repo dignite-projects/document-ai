@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Dignite.Paperbase.Ai;
@@ -104,73 +103,8 @@ public sealed class DocumentSearchTool
                 LifecycleStatus = d.LifecycleStatus.ToString(),
                 CreationTime = d.CreationTime,
                 // 该文档的全部抽取字段值转 LLM-facing（String 包裹 / 结构化裸值 / null 跳过）。
-                ExtractedFields = ProjectFields(d.ExtractedFields)
+                ExtractedFields = DocumentFieldProjection.Project(d.ExtractedFields)
             })
             .ToList();
-    }
-
-    /// <summary>
-    /// 把文档的 ExtractedFields（原样 <see cref="JsonElement"/>）转成 LLM-facing 投影，保留声明类型：
-    /// 数字 / 布尔等结构化值原样透传——下游 LLM 从值本身推断类型，无需字符串转换；
-    /// String 类型值（用户派生自由文本）经 <c>PromptBoundary.WrapField</c> 包裹后重新装回 JSON 字符串
-    /// 防 indirect prompt injection——注入风险 ⟺ 值是 JSON 字符串，故仅 <see cref="JsonValueKind.String"/> 需包裹
-    /// （JSON 无原生 date 类型，日期以字符串存储会一并被包裹，冗余但无害）。
-    /// JSON null（LLM 抽取不符声明类型时的兜底值，见 <c>ExtractedFieldValueValidator</c>）跳过不投影——
-    /// 无有效值，避免投出误导性的字面 null。全部跳过 / 无字段 → 返回 null。
-    /// </summary>
-    private static IReadOnlyDictionary<string, JsonElement>? ProjectFields(
-        IReadOnlyDictionary<string, JsonElement>? fields)
-    {
-        if (fields is not { Count: > 0 })
-        {
-            return null;
-        }
-
-        var projected = new Dictionary<string, JsonElement>(fields.Count);
-        foreach (var pair in fields)
-        {
-            switch (pair.Value.ValueKind)
-            {
-                case JsonValueKind.Null:
-                case JsonValueKind.Undefined:
-                    continue;
-                case JsonValueKind.String:
-                    // 用户派生自由文本 → 包裹后重新装回 JSON 字符串（仍是 String，序列化为带分隔符的引号值）。
-                    projected[pair.Key] = JsonSerializer.SerializeToElement(
-                        PromptBoundary.WrapField(pair.Value.GetString()));
-                    break;
-                case JsonValueKind.Array:
-                    // 多值字段（#212）：逐元素包裹——每个 String 元素都是用户派生自由文本，必须 WrapField 防 indirect
-                    // prompt injection（多值实为 String-only，非 String 元素按结构化值原样透传作保守兜底）。空数组跳过。
-                    var items = new List<JsonElement>();
-                    foreach (var element in pair.Value.EnumerateArray())
-                    {
-                        switch (element.ValueKind)
-                        {
-                            case JsonValueKind.Null:
-                            case JsonValueKind.Undefined:
-                                continue;
-                            case JsonValueKind.String:
-                                items.Add(JsonSerializer.SerializeToElement(
-                                    PromptBoundary.WrapField(element.GetString())));
-                                break;
-                            default:
-                                items.Add(element);
-                                break;
-                        }
-                    }
-                    if (items.Count > 0)
-                    {
-                        projected[pair.Key] = JsonSerializer.SerializeToElement(items);
-                    }
-                    break;
-                default:
-                    // 数字 / 布尔等结构化值原样透传——保留 JSON 类型，下游 LLM 从值本身推断类型。
-                    projected[pair.Key] = pair.Value;
-                    break;
-            }
-        }
-
-        return projected.Count > 0 ? projected : null;
     }
 }

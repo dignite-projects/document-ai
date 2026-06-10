@@ -28,6 +28,8 @@ public class PaperbaseMcpModule : AbpModule
             .WithResources<DocumentResources>()
             .WithResources<DocumentTypeResources>()
             .WithTools<DocumentSearchTool>()
+            .WithTools<DocumentTypeTools>()
+            .WithTools<DocumentTools>()
             // resources/list 动态枚举当前主体可见的文档类型——AI 据此发现有哪些 documentTypeCode，
             // 再 read 各自 paperbase://document-types/{code} 拿字段 schema。文档本身不枚举（数量无限，
             // 走 search tool 发现）。read 路径仍由 DocumentTypeResources 的 UriTemplate 自动路由——
