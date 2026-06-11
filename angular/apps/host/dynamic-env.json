@@ -1,21 +1,21 @@
 {
   "production": true,
   "application": {
-    "baseUrl":"https://paperbase-web",
-    "name": "Paperbase",
+    "baseUrl":"https://document-ai-web",
+    "name": "Document AI",
     "logoUrl": ""
   },
   "oAuthConfig": {
-    "issuer": "https://paperbase-api/",
-    "redirectUri": "https://paperbase-web",
-    "clientId": "Paperbase_App",
+    "issuer": "https://document-ai-api/",
+    "redirectUri": "https://document-ai-web",
+    "clientId": "DocumentAI_App",
     "responseType": "code",
-    "scope": "offline_access openid profile email phone Paperbase"
+    "scope": "offline_access openid profile email phone DocumentAI"
   },
   "apis": {
     "default": {
-      "url": "https://paperbase-api",
-      "rootNamespace": "Dignite.Paperbase"
+      "url": "https://document-ai-api",
+      "rootNamespace": "Dignite.DocumentAI"
     }
   }
 }

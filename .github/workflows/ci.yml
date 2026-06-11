@@ -59,8 +59,8 @@ jobs:
         run: npm ci
         working-directory: angular
 
-      - name: Build paperbase library
-        run: npx nx build paperbase --configuration production
+      - name: Build document-ai library
+        run: npx nx build document-ai --configuration production
         working-directory: angular
 
       - name: Build host application
@@ -80,6 +80,6 @@ jobs:
       # 验证前端 .local 镜像可构建（COPY 路径不回归）。上面的 nx build host 已产出
       # dist/host/browser，此处只打包不推送；context = angular/。
       - name: Build Angular Docker image
-        run: docker build -f apps/host/Dockerfile.local -t paperbase-web:${{ github.sha }} .
+        run: docker build -f apps/host/Dockerfile.local -t document-ai-web:${{ github.sha }} .
         working-directory: angular
         if: github.event_name == 'push'

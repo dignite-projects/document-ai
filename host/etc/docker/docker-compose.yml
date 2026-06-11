@@ -1,22 +1,22 @@
 services:
-  paperbase-web:
-    image: dignite/paperbase-web:latest
-    container_name: paperbase-web
+  document-ai-web:
+    image: dignite/document-ai-web:latest
+    container_name: document-ai-web
     build:
       context: ../../angular
       dockerfile: apps/host/Dockerfile
     ports:
       - "4200:80"
     depends_on:
-      - paperbase-api
+      - document-ai-api
     volumes:
       - ./dynamic-env.json:/usr/share/nginx/html/dynamic-env.json
     networks:
-      - abp-network  
+      - abp-network
 
-  paperbase-api:
-    image: dignite/paperbase-api:latest
-    container_name: paperbase-api-container
+  document-ai-api:
+    image: dignite/document-ai-api:latest
+    container_name: document-ai-api-container
     build:
       context: ../../
       dockerfile: src/Dockerfile.local
@@ -25,30 +25,30 @@ services:
       - Kestrel__Certificates__Default__Path=/app/certs/localhost.pfx
       - Kestrel__Certificates__Default__Password=91f91912-5ab0-49df-8166-23377efaf3cc
       - App__SelfUrl=https://localhost:44348
-      - App__HealthCheckUrl=http://paperbase:8080/health-status
-      - AuthServer__Authority=http://paperbase-api:8080
+      - App__HealthCheckUrl=http://document-ai-api:8080/health-status
+      - AuthServer__Authority=http://document-ai-api:8080
       - AuthServer__RequireHttpsMetadata=false
-      - AuthServer__SetSelfAsIssuer=true 
-      - ConnectionStrings__Default=Data Source=sql-server;Initial Catalog=Paperbase;User Id=sa;Password=myPassw0rd;MultipleActiveResultSets=true;TrustServerCertificate=True;
+      - AuthServer__SetSelfAsIssuer=true
+      - ConnectionStrings__Default=Data Source=sql-server;Initial Catalog=DocumentAI;User Id=sa;Password=myPassw0rd;MultipleActiveResultSets=true;TrustServerCertificate=True;
     ports:
       - "44348:8081"
     depends_on:
       sql-server:
         condition: service_healthy
-    restart: on-failure    
+    restart: on-failure
     volumes:
       - ./certs:/app/certs
     networks:
-      - abp-network  
-  
+      - abp-network
+
   db-migrator:
-    image: dignite/paperbase-api:latest
+    image: dignite/document-ai-api:latest
     container_name: db-migrator
     build:
       context: ../../
       dockerfile: src/Dockerfile.local
     environment:
-      - ConnectionStrings__Default=Data Source=sql-server;Initial Catalog=Paperbase;User Id=sa;Password=myPassw0rd;MultipleActiveResultSets=true;TrustServerCertificate=True;
+      - ConnectionStrings__Default=Data Source=sql-server;Initial Catalog=DocumentAI;User Id=sa;Password=myPassw0rd;MultipleActiveResultSets=true;TrustServerCertificate=True;
     command:
       - --migrate-database
     depends_on:
@@ -76,8 +76,8 @@ services:
       start_period: 10s
 volumes:
   sqldata:
-    name: paperbase_sqldata
+    name: document-ai_sqldata
 networks:
   abp-network:
-    name: paperbase-network
+    name: document-ai-network
     driver: bridge

@@ -2,20 +2,20 @@
   "production": true,
   "application": {
     "baseUrl":"http://localhost:4200",
-    "name": "Paperbase",
+    "name": "Document AI",
     "logoUrl": ""
   },
   "oAuthConfig": {
     "issuer": "https://localhost:44348/",
     "redirectUri": "http://localhost:4200",
-    "clientId": "Paperbase_App",
+    "clientId": "DocumentAI_App",
     "responseType": "code",
-    "scope": "offline_access openid profile email phone Paperbase"
+    "scope": "offline_access openid profile email phone DocumentAI"
   },
   "apis": {
     "default": {
       "url": "https://localhost:44348",
-      "rootNamespace": "Dignite.Paperbase"
+      "rootNamespace": "Dignite.DocumentAI"
     }
   }
 }

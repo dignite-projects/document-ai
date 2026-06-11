@@ -31,13 +31,13 @@
         {
           "name": "@dignite/document-ai",
           "paths": [
-            "angular/projects/document-ai/src/public-api.ts"
+            "angular/packages/document-ai/src/public-api.ts"
           ]
         },
         {
           "name": "@dignite/document-ai/config",
           "paths": [
-            "angular/projects/document-ai/config/src/public-api.ts"
+            "angular/packages/document-ai/config/src/public-api.ts"
           ]
         }
       ]

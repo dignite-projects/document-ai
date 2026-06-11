@@ -18,7 +18,7 @@ If(!(Test-Path -Path $certsFolder))
 # 2. 预构建后端产物 → host/src/bin/Release/net10.0/publish/
 #    src/Dockerfile.local 只做轻量打包（COPY 预 publish 产物），不在容器内构建。
 Set-Location $hostFolder
-dotnet publish "src/Dignite.Paperbase.Host.csproj" -c Release
+dotnet publish "src/Dignite.DocumentAI.Host.csproj" -c Release
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # 3. 预构建前端产物 → angular/dist/host/browser/

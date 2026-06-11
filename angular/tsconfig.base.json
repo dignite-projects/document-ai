@@ -16,9 +16,9 @@
     "useDefineForClassFields": false,
     "strict": true,
     "paths": {
-      "@dignite/paperbase": ["packages/paperbase/src/public-api.ts"],
-      "@dignite/paperbase/documents": ["packages/paperbase/documents/src/public-api.ts"],
-      "@dignite/paperbase/config": ["packages/paperbase/config/src/public-api.ts"]
+      "@dignite/document-ai": ["packages/document-ai/src/public-api.ts"],
+      "@dignite/document-ai/documents": ["packages/document-ai/documents/src/public-api.ts"],
+      "@dignite/document-ai/config": ["packages/document-ai/config/src/public-api.ts"]
     }
   },
   "angularCompilerOptions": {
