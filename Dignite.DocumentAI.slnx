@@ -29,7 +29,8 @@
         <Project Path="core/test/Dignite.DocumentAI.Ocr.VisionLlm.Tests/Dignite.DocumentAI.Ocr.VisionLlm.Tests.csproj" />
     </Folder>
 
-    <Folder Name="/host/">
+    <Folder Name="/host/" />
+    <Folder Name="/host/src/">
         <Project Path="host/src/Dignite.DocumentAI.Host.csproj" />
     </Folder>
 
