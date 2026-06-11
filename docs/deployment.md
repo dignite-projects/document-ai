@@ -85,8 +85,8 @@ The two keyed `IChatClient` registrations (title generator + structured) and the
 
 The deployment Docker Compose layout in `host/etc/docker/docker-compose.yml` wires:
 
-- `paperbase-web` — Angular SPA
-- `paperbase-api` — ASP.NET Core API
+- `document-ai-web` — Angular SPA
+- `document-ai-api` — ASP.NET Core API
 - `db-migrator` — runs `dotnet run --migrate-database` once at startup
 - `sql-server` — SQL Server (Azure SQL Edge image for local-equivalent dev)
 
