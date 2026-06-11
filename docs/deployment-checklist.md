@@ -39,7 +39,7 @@ Verifies the default OCR provider after a sidecar upgrade, model swap, or fresh-
 
 ### Provider switch-back
 
-- [ ] Switch back to Azure DI by uncommenting `PaperbaseAzureDocumentIntelligenceModule` in `PaperbaseHostModule` + matching `ProjectReference` in `host/src/Dignite.Paperbase.Host.csproj` + restoring the `AzureDocumentIntelligence` config block → cloud OCR path still passes acceptance
+- [ ] Switch back to Azure DI by uncommenting `DocumentAIAzureDocumentIntelligenceModule` in `DocumentAIHostModule` + matching `ProjectReference` in `host/src/Dignite.DocumentAI.Host.csproj` + restoring the `AzureDocumentIntelligence` config block → cloud OCR path still passes acceptance
 
 ---
 
@@ -51,22 +51,22 @@ CLAUDE.md "两层文档类型体系" enforces **strict per-layer isolation** (Ho
 
 ### Fresh deployment bring-up (new environment, empty DB)
 
-- [ ] After first `dotnet run --project host/src/Dignite.Paperbase.Host.DbMigrator` (or `dotnet ef database update`), `PaperbaseDocumentTypes` is **empty** — no automatic seed
-- [ ] Attempting to upload a document before any `DocumentType` exists in the current scope (`CurrentTenant.Id`) throws `BusinessException(Paperbase:NoDocumentTypesConfigured)`; document is **not** persisted to the DB nor written to blob storage
+- [ ] After first `dotnet run --project host/src/Dignite.DocumentAI.Host.DbMigrator` (or `dotnet ef database update`), `DocumentAIDocumentTypes` is **empty** — no automatic seed
+- [ ] Attempting to upload a document before any `DocumentType` exists in the current scope (`CurrentTenant.Id`) throws `BusinessException(Document AI:NoDocumentTypesConfigured)`; document is **not** persisted to the DB nor written to blob storage
 - [ ] Host admin (`CurrentTenant.Id IS NULL`) signs in → `IDocumentTypeAppService.CreateAsync` creates a row with `TenantId = NULL`; subsequent host-scope upload succeeds and classification candidate set is non-empty
 - [ ] Tenant admin signs in (different tenant) → `GetVisibleAsync` returns **only that tenant's rows**, not the host rows; tenant must create its own type(s) before tenants can upload
 - [ ] Cross-tenant isolation: tenant A admin cannot see / edit / delete tenant B rows or host rows even via direct API calls
 
 ### Upgrade from earlier deploy (DB already has historical `host.general` row from old seed)
 
-- [ ] Apply migration — historical `host.general` row remains in `PaperbaseDocumentTypes` (no destructive cleanup); existing host documents whose `Document.DocumentTypeCode = "host.general"` continue to classify correctly because `EnsureRegisteredTypeCodeAsync` still finds the row
+- [ ] Apply migration — historical `host.general` row remains in `DocumentAIDocumentTypes` (no destructive cleanup); existing host documents whose `Document.DocumentTypeCode = "host.general"` continue to classify correctly because `EnsureRegisteredTypeCodeAsync` still finds the row
 - [ ] Host admin can edit / delete the historical `host.general` row through the admin UI; if deleted, host-scope uploads will start hitting `NoDocumentTypesConfigured` until another host type is created
 - [ ] Tenant uploads are unaffected by the historical host row (single-layer matching: `Document.TenantId != NULL` never reads host rows)
 
 ### Soft-deleted DocumentType / FieldDefinition behavior
 
-- [ ] Deleting a `DocumentType` with active documents → behavior matches `Paperbase:DocumentTypeInUse` policy (verify expected error code surfaces in admin UI)
-- [ ] Restoring a soft-deleted `FieldDefinition` whose parent `DocumentType` is also deleted → `Paperbase:FieldDefinitionParentTypeMissing` blocks the restore; parent must be restored first
+- [ ] Deleting a `DocumentType` with active documents → behavior matches `Document AI:DocumentTypeInUse` policy (verify expected error code surfaces in admin UI)
+- [ ] Restoring a soft-deleted `FieldDefinition` whose parent `DocumentType` is also deleted → `Document AI:FieldDefinitionParentTypeMissing` blocks the restore; parent must be restored first
 - [ ] After restoring a soft-deleted `DocumentType`, classification candidate set picks it up immediately (no admin restart needed)
 
 ---
@@ -77,18 +77,18 @@ Re-run before applying EF Core migrations to a database that already holds produ
 
 ### Pre-deploy table-size probe
 
-- [ ] Record row counts before applying: `SELECT COUNT(*)` on `PaperbaseDocuments`, `PaperbaseDocumentExtractedFields`, `PaperbaseDocumentPipelineRuns`. If all are small (early deployment) the index-lock and `ALTER COLUMN` concerns below are moot.
+- [ ] Record row counts before applying: `SELECT COUNT(*)` on `DocumentAIDocuments`, `DocumentAIDocumentExtractedFields`, `DocumentAIDocumentPipelineRuns`. If all are small (early deployment) the index-lock and `ALTER COLUMN` concerns below are moot.
 
 ### Large-table index builds (offline `CREATE INDEX` holds a schema-modification lock)
 
 Each of these migrations creates an index on a hot channel table; on a large table the default offline build blocks reads/writes on that table until it finishes:
 
-- [ ] `Add_FileOrigin_Indexes` — two indexes on `PaperbaseDocuments` (`FileOrigin_BlobName`, `FileOrigin_ContentHash`)
-- [ ] `Limit_DocumentExtractedField_StringValue_Length` — composite index on `PaperbaseDocumentExtractedFields`
-- [ ] `Pipelines_AggregateRoot_Split` — rebuilds the unique index on `PaperbaseDocumentPipelineRuns`
+- [ ] `Add_FileOrigin_Indexes` — two indexes on `DocumentAIDocuments` (`FileOrigin_BlobName`, `FileOrigin_ContentHash`)
+- [ ] `Limit_DocumentExtractedField_StringValue_Length` — composite index on `DocumentAIDocumentExtractedFields`
+- [ ] `Pipelines_AggregateRoot_Split` — rebuilds the unique index on `DocumentAIDocumentPipelineRuns`
 - [ ] On a large table + SQL Server Enterprise: rewrite as `CREATE INDEX ... WITH (ONLINE = ON)` in a **new** migration / hand-written `migrationBuilder.Sql` (do **not** edit already-applied migrations). On Standard/Web Edition (no ONLINE): schedule a maintenance window / low-traffic period.
 
 ### Lossy / blocking operations
 
-- [ ] `Limit_DocumentExtractedField_StringValue_Length` narrows `StringValue` from `nvarchar(max)` → `nvarchar(256)`. On data with existing values longer than 256, `ALTER COLUMN` **aborts the migration** (fail-fast, not silent truncation). Probe first — `SELECT COUNT(*) FROM PaperbaseDocumentExtractedFields WHERE LEN(StringValue) > 256` must be `0` (the write-side validator already caps new values at 256, so this is historical-data-only risk).
+- [ ] `Limit_DocumentExtractedField_StringValue_Length` narrows `StringValue` from `nvarchar(max)` → `nvarchar(256)`. On data with existing values longer than 256, `ALTER COLUMN` **aborts the migration** (fail-fast, not silent truncation). Probe first — `SELECT COUNT(*) FROM DocumentAIDocumentExtractedFields WHERE LEN(StringValue) > 256` must be `0` (the write-side validator already caps new values at 256, so this is historical-data-only risk).
 - [ ] Forward-only awareness: `Merge_FieldDataType_Integer_Decimal_Into_Number` and `Add_DocumentExtractedField_Order_And_FieldDefinition_AllowMultiple` have **lossy `Down()`** (the first collapses the Integer/Decimal distinction; the second deletes multi-value rows where `Order <> 0`). Prefer a forward-only rollback strategy in production; do not rely on these `Down()` to restore data.

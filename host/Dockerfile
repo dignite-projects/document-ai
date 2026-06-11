@@ -22,17 +22,17 @@ WORKDIR /src
 # restore-cache for a build that doesn't need a Dockerfile audit on every
 # project add — the Host image is rebuilt by CI per push, not in tight inner
 # loops, so the lost cache cost is negligible.
-COPY common.props Directory.Packages.props Dignite.Paperbase.slnx ./
+COPY common.props Directory.Packages.props Dignite.DocumentAI.slnx ./
 COPY core/ core/
 COPY host/ host/
 
-RUN dotnet restore "host/src/Dignite.Paperbase.Host.csproj"
-RUN dotnet build "host/src/Dignite.Paperbase.Host.csproj" -c Release -o /app/build
+RUN dotnet restore "host/src/Dignite.DocumentAI.Host.csproj"
+RUN dotnet build "host/src/Dignite.DocumentAI.Host.csproj" -c Release -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "host/src/Dignite.Paperbase.Host.csproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "host/src/Dignite.DocumentAI.Host.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-ENTRYPOINT ["dotnet", "Dignite.Paperbase.Host.dll"]
+ENTRYPOINT ["dotnet", "Dignite.DocumentAI.Host.dll"]

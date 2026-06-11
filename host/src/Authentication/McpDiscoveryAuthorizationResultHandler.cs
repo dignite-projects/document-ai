@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.AspNetCore.Authentication;
 
-namespace Dignite.Paperbase.Host.Authentication;
+namespace Dignite.DocumentAI.Host.Authentication;
 
 /// <summary>
 /// #278：仅对带 <see cref="McpDiscoveryChallengeMarker"/> 的端点（/mcp），把"未认证"的 challenge

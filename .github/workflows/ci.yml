@@ -20,25 +20,25 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore core
-        run: dotnet restore Dignite.Paperbase.slnx
+        run: dotnet restore Dignite.DocumentAI.slnx
 
       - name: Build core
-        run: dotnet build Dignite.Paperbase.slnx --no-restore --configuration Release
+        run: dotnet build Dignite.DocumentAI.slnx --no-restore --configuration Release
 
       - name: Restore host
-        run: dotnet restore host/src/Dignite.Paperbase.Host.csproj
+        run: dotnet restore host/src/Dignite.DocumentAI.Host.csproj
 
       - name: Build host
-        run: dotnet build host/src/Dignite.Paperbase.Host.csproj --no-restore --configuration Release
+        run: dotnet build host/src/Dignite.DocumentAI.Host.csproj --no-restore --configuration Release
 
       - name: Run domain tests
-        run: dotnet test core/test/Dignite.Paperbase.Domain.Tests/Dignite.Paperbase.Domain.Tests.csproj --no-build --configuration Release --verbosity normal
+        run: dotnet test core/test/Dignite.DocumentAI.Domain.Tests/Dignite.DocumentAI.Domain.Tests.csproj --no-build --configuration Release --verbosity normal
 
       - name: Run application tests
-        run: dotnet test core/test/Dignite.Paperbase.Application.Tests/Dignite.Paperbase.Application.Tests.csproj --no-build --configuration Release --verbosity normal
+        run: dotnet test core/test/Dignite.DocumentAI.Application.Tests/Dignite.DocumentAI.Application.Tests.csproj --no-build --configuration Release --verbosity normal
 
       - name: Build Docker image
-        run: docker build -f host/Dockerfile -t paperbase-api:${{ github.sha }} .
+        run: docker build -f host/Dockerfile -t docai-api:${{ github.sha }} .
         if: github.event_name == 'push'
 
   build-angular:

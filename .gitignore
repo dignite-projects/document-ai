@@ -408,7 +408,7 @@ FodyWeavers.xsd
 # ABP Studio
 **/.abpstudio/
 
-# Paperbase-specific
+# Dignite Document AI-specific
 # (log directories are already covered by [Ll]og/ / [Ll]ogs/ rules above)
 *.db
 *.db-shm
@@ -449,7 +449,7 @@ appsettings.Production.json
 appsettings.Staging.json
 
 # Benchmark dataset (desensitized real data — not committed)
-core/test/Dignite.Paperbase.Application.Tests/Benchmarks/rag-gold-dataset.json
+core/test/Dignite.DocumentAI.Application.Tests/Benchmarks/rag-gold-dataset.json
 
 # Node.js artifacts from benchmark embedding generation script
 core/test/**/Benchmarks/package.json

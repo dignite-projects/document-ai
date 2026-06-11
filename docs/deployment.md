@@ -1,13 +1,13 @@
 # Deployment
 
-This page covers what a host operator needs to configure to run Paperbase: the relational database, the authentication signing certificate, the OCR sidecar, and the Docker layout. For per-feature configuration (OCR, AI provider) see the matching feature doc.
+This page covers what a host operator needs to configure to run Document AI: the relational database, the authentication signing certificate, the OCR sidecar, and the Docker layout. For per-feature configuration (OCR, AI provider) see the matching feature doc.
 
-> **Channel positioning**: Paperbase outputs Markdown + structured metadata to downstream consumers (RAG platforms, business systems, MCP clients). It does **not** ship a vector database, embedding pipeline, or chat platform — those belong on the downstream side. See `CLAUDE.md` → "OUT of scope".
+> **Channel positioning**: Document AI outputs Markdown + structured metadata to downstream consumers (RAG platforms, business systems, MCP clients). It does **not** ship a vector database, embedding pipeline, or chat platform — those belong on the downstream side. See `CLAUDE.md` → "OUT of scope".
 
 ## Topology
 
 ```text
-Paperbase Host (ASP.NET Core)
+Document AI Host (ASP.NET Core)
   ├─► SQL Server — relational application database (entities, audit, identity, OpenIddict, OutboxEvent)
   └─► OCR sidecar (PaddleOCR) — or Azure Document Intelligence (cloud) — text extraction
                                                                                                     
@@ -15,15 +15,15 @@ Paperbase Host (ASP.NET Core)
    REST API / MCP server / DistributedEventBus / Webhook — downstream consumers (RAG / business systems)
 ```
 
-All Paperbase state lives in the single SQL Server database. Markdown + event payloads flow out to downstream consumers; downstream consumers are responsible for their own storage (vector DB / business aggregates / search index).
+All Document AI state lives in the single SQL Server database. Markdown + event payloads flow out to downstream consumers; downstream consumers are responsible for their own storage (vector DB / business aggregates / search index).
 
 ## Connection strings
 
-Paperbase uses SQL Server as the only persistence backend.
+Document AI uses SQL Server as the only persistence backend.
 
 ```json
 "ConnectionStrings": {
-  "Default": "Server=YOUR_DB_SERVER;Database=Paperbase;User ID=YOUR_USER;Password=__SET_FROM_SECRETS__;TrustServerCertificate=true"
+  "Default": "Server=YOUR_DB_SERVER;Database=Document AI;User ID=YOUR_USER;Password=__SET_FROM_SECRETS__;TrustServerCertificate=true"
 }
 ```
 
@@ -31,7 +31,7 @@ Production deployments should source the password from the platform's secret sto
 
 ## Authentication and signing certificate
 
-Paperbase uses OpenIddict. Development mode auto-generates ephemeral certificates; production needs a real signing certificate.
+Document AI uses OpenIddict. Development mode auto-generates ephemeral certificates; production needs a real signing certificate.
 
 Generate one with:
 
@@ -44,7 +44,7 @@ Place `openiddict.pfx` in the host working directory and configure:
 ```json
 "AuthServer": {
   "Authority": "https://your-host.example.com",
-  "SwaggerClientId": "Paperbase_Swagger",
+  "SwaggerClientId": "DocumentAI_Swagger",
   "CertificatePassPhrase": "<your-certificate-passphrase>"
 }
 ```
@@ -67,13 +67,13 @@ ABP stores some configuration values (e.g. tenant connection strings) encrypted 
 
 ## OCR sidecar
 
-Paperbase ships three OCR options ([comparison](text-extraction.md#ocr--choosing-a-provider)):
+Document AI ships three OCR options ([comparison](text-extraction.md#ocr--choosing-a-provider)):
 
 - **PaddleOCR** (default) — local sidecar, CPU, never leaves the network. Runs as a Docker container; see [ocr-paddleocr.md](ocr-paddleocr.md).
 - **Azure Document Intelligence** — cloud option for production workloads that can leave the network. See [ocr-azure-document-intelligence.md](ocr-azure-document-intelligence.md).
 - **Vision-LLM** — cloud, `IChatClient`-based, for phone-photo / thermal-receipt inputs where layout OCR fails (#259). See [ocr-vision-llm.md](ocr-vision-llm.md).
 
-Host module wires exactly one via `[DependsOn(...)]` + matching `<ProjectReference>` in `host/src/Dignite.Paperbase.Host.csproj`.
+Host module wires exactly one via `[DependsOn(...)]` + matching `<ProjectReference>` in `host/src/Dignite.DocumentAI.Host.csproj`.
 
 ## AI provider
 
@@ -115,7 +115,7 @@ cd host/src
 dotnet run -- --migrate-database
 ```
 
-Or use ABP's `Dignite.Paperbase.DbMigrator` console runner if your deployment topology calls for a separate migration step (it also seeds initial admin / OpenIddict client data).
+Or use ABP's `Dignite.DocumentAI.DbMigrator` console runner if your deployment topology calls for a separate migration step (it also seeds initial admin / OpenIddict client data).
 
 ## Verifying a release
 
