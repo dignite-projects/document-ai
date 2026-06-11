@@ -15,7 +15,7 @@ paths:
 ```bash
 # URL flag: `-u` (short) or `--url` (long). Use whichever your team prefers, but keep it consistent.
 #
-# Angular for this Paperbase Nx workspace (host must be running at https://localhost:44348)
+# Angular for this Document AI Nx workspace (host must be running at https://localhost:44348)
 cd angular
 npm run generate-proxy
 

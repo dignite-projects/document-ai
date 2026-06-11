@@ -1,26 +1,26 @@
 # AI Provider
 
-Paperbase delegates all chat-completion calls to `Microsoft.Extensions.AI`. AI configuration is split into two disjoint sections:
+Document AI delegates all chat-completion calls to `Microsoft.Extensions.AI`. AI configuration is split into two disjoint sections:
 
 | Section | Owns | Consumed by |
 | --- | --- | --- |
-| `PaperbaseAI` | Provider wiring (endpoint, credentials, model ids) | Host only — `PaperbaseHostModule.ConfigureAI` reads it once at startup to register two keyed `IChatClient` instances |
-| `PaperbaseAIBehavior` | Workflow behavior knobs (prompt language, truncation) | Application layer via `IOptions<PaperbaseAIBehaviorOptions>` — `PaperbaseApplicationModule.ConfigureServices` binds the section to the type |
+| `DocumentAI` | Provider wiring (endpoint, credentials, model ids) | Host only — `DocumentAIHostModule.ConfigureAI` reads it once at startup to register two keyed `IChatClient` instances |
+| `DocumentAIBehavior` | Workflow behavior knobs (prompt language, truncation) | Application layer via `IOptions<DocumentAIBehaviorOptions>` — `DocumentAIApplicationModule.ConfigureServices` binds the section to the type |
 
 The split keeps credentials (`ApiKey`) out of any `IOptions<>` flowing into business code and lets operators tune behavior independently of provider switches. Every downstream feature — [classification](classification.md), Host field extraction, tenant field extraction (B 机制), document title generation — shares the same provider registration regardless of behavior tuning.
 
-> **Paperbase is a channel layer.** It does not host chat / RAG / agentic tool-calling paths (those were removed in #166 — see CLAUDE.md "OUT of scope"). The LLM call sites in this repo are backend pipeline workflows plus the admin-facing slug suggestion helper. Downstream RAG / Chat consumers register their own `IChatClient` against their own provider on their side.
+> **Document AI is a channel layer.** It does not host chat / RAG / agentic tool-calling paths (those were removed in #166 — see CLAUDE.md "OUT of scope"). The LLM call sites in this repo are backend pipeline workflows plus the admin-facing slug suggestion helper. Downstream RAG / Chat consumers register their own `IChatClient` against their own provider on their side.
 
 ## Required before first run
 
-An LLM provider is **mandatory**. `DocumentClassificationWorkflow` and `FieldExtractionWorkflow` have no non-LLM fallback, so a host with no provider cannot classify documents or extract fields. To make this unmissable, `PaperbaseHostModule.ConfigureAI` **fails fast at startup**: if `PaperbaseAI:Endpoint`, `PaperbaseAI:ApiKey`, or `PaperbaseAI:ChatModelId` is missing — or `ApiKey` is still the committed `"YOUR_API_KEY"` placeholder — the host throws before serving any request, with a message pointing here.
+An LLM provider is **mandatory**. `DocumentClassificationWorkflow` and `FieldExtractionWorkflow` have no non-LLM fallback, so a host with no provider cannot classify documents or extract fields. To make this unmissable, `DocumentAIHostModule.ConfigureAI` **fails fast at startup**: if `DocumentAI:Endpoint`, `DocumentAI:ApiKey`, or `DocumentAI:ChatModelId` is missing — or `ApiKey` is still the committed `"YOUR_API_KEY"` placeholder — the host throws before serving any request, with a message pointing here.
 
 Supply credentials in `host/src/appsettings.Development.json` (git-ignored), [user-secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets), or environment variables. **Do not** edit the committed `appsettings.json` — its placeholder is exactly what the startup guard checks against, and a real key there would leak into source control. The cheapest first-run path is a local [Ollama](#trying-alternative-providers) endpoint; otherwise any OpenAI-compatible provider works (see [Picking a chat model](#picking-a-chat-model)).
 
-## Provider wiring (`PaperbaseAI`)
+## Provider wiring (`DocumentAI`)
 
 ```json
-"PaperbaseAI": {
+"DocumentAI": {
   "Endpoint": "https://api.openai.com/v1",
   "ApiKey": "YOUR_API_KEY",
   "ChatModelId": "gpt-4o-mini"
@@ -37,13 +37,13 @@ Supply credentials in `host/src/appsettings.Development.json` (git-ignored), [us
 
 ## Picking a chat model
 
-The only capability Paperbase's backend LLM calls need is **structured JSON output**:
+The only capability Document AI's backend LLM calls need is **structured JSON output**:
 
 | Capability | Where it's used | Failure mode if weak |
 |---|---|---|
 | Structured JSON output (`response_format: json_schema`) | `DocumentClassificationWorkflow` (via MAF `RunAsync<T>` + schema-bound `T`), `FieldExtractionWorkflow` (via `ChatResponseFormat.ForJsonSchema` + per-field prompt, covers both Host 字段 and 租户字段 (B 机制)), `SlugSuggestionAppService` (schema-bound `{ slug }`) | Returns malformed JSON or violates schema → classification falls back to `(unclassified)`, fields write as `null`, slug suggestion returns empty and the UI falls back |
 
-That's it. Function calling, tool-call willingness, large-context RAG, multi-turn coherence — none of those matter here because Paperbase has no Chat / RAG path. Even small open-source models (Qwen3-8B class) usually comply when the prompt explicitly demands a JSON object.
+That's it. Function calling, tool-call willingness, large-context RAG, multi-turn coherence — none of those matter here because Document AI has no Chat / RAG path. Even small open-source models (Qwen3-8B class) usually comply when the prompt explicitly demands a JSON object.
 
 ### Practical guidance
 
@@ -58,16 +58,16 @@ For **production**, prefer a model that's strict about schema compliance. Models
 
 ## Keyed clients
 
-`PaperbaseHostModule.ConfigureAI` registers exactly two keyed `IChatClient` instances. **There is no default (non-keyed) `IChatClient` registration** — Paperbase has no main "chat" path, so every consumer pulls the keyed client appropriate to its workload:
+`DocumentAIHostModule.ConfigureAI` registers exactly two keyed `IChatClient` instances. **There is no default (non-keyed) `IChatClient` registration** — Document AI has no main "chat" path, so every consumer pulls the keyed client appropriate to its workload:
 
 | DI key | Consumed by | Why this exists separately |
 |---|---|---|
-| `PaperbaseAIConsts.TitleGeneratorChatClientKey` | `DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync` (auto-generates a short document title from extracted Markdown) | Single-shot text completion, no schema. Different model id lets hosts run a cheaper / faster model here without affecting classification / extraction quality |
-| `PaperbaseAIConsts.StructuredChatClientKey` | `DocumentClassificationWorkflow`, `FieldExtractionWorkflow` (unified Host + 租户字段 (B 机制) entry, called by `FieldExtractionEventHandler`), `SlugSuggestionAppService` | All schema-bound `RunAsync<T>` / `ChatResponseFormat.ForJsonSchema` calls share this client. Splitting structured from title lets production teams tune quality vs cost per workload |
+| `DocumentAIConsts.TitleGeneratorChatClientKey` | `DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync` (auto-generates a short document title from extracted Markdown) | Single-shot text completion, no schema. Different model id lets hosts run a cheaper / faster model here without affecting classification / extraction quality |
+| `DocumentAIConsts.StructuredChatClientKey` | `DocumentClassificationWorkflow`, `FieldExtractionWorkflow` (unified Host + 租户字段 (B 机制) entry, called by `FieldExtractionEventHandler`), `SlugSuggestionAppService` | All schema-bound `RunAsync<T>` / `ChatResponseFormat.ForJsonSchema` calls share this client. Splitting structured from title lets production teams tune quality vs cost per workload |
 
-Both clients are registered with `UseOpenTelemetry()` + `UseLogging()`. Neither has `UseFunctionInvocation` (no tool calling anywhere in Paperbase) or `UseDistributedCache` (every prompt is document-content-derived and therefore unique per call — cache lookups would always miss).
+Both clients are registered with `UseOpenTelemetry()` + `UseLogging()`. Neither has `UseFunctionInvocation` (no tool calling anywhere in Document AI) or `UseDistributedCache` (every prompt is document-content-derived and therefore unique per call — cache lookups would always miss).
 
-> **Optional third client — vision OCR.** Enabling the [vision-LLM OCR provider](ocr-vision-llm.md) (#259) adds a third keyed client for a multimodal (vision) model. Its key (`VisionLlmOcrConsts.VisionChatClientKey`) lives in the `Dignite.Paperbase.Ocr.VisionLlm` project, **not** `PaperbaseAIConsts` — an OCR provider sits below the Application layer and must not depend on it. Register it in your `ConfigureAI` override only when you enable that provider; the vision model id **cannot** fall back to `ChatModelId` (the main chat model may not be vision-capable), so it requires its own `PaperbaseAI:VisionOcrModelId`.
+> **Optional third client — vision OCR.** Enabling the [vision-LLM OCR provider](ocr-vision-llm.md) (#259) adds a third keyed client for a multimodal (vision) model. Its key (`VisionLlmOcrConsts.VisionChatClientKey`) lives in the `Dignite.DocumentAI.Ocr.VisionLlm` project, **not** `DocumentAIConsts` — an OCR provider sits below the Application layer and must not depend on it. Register it in your `ConfigureAI` override only when you enable that provider; the vision model id **cannot** fall back to `ChatModelId` (the main chat model may not be vision-capable), so it requires its own `DocumentAI:VisionOcrModelId`.
 
 > **Provider-switch gotcha**: When switching `Endpoint` to a non-OpenAI provider (SiliconFlow, Ollama via `/v1` shim, OpenRouter, etc.), override **all three** model id keys together in your environment-specific config — `ChatModelId` alone is not enough if the provider doesn't recognize the default `gpt-4o-mini` placeholder that may be inherited from base `appsettings.json`. The simplest fix: copy all three overrides into your `appsettings.Development.json` / `appsettings.Production.json` / env vars whenever you change `Endpoint`.
 
@@ -82,29 +82,29 @@ To split further (e.g. a different model per workflow), add more per-purpose `Ad
 | `Documents/Pipelines/TextExtraction/DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync` | `TitleGeneratorChatClientKey` |
 | `Slugging/SlugSuggestionAppService` | `StructuredChatClientKey` |
 
-A single `PaperbaseAI` block serves all of them. Picking different models per workflow is a host-level customization that replaces the registrations in `PaperbaseHostModule.ConfigureAI`.
+A single `DocumentAI` block serves all of them. Picking different models per workflow is a host-level customization that replaces the registrations in `DocumentAIHostModule.ConfigureAI`.
 
 ## Trying alternative providers
 
 - **Azure OpenAI**: set `Endpoint` to `https://<resource>.openai.azure.com/openai/deployments/<deployment>/` and use the deployment name as `ChatModelId`. (API-key auth only — for Microsoft Entra ID see [Going off-protocol](#going-off-protocol-non-openai-providers).)
 - **Ollama (local)**: run `ollama serve`, set `Endpoint` to `http://localhost:11434/v1`, set `ApiKey` to any non-empty token (the `/v1` shim ignores it, but the OpenAI client rejects an empty key), and pick a locally pulled model id.
-- **Any OpenAI-compatible gateway** (OpenRouter, vLLM, LM Studio, etc.) works the same way — only the keys in `PaperbaseAI` need to change.
+- **Any OpenAI-compatible gateway** (OpenRouter, vLLM, LM Studio, etc.) works the same way — only the keys in `DocumentAI` need to change.
 
 ## Going off-protocol (non-OpenAI providers)
 
-The `PaperbaseAI` keys above only describe **OpenAI-protocol** providers because `PaperbaseHostModule.ConfigureAI` builds them against `OpenAIClient`. Targeting a provider that speaks a different wire protocol — native Anthropic Claude, native Google Gemini, AWS Bedrock, Microsoft Entra ID-authenticated Azure OpenAI, native Ollama without the `/v1` shim — means **replacing `ConfigureAI` in your host project**. Application code (the four workflows above) consumes the registered keyed `IChatClient` and is unchanged.
+The `DocumentAI` keys above only describe **OpenAI-protocol** providers because `DocumentAIHostModule.ConfigureAI` builds them against `OpenAIClient`. Targeting a provider that speaks a different wire protocol — native Anthropic Claude, native Google Gemini, AWS Bedrock, Microsoft Entra ID-authenticated Azure OpenAI, native Ollama without the `/v1` shim — means **replacing `ConfigureAI` in your host project**. Application code (the four workflows above) consumes the registered keyed `IChatClient` and is unchanged.
 
-The `PaperbaseAI` section becomes irrelevant in that case — drop it from `appsettings.json` and read your provider's keys from a configuration shape that matches its credential model (token, region, deployment id, etc.). `PaperbaseAIBehavior` still applies and is provider-agnostic.
+The `DocumentAI` section becomes irrelevant in that case — drop it from `appsettings.json` and read your provider's keys from a configuration shape that matches its credential model (token, region, deployment id, etc.). `DocumentAIBehavior` still applies and is provider-agnostic.
 
 ### Invariants the new wiring must preserve
 
 | Required | Why |
 | --- | --- |
-| Two `services.AddKeyedChatClient(key, factory)` registrations, keyed `PaperbaseAIConsts.TitleGeneratorChatClientKey` and `PaperbaseAIConsts.StructuredChatClientKey` | The workflow / background-job / AppService call sites inject by `[FromKeyedServices(...)]`. Missing either key crashes service resolution at first use |
+| Two `services.AddKeyedChatClient(key, factory)` registrations, keyed `DocumentAIConsts.TitleGeneratorChatClientKey` and `DocumentAIConsts.StructuredChatClientKey` | The workflow / background-job / AppService call sites inject by `[FromKeyedServices(...)]`. Missing either key crashes service resolution at first use |
 | `.UseOpenTelemetry()` on both keyed clients | `gen_ai.*` semantic-convention spans + token counters depend on this decorator. Without it the OTel pipeline still emits MAF spans (from `Microsoft.Agents.AI`) but no per-LLM-call duration / token metrics |
 | `.UseLogging()` on both keyed clients (recommended) | Per-call request / response logging at `Debug` is useful for diagnosing prompt issues. Drop only if your logs are token-budget constrained |
 
-Things that are **NOT** required: `UseFunctionInvocation` (Paperbase calls no tools), `UseDistributedCache` (every prompt is unique per call), `IEmbeddingGenerator` registration (no embedding pipeline in Paperbase Core — vectorization is downstream RAG's responsibility).
+Things that are **NOT** required: `UseFunctionInvocation` (Document AI calls no tools), `UseDistributedCache` (every prompt is unique per call), `IEmbeddingGenerator` registration (no embedding pipeline in Document AI Core — vectorization is downstream RAG's responsibility).
 
 ### Sketch: Azure OpenAI with Microsoft Entra ID (no API key)
 
@@ -123,7 +123,7 @@ private void ConfigureAI(ServiceConfigurationContext context, IConfiguration con
     var titleDeployment = configuration["AzureOpenAI:TitleDeployment"]
         ?? configuration["AzureOpenAI:ChatDeployment"]!;
     context.Services.AddKeyedChatClient(
-        PaperbaseAIConsts.TitleGeneratorChatClientKey,
+        DocumentAIConsts.TitleGeneratorChatClientKey,
         _ => azureClient.GetChatClient(titleDeployment).AsIChatClient())
         .UseOpenTelemetry()
         .UseLogging();
@@ -131,7 +131,7 @@ private void ConfigureAI(ServiceConfigurationContext context, IConfiguration con
     var structuredDeployment = configuration["AzureOpenAI:StructuredDeployment"]
         ?? configuration["AzureOpenAI:ChatDeployment"]!;
     context.Services.AddKeyedChatClient(
-        PaperbaseAIConsts.StructuredChatClientKey,
+        DocumentAIConsts.StructuredChatClientKey,
         _ => azureClient.GetChatClient(structuredDeployment).AsIChatClient())
         .UseOpenTelemetry()
         .UseLogging();
@@ -148,13 +148,13 @@ using OllamaSharp;
 var endpoint = new Uri(configuration["Ollama:Endpoint"]!);
 
 context.Services.AddKeyedChatClient(
-    PaperbaseAIConsts.TitleGeneratorChatClientKey,
+    DocumentAIConsts.TitleGeneratorChatClientKey,
     _ => new OllamaApiClient(endpoint, configuration["Ollama:TitleModelId"]!))
     .UseOpenTelemetry()
     .UseLogging();
 
 context.Services.AddKeyedChatClient(
-    PaperbaseAIConsts.StructuredChatClientKey,
+    DocumentAIConsts.StructuredChatClientKey,
     _ => new OllamaApiClient(endpoint, configuration["Ollama:StructuredModelId"]!))
     .UseOpenTelemetry()
     .UseLogging();
@@ -162,12 +162,12 @@ context.Services.AddKeyedChatClient(
 
 For the full set of `IChatClient`-compatible providers (Anthropic, Microsoft Foundry, GitHub Copilot, A2A, custom, …) and the exact factory calls each one ships, see the [Microsoft.Extensions.AI provider list](https://learn.microsoft.com/agent-framework/agents/providers/).
 
-## Cross-cutting LLM behavior (`PaperbaseAIBehavior`)
+## Cross-cutting LLM behavior (`DocumentAIBehavior`)
 
-These knobs describe *how Paperbase calls the model* (language hint, text truncation). They are bound to `PaperbaseAIBehaviorOptions` and reach every pipeline through `IOptions<>`.
+These knobs describe *how Document AI calls the model* (language hint, text truncation). They are bound to `DocumentAIBehaviorOptions` and reach every pipeline through `IOptions<>`.
 
 ```json
-"PaperbaseAIBehavior": {
+"DocumentAIBehavior": {
   "DefaultLanguage": "ja",
   "MaxTextLengthPerExtraction": 8000
 }
@@ -175,14 +175,14 @@ These knobs describe *how Paperbase calls the model* (language hint, text trunca
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `DefaultLanguage` | `"ja"` | Language hint appended to every system prompt. Match this to your primary user base — Paperbase prompts are written language-agnostic and switch via this hint |
+| `DefaultLanguage` | `"ja"` | Language hint appended to every system prompt. Match this to your primary user base — Document AI prompts are written language-agnostic and switch via this hint |
 | `MaxTextLengthPerExtraction` | `8000` | Per-call character cap on Markdown fed to **classification** and **cabinet suggestion** (both only need the document's opening for a verdict). **Field extraction is not capped** — it sends the full Markdown, since a type-bound field can appear anywhere in the document and tail truncation would silently drop it. CJK-safe (one character ≈ one CJK glyph). Raise for long contracts / policies if your model's context window allows |
 
-Per-pipeline tuning lives in `PaperbaseAIBehavior` — see [classification.md](classification.md) for the keys the classification workflow reads.
+Per-pipeline tuning lives in `DocumentAIBehavior` — see [classification.md](classification.md) for the keys the classification workflow reads.
 
 ## OpenTelemetry signals
 
-`PaperbaseHostModule.ConfigureAI` wires `Microsoft.Extensions.AI`'s `UseOpenTelemetry()` decorator onto both keyed chat clients. To collect these signals, register an OTel exporter in your host and add the source / meter names:
+`DocumentAIHostModule.ConfigureAI` wires `Microsoft.Extensions.AI`'s `UseOpenTelemetry()` decorator onto both keyed chat clients. To collect these signals, register an OTel exporter in your host and add the source / meter names:
 
 ```csharp
 context.Services.AddOpenTelemetry()
@@ -191,21 +191,21 @@ context.Services.AddOpenTelemetry()
         .AddSource("Microsoft.Extensions.AI")
         .AddSource("Experimental.Microsoft.Agents.AI")
         .AddSource("Microsoft.Agents.AI")
-        .AddSource("Dignite.Paperbase.*"))            // reserved for project-specific spans
+        .AddSource("Dignite.DocumentAI.*"))            // reserved for project-specific spans
     .WithMetrics(b => b
         .AddMeter("Experimental.Microsoft.Extensions.AI")
         .AddMeter("Microsoft.Extensions.AI")
         .AddMeter("Experimental.Microsoft.Agents.AI")
         .AddMeter("Microsoft.Agents.AI")
-        .AddMeter("Dignite.Paperbase.*"));            // reserved for project-specific meters
+        .AddMeter("Dignite.DocumentAI.*"));            // reserved for project-specific meters
 ```
 
-This matches what `PaperbaseHostModule.ConfigureOpenTelemetry` already adds when `OpenTelemetry:Enabled = true` in your host's `appsettings.json`.
+This matches what `DocumentAIHostModule.ConfigureOpenTelemetry` already adds when `OpenTelemetry:Enabled = true` in your host's `appsettings.json`.
 
 | Source / Meter | Emitted by | What it covers |
 | --- | --- | --- |
 | `Experimental.Microsoft.Extensions.AI` (Activity + Meter) | `OpenTelemetryChatClient` (the `UseOpenTelemetry` decorator on each keyed client) | OTel GenAI semantic conventions: `chat {model}` / `execute_tool {name}` spans, `gen_ai.client.operation.duration` (s), `gen_ai.client.token.usage` |
 | `Experimental.Microsoft.Agents.AI` (Activity + Meter) | MAF agent runtime (`ChatClientAgent.RunAsync<T>` etc.) | Agent-level spans wrapping each `RunAsync` call — useful for tying classification workflow steps together |
-| `Dignite.Paperbase.*` (reserved) | None in Paperbase Core today | Reserved wildcard for downstream consumers' module-specific telemetry (e.g. a `Dignite.Paperbase.Contracts` meter emitted by a downstream Contracts consumer in its own repo) |
+| `Dignite.DocumentAI.*` (reserved) | None in Document AI Core today | Reserved wildcard for downstream consumers' module-specific telemetry (e.g. a `Dignite.DocumentAI.Contracts` meter emitted by a downstream Contracts consumer in its own repo) |
 
-Paperbase Core currently emits **no project-specific telemetry meters of its own**. The `Dignite.Paperbase.*` wildcard exists for future use and for downstream consumer modules to plug in their extraction telemetry without each one needing a host-side config change.
+Document AI Core currently emits **no project-specific telemetry meters of its own**. The `Dignite.DocumentAI.*` wildcard exists for future use and for downstream consumer modules to plug in their extraction telemetry without each one needing a host-side config change.

@@ -1,0 +1,58 @@
+namespace Dignite.DocumentAI.Ai;
+
+/// <summary>
+/// Application-layer behavior knobs for AI workflows (Classification / structured field extraction).
+/// Bound to the <c>DocumentAIBehavior</c> configuration section in
+/// <see cref="DocumentAIApplicationModule"/>.
+/// <para>
+/// Provider wiring (endpoint / API key / model ids / prompt-cache middleware) lives in the
+/// separate <c>DocumentAI</c> section consumed by the host's <c>ConfigureAI</c> — keep these
+/// two concerns disjoint: this class must not grow connection or credential fields.
+/// </para>
+/// </summary>
+public class DocumentAIBehaviorOptions
+{
+    /// <summary>
+    /// 分类提示词中最多包含的候选类型数量，超出时按 Priority 降序截断。
+    /// </summary>
+    public int MaxDocumentTypesInClassificationPrompt { get; set; } = 50;
+
+    /// <summary>
+    /// 分类提示词中文档 Markdown 的最大字符数，超出时按 UTF-16 码元截断前部（不切断代理对）。
+    /// <b>仅作用于分类路径</b>（<c>DocumentClassificationWorkflow</c>）——字段抽取（<c>FieldExtractionWorkflow</c>）
+    /// 有意喂入<b>完整</b> Markdown 不截断，因为类型绑定字段可能出现在文档任何位置，尾部截断会静默漏抽。
+    /// </summary>
+    public int MaxTextLengthPerExtraction { get; set; } = 8000;
+
+    /// <summary>
+    /// AI 交互默认语言。<b>仅作用于分类路径</b>（DocumentClassificationWorkflow，强制分类
+    /// 输出/reason 用此语言）。其余 LLM 路径按各自设计的语言策略，<b>不</b>消费此选项：
+    /// <list type="bullet">
+    ///   <item>分类：强制此语言（DefaultLanguage）</item>
+    ///   <item>标题：跟随文档语言（prompt 内置 "respond in the same language as the document"）</item>
+    ///   <item>字段值：保留文档原文</item>
+    ///   <item>Slug：强制英译（URL 友好）</item>
+    /// </list>
+    /// 这套「按路径分化」是预期设计，不是 bug——新增 LLM 路径前先确认其语言策略归属。
+    /// </summary>
+    public string DefaultLanguage { get; set; } = "ja";
+
+    /// <summary>
+    /// Title 生成时送入 LLM 的 Markdown 最大字符数。
+    /// 超出时截断尾部（文档开头通常已包含标题、摘要等关键信息）。
+    /// </summary>
+    public int MaxTitleGenerationMarkdownLength { get; set; } = 4000;
+
+    /// <summary>
+    /// 「留空 AI 兜底选柜」（#265）提示词中最多包含的候选文件柜数量，超出时截断。
+    /// 镜像 <see cref="MaxDocumentTypesInClassificationPrompt"/>——柜选择与分类同属「从受限候选集挑一个」。
+    /// </summary>
+    public int MaxCabinetsInSuggestionPrompt { get; set; } = 50;
+
+    /// <summary>
+    /// 「留空 AI 兜底选柜」（#265）的弃选阈值：LLM 置信度低于此值时<b>不</b>写入 CabinetId，文档保持「未归类」。
+    /// 柜是人工组织维度，宁可留空交由操作员后续改派（#257），也不强塞一个把握不大的柜。
+    /// 文档 Markdown 截断复用 <see cref="MaxTextLengthPerExtraction"/>（选柜与分类一样只需文档前段语义）。
+    /// </summary>
+    public double MinCabinetSuggestionConfidence { get; set; } = 0.6;
+}

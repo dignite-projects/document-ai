@@ -16,7 +16,7 @@
         "OpenTelemetry__Enabled": "true"
       }
     },
-    "Dignite.Paperbase.Host": {
+    "Dignite.DocumentAI.Host": {
       "commandName": "Project",
       "launchBrowser": true,
       "applicationUrl": "https://localhost:44348",

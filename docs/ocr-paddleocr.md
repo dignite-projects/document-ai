@@ -1,6 +1,6 @@
 # PaddleOCR — local sidecar
 
-> One of Paperbase's OCR providers. Overview & comparison: [text-extraction.md](text-extraction.md). **This is the default.**
+> One of Document AI's OCR providers. Overview & comparison: [text-extraction.md](text-extraction.md). **This is the default.**
 
 Default for development. `PP-StructureV3` runs on CPU and emits native Markdown out of the box. Data never leaves the network.
 

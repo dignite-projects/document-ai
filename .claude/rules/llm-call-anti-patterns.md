@@ -1,6 +1,6 @@
 # LLM call anti-patterns
 
-本文件由 `maf-workflow-reviewer` agent 在审查 PR 时引用，用于快速定位 Paperbase 内部 **LLM 调用点**的典型错误（反例 A / B 是安全问题，反例 C 是 MCP schema 正确性问题）。规则适用于所有 LLM 入口：
+本文件由 `maf-workflow-reviewer` agent 在审查 PR 时引用，用于快速定位 Document AI 内部 **LLM 调用点**的典型错误（反例 A / B 是安全问题，反例 C 是 MCP schema 正确性问题）。规则适用于所有 LLM 入口：
 
 - 当前已落地：`DocumentClassificationWorkflow` / `FieldExtractionWorkflow` + `FieldExtractionEventHandler`（字段架构 v2 统一 Host + 租户 (B 机制)）/ `DocumentTextExtractionBackgroundJob.TryGenerateTitleAsync`
 - 未来扩展：MCP server tool（[#170](https://github.com/dignite-projects/dignite-paperbase/issues/170)）、Webhook 触发的 LLM 路径、任何由 LLM 输出影响参数的查询路径
@@ -33,8 +33,8 @@ var run = await agent.RunAsync<HostFieldExtractionResult>(markdown);
 
 **危害**：
 
-- RAG 检索会把与当前文档无关的其他文档 chunk 注入到 prompt 中，导致"合同金额"、"甲方名称"等结构化字段**从错误文档**提取，写入下游业务聚合根 / Paperbase 类型绑定字段表
-- Paperbase 是**通道层**，字段抽取的输入应当**仅是当前文档的 Markdown**——挂 `AIContextProviders` 把通道哲学破坏成 RAG，违反 CLAUDE.md "OUT of scope"
+- RAG 检索会把与当前文档无关的其他文档 chunk 注入到 prompt 中，导致"合同金额"、"甲方名称"等结构化字段**从错误文档**提取，写入下游业务聚合根 / Document AI 类型绑定字段表
+- Document AI 是**通道层**，字段抽取的输入应当**仅是当前文档的 Markdown**——挂 `AIContextProviders` 把通道哲学破坏成 RAG，违反 CLAUDE.md "OUT of scope"
 
 ### ✅ 正确写法
 
@@ -61,8 +61,8 @@ var response = await _chatClient.GetResponseAsync(messages, options, cancellatio
 ```
 
 **参照实现**：
-- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/Classification/DocumentClassificationWorkflow.cs`
-- `core/src/Dignite.Paperbase.Application/Documents/Pipelines/FieldExtraction/FieldExtractionWorkflow.cs`
+- `core/src/Dignite.DocumentAI.Application/Documents/Pipelines/Classification/DocumentClassificationWorkflow.cs`
+- `core/src/Dignite.DocumentAI.Application/Documents/Pipelines/FieldExtraction/FieldExtractionWorkflow.cs`
 
 ---
 
@@ -70,7 +70,7 @@ var response = await _chatClient.GetResponseAsync(messages, options, cancellatio
 
 **规则来源**：`maf-workflow-reviewer.md § 2.9`
 
-**背景**：当前 Paperbase Core 的 LLM 路径都是**单纯的文本输入 → 结构化输出**（分类、字段抽取、标题生成），不涉及由 LLM 输出参数化的 DB 查询。但即将到来的 #170 MCP server 会让 LLM 通过 tool 接口触发文档检索 / 元数据查询。**任何 LLM 触发或参数受 LLM 输出影响的查询路径**都必须做 fail-closed 安全门——HTTP 边界上的 `[Authorize]` 不覆盖这种反射 / tool-dispatch 路径；script / tool 方法体内的安全断言是唯一防线。
+**背景**：当前 Document AI Core 的 LLM 路径都是**单纯的文本输入 → 结构化输出**（分类、字段抽取、标题生成），不涉及由 LLM 输出参数化的 DB 查询。但即将到来的 #170 MCP server 会让 LLM 通过 tool 接口触发文档检索 / 元数据查询。**任何 LLM 触发或参数受 LLM 输出影响的查询路径**都必须做 fail-closed 安全门——HTTP 边界上的 `[Authorize]` 不覆盖这种反射 / tool-dispatch 路径；script / tool 方法体内的安全断言是唯一防线。
 
 **适用范围**：
 
@@ -156,7 +156,7 @@ public async Task<string> ReportAsync(string whereClause)
 
 ```csharp
 [McpTool("search-documents")]
-[Description("Search Paperbase documents by structured criteria.")]   // ← 编译期常量
+[Description("Search Document AI documents by structured criteria.")]   // ← 编译期常量
 private static async Task<string> SearchAsync(
     string? keyword,
     [Description("ISO 4217 currency code (optional).")] string? currency,
@@ -165,7 +165,7 @@ private static async Task<string> SearchAsync(
 {
     // 1. 显式权限断言 — fail closed
     var authSvc = serviceProvider.GetRequiredService<IAuthorizationService>();
-    await authSvc.CheckAsync(PaperbasePermissions.Documents.Default);
+    await authSvc.CheckAsync(DocumentAIPermissions.Documents.Default);
 
     // 2. 租户隔离 — 交给 ABP 的 IMultiTenant 全局过滤器自动施加，不手写 TenantId 谓词，
     //    更不要在此 Disable<IMultiTenant>() / IgnoreQueryFilters()

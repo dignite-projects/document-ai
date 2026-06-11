@@ -9,8 +9,8 @@ developer_instructions = """
 ## 0. 工作流程
 
 1. **定位待审迁移**——用 `git status host/src/Migrations/` 与 `git diff host/src/Migrations/` 找到待审的迁移；如未指定，挑出最近未提交的 `<timestamp>_<Name>.cs` 文件。
-2. **读取迁移与对应 Designer**——`Read` 迁移本体（`*.cs`）即可；`*.Designer.cs` 与 `PaperbaseHostDbContextModelSnapshot.cs` 是模型快照，不需要逐字读，但要确认它们存在且更新过。
-3. **核对实体配置**——`Read` `core/src/Dignite.Paperbase.EntityFrameworkCore/EntityFrameworkCore/PaperbaseDbContextModelCreatingExtensions.cs` 中相关 `builder.Entity<T>` 块，对照迁移的 `AddColumn` / `DropColumn` 是否一致。
+2. **读取迁移与对应 Designer**——`Read` 迁移本体（`*.cs`）即可；`*.Designer.cs` 与 `DocumentAIHostDbContextModelSnapshot.cs` 是模型快照，不需要逐字读，但要确认它们存在且更新过。
+3. **核对实体配置**——`Read` `core/src/Dignite.DocumentAI.EntityFrameworkCore/EntityFrameworkCore/DocumentAIDbContextModelCreatingExtensions.cs` 中相关 `builder.Entity<T>` 块，对照迁移的 `AddColumn` / `DropColumn` 是否一致。
 4. **逐项核对**——按下面的"风险清单"。
 5. **输出报告**——分级：🔴 高风险（生产事故/数据丢失）/ 🟡 注意事项 / 🟢 合规。
 
@@ -35,7 +35,7 @@ developer_instructions = """
 
 ### 1.4 索引变更
 
-- 🔴 `DropIndex` 但没有重新创建等价索引——`PaperbaseDocuments`、`PaperbaseDocumentChunks` 等大表上的索引丢失会导致线上查询超时。
+- 🔴 `DropIndex` 但没有重新创建等价索引——`DocumentAIDocuments`、`DocumentAIDocumentChunks` 等大表上的索引丢失会导致线上查询超时。
 - 🟡 `CreateIndex` 在大表上会持有 ACCESS EXCLUSIVE 锁，PostgreSQL 上建议用 `CREATE INDEX CONCURRENTLY`。EF Core 的 `MigrationBuilder.CreateIndex` 默认不带 CONCURRENTLY；如果是大表，建议拆出来手写 `Sql("CREATE INDEX CONCURRENTLY ...")`。
 - 🔴 **pgvector 索引变更（HNSW / IVFFlat）**——如果迁移触及 `vector` 类型列上的索引，必须在审查报告里特别标注：
   - HNSW 索引的 `m` / `ef_construction` 改动需要重建。
@@ -58,12 +58,12 @@ developer_instructions = """
 
 ### 1.8 与模型快照一致性
 
-- 🟡 检查 `PaperbaseHostDbContextModelSnapshot.cs` 与 `<timestamp>_<Name>.Designer.cs` 是否一同提交。三件套（迁移本体 + Designer + 主快照）必须同时变更，否则下一次 `dotnet ef migrations add` 会产出错误。
+- 🟡 检查 `DocumentAIHostDbContextModelSnapshot.cs` 与 `<timestamp>_<Name>.Designer.cs` 是否一同提交。三件套（迁移本体 + Designer + 主快照）必须同时变更，否则下一次 `dotnet ef migrations add` 会产出错误。
 - 🟢 如果用户只改了实体配置忘记跑 `dotnet ef migrations add`，提示运行命令。
 
 ### 1.9 ABP 表前缀
 
-- 🟡 新建表名是否带 `Paperbase` 前缀（参考 `PaperbaseDocuments`、`PaperbaseDocumentPipelineRuns`）？没有前缀可能与其他模块冲突。
+- 🟡 新建表名是否带 `Document AI` 前缀（参考 `DocumentAIDocuments`、`DocumentAIDocumentPipelineRuns`）？没有前缀可能与其他模块冲突。
 - 🟡 是否在 `OnModelCreating` 中调用了 `b.ToTable(MyModuleDbProperties.DbTablePrefix + "Tables")` 而不是写死表名？
 
 ### 1.10 危险的 Sql() 块
@@ -103,7 +103,7 @@ developer_instructions = """
 
 ## 3. 错误模式（避免）
 
-- **不要把 EF Core 自动生成的 `Designer.cs` 和 `PaperbaseHostDbContextModelSnapshot.cs` 内的内容当作违规**——只检查它们是否同步存在。
+- **不要把 EF Core 自动生成的 `Designer.cs` 和 `DocumentAIHostDbContextModelSnapshot.cs` 内的内容当作违规**——只检查它们是否同步存在。
 - **不要修改迁移文件**——只输出报告，让用户用 `dotnet ef migrations remove` + 重新生成的方式修正，避免手工改动迁移内容。
 - **不要假设你知道线上表的数据量**——对"大表"的判断要求用户确认；可以建议用户在审查前先查询表行数。
 - **不要把 ABP 框架字段（`CreationTime`、`CreatorId`、`IsDeleted` 等）相关的列变更当作违规**——它们由 `ConfigureByConvention()` 自动管理。"""

@@ -1,3 +1,3 @@
-dotnet run --project Dignite.Paperbase --migrate-database
+dotnet run --project Dignite.DocumentAI --migrate-database
 
 exit $LASTEXITCODE

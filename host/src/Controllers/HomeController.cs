@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Volo.Abp.AspNetCore.Mvc;
 
-namespace Dignite.Paperbase.Host.Controllers;
+namespace Dignite.DocumentAI.Host.Controllers;
 
 public class HomeController : AbpController
 {

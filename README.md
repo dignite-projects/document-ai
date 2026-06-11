@@ -1,6 +1,6 @@
-# Dignite Paperbase
+# Dignite Document AI
 
-> **Paperbase = physical paper / scans / photos / PDF images / Office files → trustworthy digitized data.**
+> **Document AI = physical paper / scans / photos / PDF images / Office files → trustworthy digitized data.**
 > A **channel layer**, not an end-product. It doesn't consume, doesn't own, doesn't dive into business — it hands Markdown + structured metadata to downstream RAG platforms, business systems, and AI clients via REST / EventBus / MCP server / Webhook.
 
 For the full positioning, architecture rules, OUT-of-scope list, Markdown-first contract, six-stage ETO event contract, and security covenant, see [CLAUDE.md](./CLAUDE.md). It is the truth source — this README only stages the operational entry points.
@@ -10,7 +10,7 @@ For the full positioning, architecture rules, OUT-of-scope list, Markdown-first 
 ```
 physical paper / scans / photos / PDF images / Office files
     ↓
-[Paperbase channel]: OCR + Markdown + system metadata + type-bound field extraction
+[Document AI channel]: OCR + Markdown + system metadata + type-bound field extraction
     ↓ (REST / EventBus / MCP server / Webhook)
     ├─→ downstream RAG platform
     ├─→ business systems (finance / CLM / HR / ERP)
@@ -21,7 +21,7 @@ physical paper / scans / photos / PDF images / Office files
 ## Solution structure
 
 ```
-dignite-paperbase/
+document-ai/
 ├── core/      # Channel implementation — ABP layers (Abstractions / Domain.Shared / Domain / Application / EntityFrameworkCore / HttpApi)
 ├── host/      # Host application — provider wiring (OCR + AI) and middleware (ASP.NET Core API)
 ├── angular/   # Angular SPA (operator UI)
@@ -60,7 +60,7 @@ Create `host/src/appsettings.Development.json` with your local SQL Server connec
 {
   "Serilog": { "MinimumLevel": { "Default": "Debug" } },
   "ConnectionStrings": {
-    "Default": "Server=YOUR_DB_SERVER;Database=Paperbase-Dev;User ID=YOUR_USER;Password=YOUR_PASSWORD;TrustServerCertificate=true"
+    "Default": "Server=YOUR_DB_SERVER;Database=Document AI-Dev;User ID=YOUR_USER;Password=YOUR_PASSWORD;TrustServerCertificate=true"
   },
   "StringEncryption": {
     "DefaultPassPhrase": "any-random-string-here"
@@ -98,7 +98,7 @@ SPA: `http://localhost:4200`. Default seeded credentials: `admin` / `1q2w3E*`.
 
 ## Choosing an OCR provider
 
-Paperbase ships two OCR providers — local **PaddleOCR** (default, CPU, no network) and cloud **Azure Document Intelligence**. PaddleOCR is the zero-config default for development; Azure DI is the recommended production option when data is allowed to leave the network.
+Document AI ships two OCR providers — local **PaddleOCR** (default, CPU, no network) and cloud **Azure Document Intelligence**. PaddleOCR is the zero-config default for development; Azure DI is the recommended production option when data is allowed to leave the network.
 
 Full selection guidance, configuration, and resource footprint: see [docs/text-extraction.md](./docs/text-extraction.md).
 

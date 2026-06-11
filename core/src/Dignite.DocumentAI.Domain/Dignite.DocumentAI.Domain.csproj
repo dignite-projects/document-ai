@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Import Project="..\..\..\common.props" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Dignite.DocumentAI</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Volo.Abp.BlobStoring" />
+    <PackageReference Include="Volo.Abp.Ddd.Domain" />
+    <ProjectReference Include="..\Dignite.DocumentAI.Abstractions\Dignite.DocumentAI.Abstractions.csproj" />
+    <ProjectReference Include="..\Dignite.DocumentAI.Domain.Shared\Dignite.DocumentAI.Domain.Shared.csproj" />
+    <!-- EFCore.Tests 需直接构造 DocumentPipelineRun（internal 构造器）以验证仓储对未 flush run 的可见性语义（#216 follow-up #1）。 -->
+    <InternalsVisibleTo Include="Dignite.DocumentAI.EntityFrameworkCore.Tests" />
+  </ItemGroup>
+
+</Project>

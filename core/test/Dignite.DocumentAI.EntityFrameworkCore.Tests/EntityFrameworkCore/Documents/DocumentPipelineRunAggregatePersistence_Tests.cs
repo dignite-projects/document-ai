@@ -1,0 +1,147 @@
+using System;
+using System.Threading.Tasks;
+using Dignite.DocumentAI.Documents;
+using Dignite.DocumentAI.Documents.Pipelines;
+using Shouldly;
+using Volo.Abp;
+using Volo.Abp.Guids;
+using Xunit;
+
+namespace Dignite.DocumentAI.EntityFrameworkCore.Documents;
+
+public class DocumentPipelineRunAggregatePersistence_Tests
+    : DocumentAIEntityFrameworkCoreTestBase
+{
+    private readonly IDocumentRepository _documentRepository;
+    private readonly IDocumentPipelineRunRepository _runRepository;
+    private readonly DocumentPipelineRunManager _pipelineRunManager;
+    private readonly IGuidGenerator _guidGenerator;
+
+    public DocumentPipelineRunAggregatePersistence_Tests()
+    {
+        _documentRepository = GetRequiredService<IDocumentRepository>();
+        _runRepository = GetRequiredService<IDocumentPipelineRunRepository>();
+        _pipelineRunManager = GetRequiredService<DocumentPipelineRunManager>();
+        _guidGenerator = GetRequiredService<IGuidGenerator>();
+    }
+
+    [Fact]
+    public async Task Independent_Aggregate_Persists_New_Run_For_Document()
+    {
+        var documentId = _guidGenerator.Create();
+        Guid runId = default;
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _documentRepository.InsertAsync(CreateDocument(documentId), autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            // #216：PipelineRun 拆为独立聚合根后 GetAsync 不再 eager-load runs；Manager.QueueAsync 经 runRepo InsertAsync。
+            var document = await _documentRepository.GetAsync(documentId, includeDetails: false);
+            var run = await _pipelineRunManager.QueueAsync(document, DocumentAIPipelines.Classification);
+            runId = run.Id;
+
+            await _documentRepository.UpdateAsync(document, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            // 通过 runRepo 直接查（不再经 Document 聚合根）——验证独立聚合根持久化路径生效。
+            var persistedRun = await _runRepository.FindAsync(runId);
+            persistedRun.ShouldNotBeNull();
+            persistedRun.DocumentId.ShouldBe(documentId);
+            persistedRun.PipelineCode.ShouldBe(DocumentAIPipelines.Classification);
+            persistedRun.Status.ShouldBe(PipelineRunStatus.Pending);
+        });
+    }
+
+    [Fact]
+    public async Task GetLatestRunsByCodes_Surfaces_Unflushed_Run_In_Same_Uow()
+    {
+        var documentId = _guidGenerator.Create();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _documentRepository.InsertAsync(CreateDocument(documentId), autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            // 同一 UoW 内 Insert 一个 run 但 autoSave:false——故意不 flush。DB 端 GroupBy 查询查不到这条未落库的行
+            // （DB 里根本没有它），EF identity map 也无从物化它。唯有 GetLatestRunsByCodesAsync 合并 change-tracker
+            // 的 Added entries 才能感知它。给 #216 follow-up #1 的 ChangeTracker 合并上锁：删掉仓储里那段合并
+            // foreach，本测试即红（DeriveLifecycle 会回退到看不见同 UoW 内未 flush run 的 stale-view bug）。
+            var run = new DocumentPipelineRun(
+                _guidGenerator.Create(),
+                documentId,
+                tenantId: null,
+                DocumentAIPipelines.Classification,
+                attemptNumber: 1);
+            await _runRepository.InsertAsync(run, autoSave: false);
+
+            var latest = await _runRepository.GetLatestRunsByCodesAsync(
+                documentId,
+                new[] { DocumentAIPipelines.Classification });
+
+            latest.ShouldContainKey(DocumentAIPipelines.Classification);
+            latest[DocumentAIPipelines.Classification].Id.ShouldBe(run.Id);
+            latest[DocumentAIPipelines.Classification].Status.ShouldBe(PipelineRunStatus.Pending);
+        });
+    }
+
+    [Fact]
+    public async Task InsertNewAttempt_Translates_Unique_Collision_To_RetryInProgress()
+    {
+        // #239：撞 (DocumentId, PipelineCode, AttemptNumber) 唯一索引时，仓储抓 provider 无关的
+        // DbUpdateException 类型（不嗅探 message / 错误码）→ 翻译成 RetryInProgress。此处用真实 SQLite
+        // 的 UNIQUE 约束触发冲突，验证翻译路径端到端生效，且不依赖任何 SQL Server 专属错误文本。
+        var documentId = _guidGenerator.Create();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _documentRepository.InsertAsync(CreateDocument(documentId), autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _runRepository.InsertNewAttemptAsync(NewRun(documentId, attemptNumber: 1));
+        });
+
+        var ex = await Should.ThrowAsync<BusinessException>(async () =>
+        {
+            await WithUnitOfWorkAsync(async () =>
+            {
+                // 同 (doc, pipeline, attempt) 的另一条 run（新 Id）——并发重试的 loser 视角。
+                await _runRepository.InsertNewAttemptAsync(NewRun(documentId, attemptNumber: 1));
+            });
+        });
+
+        ex.Code.ShouldBe(DocumentAIErrorCodes.Pipeline.RetryInProgress);
+    }
+
+    private DocumentPipelineRun NewRun(Guid documentId, int attemptNumber)
+    {
+        return new DocumentPipelineRun(
+            _guidGenerator.Create(),
+            documentId,
+            tenantId: null,
+            DocumentAIPipelines.Classification,
+            attemptNumber);
+    }
+
+    private static Document CreateDocument(Guid id)
+    {
+        return new Document(
+            id,
+            tenantId: null,
+            fileOrigin: new FileOrigin(
+                blobName: "blobs/test.pdf",
+                uploadedByUserName: "test-user",
+                contentType: "application/pdf",
+                contentHash: $"{Guid.NewGuid():N}{Guid.NewGuid():N}",
+                fileSize: 1024,
+                originalFileName: "test.pdf"));
+    }
+}
