@@ -1,8 +1,9 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
 
-# 默认 OCR provider (VisionLlm) 经 PDFtoImage 用 PDFium + SkiaSharp 光栅化 PDF 页，
-# SkiaSharp 在 Linux 渲染 PDF 内矢量/文字需 libfontconfig1。见 docs/ocr-vision-llm.md。
+# The default OCR provider (VisionLlm) rasterizes PDF pages through PDFtoImage using
+# PDFium + SkiaSharp. SkiaSharp needs libfontconfig1 on Linux to render vector/text
+# content inside PDFs. See docs/ocr-vision-llm.md.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*

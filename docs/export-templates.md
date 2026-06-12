@@ -23,7 +23,7 @@ The output is **fixed system fields first, then the template's extracted-field c
 - **Fixed system fields** — always emitted, not configurable: `LifecycleStatus`, `ReviewStatus`, `Title`. These are Document AI's stable metadata contract; tenants don't configure them the way they configure business fields.
 - **Extracted-field columns** — each `ExportColumn` references one type-bound field. Internally the column stores the **immutable `FieldDefinitionId`** (so renaming `FieldDefinition.Name` doesn't break the template — #207); the API submits and returns the field `Name`, resolved at save/read time against the template's document type. The value comes from the document's `DocumentExtractedField` row matched by `FieldDefinitionId` (issue #206), rendered from its typed column per the field's `DataType`. Host fields and tenant fields need no distinction here — a document only ever carries one layer's extraction result (field architecture v2's "two layers mutually exclusive"), so fields never collide.
 
-Each `ExportColumn` (API shape) carries `{ FieldName, ColumnName, Order }`. `ColumnName` is the header text written to the file (Unicode is allowed, so Japanese/Chinese headers like `金額` work; control characters are rejected). `Order` sorts the extracted columns ascending.
+Each `ExportColumn` (API shape) carries `{ FieldName, ColumnName, Order }`. `ColumnName` is the header text written to the file (Unicode is allowed, so non-ASCII headers work; control characters are rejected). `Order` sorts the extracted columns ascending.
 
 Because every column is a type-bound field, a template is inherently type-scoped: `DocumentTypeId` (submitted/returned as `DocumentTypeCode`) is **required**, and the export only ever covers documents of that type.
 
@@ -57,10 +57,10 @@ Suppose a tenant has an `invoice` document type with tenant fields `issue_date`,
 
 | FieldName | ColumnName | Order |
 |---|---|---|
-| `issue_date` | `発生日` | 0 |
-| `amount` | `金額` | 1 |
-| `partner_name` | `取引先` | 2 |
+| `issue_date` | `Issue Date` | 0 |
+| `amount` | `Amount` | 1 |
+| `partner_name` | `Partner` | 2 |
 
-Set `Format = Csv` and `DocumentTypeCode = invoice` (required — the template is type-scoped). At month-end, filter the document list to the invoices you want and export. The CSV's header row is the **three fixed system columns** (`LifecycleStatus,ReviewStatus,Title`) followed by your configured columns (`発生日,金額,取引先`); a downstream importer that wants only the business columns ignores or strips the leading system columns.
+Set `Format = Csv` and `DocumentTypeCode = invoice` (required — the template is type-scoped). At month-end, filter the document list to the invoices you want and export. The CSV's header row is the **three fixed system columns** (`LifecycleStatus,ReviewStatus,Title`) followed by your configured columns (`Issue Date,Amount,Partner`); a downstream importer that wants only the business columns ignores or strips the leading system columns.
 
-The same mechanism produces a Yayoi 仕訳日記帳 layout, a Yonyou voucher CSV, or any other ingest format: define the fields, map them to the target column names, pick the order. If a target format needs a value Document AI doesn't capture, add a `FieldDefinition` for it — the channel still doesn't *know* what freee is, it just lets you describe the shape.
+The same mechanism produces a Yayoi journal layout, a Yonyou voucher CSV, or any other ingest format: define the fields, map them to the target column names, pick the order. If a target format needs a value Document AI doesn't capture, add a `FieldDefinition` for it — the channel still doesn't *know* what freee is, it just lets you describe the shape.

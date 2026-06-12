@@ -1,96 +1,101 @@
 ---
 name: abp-document-boundary-check
-description: 校验 Document 聚合根是否仍然是"纯基础设施聚合根"，扫描是否引入了禁止出现的业务字段（合同金额、到期日、发票号等）。在修改 Document.cs 或新增业务模块时使用，或在 Slice 收尾前手动调用 /abp-document-boundary-check 进行复核。
+description: Verify that the Document aggregate remains a pure infrastructure aggregate, and scan for forbidden business fields such as contract amount, expiration date, invoice number, and similar domain-specific data. Use this after editing Document.cs, when adding a business module, or before closing a Slice.
 ---
 
-# Document 聚合根边界校验
+# Document Aggregate Boundary Check
 
-## 背景与不变量
+## Background And Invariants
 
-`CLAUDE.md` 中声明了一条**强制约束**：
+`CLAUDE.md` defines a mandatory constraint:
 
-> `Document` 是**纯基础设施聚合根**，职责限于：文件存储、生命周期状态机、流水线 Run 记录、文本提取结果、AI 分类结果、向量化状态。
+> `Document` is a channel-layer infrastructure aggregate root. Its responsibility is limited to file storage, lifecycle state, text extraction output, AI classification output, and type-bound extracted field values.
 >
-> **禁止**在 `Document` 上添加任何来自业务模块的字段，例如合同金额、到期日、对方名称、发票号等。这类字段属于业务模块自己的聚合根，由业务模块在收到 `DocumentClassifiedEto` 后自行持久化和查询。
+> Do not add fields from downstream business modules to `Document`, such as contract amount, expiration date, counterparty name, invoice number, or similar business facts. Those fields belong to the downstream module's own aggregate root, and the downstream module should persist and query them after receiving `DocumentClassifiedEto` / `DocumentReadyEto`.
 
-**判断依据**：如果一个字段的含义只有在特定业务场景（合同、发票、报销单…）下才成立，它就不属于 `Document`。
+Decision rule: if a field only makes sense in a specific business scenario such as contracts, invoices, reimbursements, licenses, HR, medical claims, or insurance, it does not belong on `Document`.
 
-## 当前允许出现在 Document.cs 上的字段集合
+## Fields Currently Allowed On Document.cs
 
-以下字段属于"纯基础设施"范畴，是合规的：
+The following fields are infrastructure-level fields and are allowed:
 
-| 字段类别 | 字段名（示例） |
+| Field Category | Field Names (Examples) |
 | --- | --- |
-| 多租户 | `TenantId` |
-| 文件存储 | `FileOrigin`（含 `BlobName`） |
-| 生命周期 | `LifecycleStatus` |
-| 文本提取 | `ExtractedText` |
-| AI 分类（通用元数据） | `DocumentTypeCode`, `ClassificationConfidence`, `ClassificationReason`, `ReviewStatus` |
-| 流水线编排 | `PipelineRuns` 集合, `HasEmbedding` 派生 |
+| Multi-tenancy | `TenantId` |
+| File storage | `FileOrigin` including `BlobName`, `OriginalFileName`, `ContentType`, and related file metadata |
+| Cabinet / organization dimension | `CabinetId` |
+| Lifecycle | `LifecycleStatus` |
+| Text extraction | `Markdown` as the only text payload, `Title` as a Markdown-derived display snapshot, `Language`, `ExtractionMetadata` |
+| Type-bound extracted field values | `ExtractedFieldValues` (`IReadOnlyCollection<DocumentExtractedField>`) |
+| AI classification common metadata | `DocumentTypeId` as the internal immutable association, external wire-format `DocumentTypeCode`, `ClassificationConfidence` |
+| Human review | `ReviewDisposition`, `ReviewReasons`, `RejectionReason` |
 
-> 注意：`DocumentTypeCode` 是**通用类型标识**（"contract"、"invoice"…），不是业务字段。新增的字段如果性质上类似（任何文档类型都需要），通常允许；如果只对某个特定类型有意义，禁止。
+Notes:
 
-## 禁止模式（红灯）
+- `DocumentTypeId` / `DocumentTypeCode` are generic document type identifiers, not business fields.
+- `Markdown` is the only text payload. Do not introduce parallel text fields such as `ExtractedText`, `Summary`, or `RawText`.
+- `ExtractionMetadata` stores provenance only, such as provider name, native payload blob manifest, and integrity or quality signals. Do not turn it into a business-field bag.
 
-任何字段名或属性含义只在某个业务场景下成立，都应当迁移到该业务模块自己的聚合根。常见红灯关键词：
+## Forbidden Patterns
 
-- 合同相关：`Amount`, `Currency`, `ContractNumber`, `EffectiveDate`, `ExpirationDate`, `ExpiryDate`, `Counterparty`, `CounterpartyName`, `SignedAt`, `SignedBy`, `ContractType`
-- 发票相关：`InvoiceNumber`, `InvoiceCode`, `TaxAmount`, `TaxRate`, `Buyer`, `Seller`, `IssuedAt`, `LineItems`
-- 报销/财务：`ReimbursementCategory`, `Reimbursable`, `CostCenter`, `Project`
-- 证照/人事：`HolderName`, `IDNumber`, `IssuingAuthority`, `LicenseNumber`, `ValidFrom`, `ValidUntil`
-- 任何包含特定行业术语的字段（"PolicyNumber"、"PatientId"、"ClaimAmount" …）
+Any field name or property meaning that only applies to a specific business scenario should move to that downstream business module's own aggregate root. Common red flags:
 
-## 触发场景
+- Contract-related: `Amount`, `Currency`, `ContractNumber`, `EffectiveDate`, `ExpirationDate`, `ExpiryDate`, `Counterparty`, `CounterpartyName`, `SignedAt`, `SignedBy`, `ContractType`
+- Invoice-related: `InvoiceNumber`, `InvoiceCode`, `TaxAmount`, `TaxRate`, `Buyer`, `Seller`, `IssuedAt`, `LineItems`
+- Reimbursement / finance: `ReimbursementCategory`, `Reimbursable`, `CostCenter`, `Project`
+- License / HR: `HolderName`, `IDNumber`, `IssuingAuthority`, `LicenseNumber`, `ValidFrom`, `ValidUntil`
+- Any field containing industry-specific terms such as `PolicyNumber`, `PatientId`, or `ClaimAmount`
+- Vectorization-related fields such as `HasEmbedding`, `EmbeddingStatus`, or similar. Vectorization belongs to downstream RAG systems and is outside the Document AI channel layer, so these fields are not allowed on `Document`.
 
-满足以下条件之一时，主动运行此检查：
+## Trigger Scenarios
 
-1. 用户编辑了 `core/src/Dignite.DocumentAI.Domain/Documents/Document.cs`。
-2. 用户在 `core/src/Dignite.DocumentAI.Application.Contracts/Documents/DocumentDto.cs` 添加了新属性（DTO 是 Document 的对外投影，污染 DTO 等价于污染聚合根）。
-3. 用户提到要"把 X 字段加到 Document 上"。
-4. 新增 EF Core migration 触及了 `DocumentAIDocuments` 表。
-5. 用户运行 `/abp-document-boundary-check`。
+Run this check when any of the following is true:
 
-## 执行步骤
+1. The user edited `core/src/Dignite.DocumentAI.Domain/Documents/Document.cs`.
+2. The user added a property to `core/src/Dignite.DocumentAI.Application.Contracts/Documents/DocumentDto.cs`. The DTO is the external projection of `Document`, so polluting the DTO is equivalent to polluting the aggregate.
+3. The user says they want to "add field X to Document".
+4. A new EF Core migration touches the `DocumentAIDocuments` table.
+5. The user runs `/abp-document-boundary-check`.
 
-1. **读取当前 Document 字段清单**
+## Execution Steps
 
-   ```bash
-   # 用 Grep 抽取所有 public/protected/internal 属性
-   ```
+1. **Read the current Document field inventory**
 
-   使用 Grep 在以下路径搜索属性声明：
+   Use Grep or rg to search property declarations in:
+
    - `core/src/Dignite.DocumentAI.Domain/Documents/Document.cs`
    - `core/src/Dignite.DocumentAI.Application.Contracts/Documents/DocumentDto.cs`
-   - `core/src/Dignite.DocumentAI.EntityFrameworkCore/EntityFrameworkCore/DocumentAIDbContextModelCreatingExtensions.cs`（找到 `builder.Entity<Document>` 配置块）
+   - `core/src/Dignite.DocumentAI.EntityFrameworkCore/EntityFrameworkCore/DocumentAIDbContextModelCreatingExtensions.cs` (the `builder.Entity<Document>` block)
 
-2. **对每个字段判定归属**
+2. **Classify ownership for each field**
 
-   对照上面的"允许字段类别"表与"禁止模式"关键词。对疑似违规的字段，**不要立即结论违规**，先回答下面这组问题：
+   Compare each field against the allowed field categories and forbidden patterns above. For a suspicious field, do not immediately conclude that it is invalid. Answer these questions first:
 
-   - 这个字段的语义在所有文档类型下都成立吗？（合规：是；违规：否）
-   - 它是元数据/状态/编排，还是业务事实？（合规：前者；违规：后者）
-   - 它的写入者是 `DocumentPipelineRunManager` / 流水线，还是某个业务模块的字段提取器？（合规：前者；违规：后者）
+   - Does the field's meaning hold across all document types? Allowed if yes; invalid if no.
+   - Is it metadata, state, or orchestration data, or is it a business fact? Allowed for the former; invalid for the latter.
+   - Is it written by channel-layer pipeline code, or by a downstream business module / business-specific extractor? Allowed for the former; invalid for the latter.
 
-3. **如发现违规，给出迁移建议**
+3. **If a violation is found, give a migration recommendation**
 
-   不要尝试直接修复；而是输出：
-   - 违规字段名
-   - 该字段属于哪类业务领域（合同 / 发票 / 报销 / 证照 等）——下游业务消费方在自己的仓库实现
-   - 明确指出："此字段属于下游业务聚合根，由下游消费方订阅 `DocumentClassifiedEto` / `DocumentReadyEto` 后在自己的聚合根持久化；Document AI Document 是纯基础设施聚合根，不污染。"
-   - 引用 `CLAUDE.md` 中相关段落让用户复核。
+   Do not directly fix the code. Output:
 
-4. **如未发现违规，给出简短确认**
+   - The violating field name.
+   - The business domain it belongs to, such as contracts, invoices, reimbursements, licenses, or HR. The downstream business consumer should implement it in its own repository and aggregate.
+   - This exact conclusion in substance: "This field belongs to a downstream business aggregate root. The downstream consumer should subscribe to `DocumentClassifiedEto` / `DocumentReadyEto` and persist it in its own aggregate root. The Document AI `Document` aggregate is pure infrastructure and must not be polluted."
+   - A reference to the relevant `CLAUDE.md` section for user review.
 
-   列出当前所有字段及其归属类别，确认全部位于"允许字段类别"表内，并报告所检查的提交范围（例如最近一次 `git diff Document.cs`）。
+4. **If no violation is found, give a short confirmation**
 
-## 不做什么
+   List the current fields and their ownership categories, confirm that all of them are within the allowed field categories, and report the checked change range, such as the latest `git diff Document.cs`.
 
-- **不要**主动修改 `Document.cs` 删除字段——这是用户的设计决策，需要用户确认后才能改。
-- **不要**把 `Document.cs` 上已有的字段（如 `ClassificationReason`、`DocumentTypeCode`）误判为违规——它们是**通用元数据**，参见允许字段表。
-- **不要**对 `DocumentPipelineRun`、`DocumentChunk` 等子实体应用同样的规则——它们是聚合根内部的基础设施实体，与业务边界讨论的"Document 聚合根本身"不同。
+## What Not To Do
 
-## 参考资料
+- Do not proactively edit `Document.cs` to remove fields. That is a design decision and requires user confirmation.
+- Do not misclassify existing generic metadata fields such as `ReviewDisposition`, `DocumentTypeId`, or `ExtractionMetadata` as violations.
+- Do not apply the same rule to aggregate-internal infrastructure entities such as `DocumentExtractedField` or `DocumentPipelineRun`. This boundary check is about the `Document` aggregate root itself.
 
-- 项目根 `CLAUDE.md` → "Document 聚合根边界（强制）"小节
-- `.claude/rules/ddd-patterns.md` → 聚合根设计与 DDD 不变量
-- `.claude/rules/dependency-rules.md` → 跨层/跨模块的依赖方向
+## References
+
+- Root `CLAUDE.md` -> "Field architecture", "Markdown-first", and "OUT of scope"
+- `.claude/rules/ddd-patterns.md` -> aggregate design and DDD invariants
+- `.claude/rules/dependency-rules.md` -> cross-layer and cross-module dependency direction

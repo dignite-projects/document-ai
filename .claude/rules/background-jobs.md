@@ -32,18 +32,18 @@ This avoids holding database connections, locks, or transactions while external 
 - Do not introduce repositories for child entities to work around persistence issues.
 - If a job carries an execution/run identifier in its args, persist that same identifier before enqueueing or beginning the job, and use it when completing or failing the job.
 
-### DocumentPipelineRun 例外（#216）
+### DocumentPipelineRun Exception (#216)
 
-`DocumentPipelineRun` 本身就是 `AggregateRoot<Guid>`，通过 `IDocumentPipelineRunRepository` 直接操作，**不再经 `Document` 聚合根**。后台作业（`DocumentTextExtractionBackgroundJob` / `DocumentClassificationBackgroundJob`）三阶段 UoW 的 BeginRun / CompleteRun / FailRun 都按这个模式：
+`DocumentPipelineRun` is itself an `AggregateRoot<Guid>`, so it is handled directly through `IDocumentPipelineRunRepository` and **no longer through the `Document` aggregate root**. The BeginRun / CompleteRun / FailRun phases in the three-phase UoW pattern used by background jobs (`DocumentTextExtractionBackgroundJob` / `DocumentClassificationBackgroundJob`) all follow this model:
 
-- 用 `DocumentRepository.GetAsync(id, includeDetails: false)` 加载 Document（**不再** `GetWithPipelineRunsAsync`）
-- 用 `RunRepository.FindAsync(runId)` 加载具体的 run（**不再** `document.GetRun(runId)`）
-- 通过 `DocumentPipelineRunManager` 修改 run 状态（manager 内部 `_runRepo.UpdateAsync` 显式持久化）
-- 同 UoW commit 时 Document 主行 UPDATE + PipelineRun 行 UPDATE / INSERT 一并 flush
+- Load the Document with `DocumentRepository.GetAsync(id, includeDetails: false)` (**not** `GetWithPipelineRunsAsync`).
+- Load the specific run with `RunRepository.FindAsync(runId)` (**not** `document.GetRun(runId)`).
+- Change run state through `DocumentPipelineRunManager` (the manager explicitly persists through `_runRepo.UpdateAsync`).
+- When the same UoW commits, flush the Document row UPDATE and the PipelineRun row UPDATE / INSERT together.
 
-CompleteRun / FailRun 阶段共享的「加载 Document + 按 runId 定位 run（找不到则 fallback 重建）」前导，以及两类作业完全一致的失败收尾，收敛在基类 `DocumentPipelineBackgroundJobBase<TArgs>`（`LoadDocumentAndRunAsync` / `FailRunAsync`，#216 follow-up #2）；两个作业各自只实现差异化的 Begin / Complete 主体。
+The CompleteRun / FailRun phases share the same prelude, "load Document + locate the run by runId (fallback to reconstruction when missing)", and both job types share identical failure finalization. These shared parts live in the base class `DocumentPipelineBackgroundJobBase<TArgs>` (`LoadDocumentAndRunAsync` / `FailRunAsync`, #216 follow-up #2); each concrete job only implements its distinct Begin / Complete body.
 
-**这是该实体的唯一例外**——其他流水线相关 child 实体（如未来的 ChunkBlock）仍按"通过聚合根访问"的标准模式管理。具体决策详见 Issue #216。
+**This is the only exception for this entity**. Other pipeline-related child entities (for example a future ChunkBlock) still follow the standard "access through the aggregate root" model. See Issue #216 for the decision record.
 
 ## Tests
 

@@ -4,8 +4,8 @@ $hostFolder = Join-Path $currentFolder "../../"
 $angularFolder = Join-Path $currentFolder "../../../angular"
 $certsFolder = Join-Path $currentFolder "certs"
 
-# 1. 本地开发证书（Kestrel HTTPS）。密码需与 docker-compose.yml 中的
-#    Kestrel__Certificates__Default__Password 保持一致。
+# 1. Local development certificate (Kestrel HTTPS). The password must match
+#    Kestrel__Certificates__Default__Password in docker-compose.yml.
 If(!(Test-Path -Path $certsFolder))
 {
     New-Item -ItemType Directory -Force -Path $certsFolder
@@ -15,19 +15,21 @@ If(!(Test-Path -Path $certsFolder))
     }
 }
 
-# 2. 预构建后端产物 → host/src/bin/Release/net10.0/publish/
-#    src/Dockerfile.local 只做轻量打包（COPY 预 publish 产物），不在容器内构建。
+# 2. Prebuild backend output -> host/src/bin/Release/net10.0/publish/
+#    src/Dockerfile.local only does lightweight packaging (COPY pre-published output);
+#    it does not build inside the container.
 Set-Location $hostFolder
 dotnet publish "src/Dignite.DocumentAI.Host.csproj" -c Release
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# 3. 预构建前端产物 → angular/dist/host/browser/
-#    apps/host/Dockerfile.local 只做 nginx 打包。
+# 3. Prebuild frontend output -> angular/dist/host/browser/
+#    apps/host/Dockerfile.local only packages it with nginx.
 Set-Location $angularFolder
 npx nx build host
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# 4. 重新打镜像并启动（--build 确保用上面刚产出的最新产物，而非旧镜像层）。
+# 4. Rebuild images and start them. --build ensures Docker uses the newly produced
+#    artifacts above instead of stale image layers.
 Set-Location $currentFolder
 docker-compose up -d --build
 exit $LASTEXITCODE

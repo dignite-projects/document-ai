@@ -37,19 +37,21 @@ jobs:
       - name: Run application tests
         run: dotnet test core/test/Dignite.DocumentAI.Application.Tests/Dignite.DocumentAI.Application.Tests.csproj --no-build --configuration Release --verbosity normal
 
-      # SQLite in-memory（DocumentAIEntityFrameworkCoreTestModule），无外部数据库依赖。
+      # SQLite in-memory (DocumentAIEntityFrameworkCoreTestModule); no external database dependency.
       - name: Run EF Core tests
         run: dotnet test core/test/Dignite.DocumentAI.EntityFrameworkCore.Tests/Dignite.DocumentAI.EntityFrameworkCore.Tests.csproj --no-build --configuration Release --verbosity normal
 
-      # TestBase + NSubstitute mock（无 DB / 无 LLM）；含 MCP inputSchema 回归守护（Autofac 容器下生成 schema）。
+      # TestBase + NSubstitute mocks (no DB / no LLM); includes MCP inputSchema regression guards
+      # generated under the Autofac container.
       - name: Run MCP tests
         run: dotnet test core/test/Dignite.DocumentAI.Mcp.Tests/Dignite.DocumentAI.Mcp.Tests.csproj --no-build --configuration Release --verbosity normal
 
-      # 纯单元测试：mock IChatClient + IPdfRasterizer，不依赖原生 PDFium / 外部 LLM。
+      # Pure unit tests: mocked IChatClient + IPdfRasterizer; no native PDFium or external LLM dependency.
       - name: Run OCR VisionLlm tests
         run: dotnet test core/test/Dignite.DocumentAI.Ocr.VisionLlm.Tests/Dignite.DocumentAI.Ocr.VisionLlm.Tests.csproj --no-build --configuration Release --verbosity normal
 
-      # 最小 ASP.NET TestServer 镜像 host 的 MCP 授权接线（#278 回归护栏），不引 ABP 宿主 / DB / OpenIddict。
+      # Minimal ASP.NET TestServer mirroring the host MCP authorization wiring (#278 regression guard),
+      # without bringing in the ABP host / DB / OpenIddict.
       - name: Run host tests
         run: dotnet test host/test/Dignite.DocumentAI.Host.Tests/Dignite.DocumentAI.Host.Tests.csproj --no-build --configuration Release --verbosity normal
 
@@ -93,8 +95,9 @@ jobs:
         run: npx vitest run
         working-directory: angular
 
-      # 验证前端 .local 镜像可构建（COPY 路径不回归）。上面的 nx build host 已产出
-      # dist/host/browser，此处只打包不推送；context = angular/。
+      # Verifies the frontend .local image still builds (COPY paths do not regress). The nx build host
+      # step above has already produced dist/host/browser; this step only packages and does not push.
+      # Build context = angular/.
       - name: Build Angular Docker image
         run: docker build -f apps/host/Dockerfile.local -t document-ai-web:${{ github.sha }} .
         working-directory: angular

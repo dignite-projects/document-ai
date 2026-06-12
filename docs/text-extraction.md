@@ -1,6 +1,6 @@
 # Text Extraction
 
-Every document uploaded to Document AI passes through a text-extraction stage that converts the raw bytes into **Markdown**. The Markdown then drives the channel's internal pipeline — classification, Host field extraction, tenant field extraction (B 机制), and title generation — and is the only text payload Document AI exposes to downstream consumers (RAG platforms, business systems, MCP clients) via REST / EventBus / MCP.
+Every document uploaded to Document AI passes through a text-extraction stage that converts the raw bytes into **Markdown**. The Markdown then drives the channel's internal pipeline — classification, Host field extraction, tenant field extraction (mechanism B), and title generation — and is the only text payload Document AI exposes to downstream consumers (RAG platforms, business systems, MCP clients) via REST / EventBus / MCP.
 
 ## Markdown-first contract
 

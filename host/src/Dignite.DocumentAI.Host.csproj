@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
-    <!-- Host 是最终应用，不发布 NuGet 包。 -->
+    <!-- Host is the final application and is not published as a NuGet package. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
@@ -92,18 +92,21 @@
     <ProjectReference Include="..\..\core\src\Dignite.DocumentAI.EntityFrameworkCore\Dignite.DocumentAI.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\core\src\Dignite.DocumentAI.TextExtraction\Dignite.DocumentAI.TextExtraction.csproj" />
     <ProjectReference Include="..\..\core\src\Dignite.DocumentAI.TextExtraction.ElBrunoMarkItDown\Dignite.DocumentAI.TextExtraction.ElBrunoMarkItDown.csproj" />
-    <!-- OCR provider — IOcrProvider 互斥, 只能启用一个. 当前默认: VisionLlm (照片 / 热敏票据 / 图片型 PDF, #259).
-         切回本地 PaddleOCR 或切到 Azure 时, 同步改 DocumentAIHostModule 的 [DependsOn] + ConfigureAI keyed client.
-         详见 docs/ocr-vision-llm.md. Linux 容器另需 SkiaSharp.NativeAssets.Linux + libfontconfig1 (见文档 Linux deployment 一节). -->
+    <!-- OCR provider — IOcrProvider implementations are mutually exclusive; enable only one.
+         Current default: VisionLlm (photos / thermal receipts / image-only PDFs, #259).
+         When switching back to local PaddleOCR or Azure, update both DocumentAIHostModule [DependsOn]
+         and the ConfigureAI keyed client wiring. See docs/ocr-vision-llm.md. Linux containers also
+         require SkiaSharp.NativeAssets.Linux + libfontconfig1 (see the Linux deployment section). -->
     <ProjectReference Include="..\..\core\src\Dignite.DocumentAI.Ocr.VisionLlm\Dignite.DocumentAI.Ocr.VisionLlm.csproj" />
     <!-- <ProjectReference Include="..\..\core\src\Dignite.DocumentAI.Ocr.PaddleOcr\Dignite.DocumentAI.Ocr.PaddleOcr.csproj" /> -->
     <!-- <ProjectReference Include="..\..\core\src\Dignite.DocumentAI.Ocr.AzureDocumentIntelligence\Dignite.DocumentAI.Ocr.AzureDocumentIntelligence.csproj" /> -->
   </ItemGroup>
 
-  <!-- 默认 OCR provider 是 VisionLlm（见上方 ProjectReference），经 PDFtoImage 用 PDFium + SkiaSharp
-       光栅化 PDF 页。SkiaSharp 的 Linux 原生库 (libSkiaSharp.so) 必须由最终可执行项目落地，故在 host
-       显式引用 NativeAssets.Linux；镜像另需安装 libfontconfig1（见 host/Dockerfile）。Windows 开发机用
-       各自 RID 的原生资产，不受影响。详见 docs/ocr-vision-llm.md。 -->
+  <!-- The default OCR provider is VisionLlm (see the ProjectReference above). It rasterizes PDF pages
+       through PDFtoImage using PDFium + SkiaSharp. SkiaSharp's Linux native library (libSkiaSharp.so)
+       must land in the final executable project, so the host explicitly references NativeAssets.Linux;
+       the image also installs libfontconfig1 (see host/Dockerfile). Windows developer machines use
+       their own RID-specific native assets and are unaffected. See docs/ocr-vision-llm.md. -->
   <ItemGroup>
     <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
   </ItemGroup>

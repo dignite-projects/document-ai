@@ -10,7 +10,7 @@ RUN npm ci
 # Copy workspace source (node_modules excluded via .dockerignore)
 COPY . .
 
-# Nx daemon 在无 TTY 容器内不可用，关掉以避免警告/超时
+# The Nx daemon is unavailable in non-TTY containers; disable it to avoid warnings/timeouts.
 RUN NX_DAEMON=false npx nx build host --configuration=production
 
 # Stage 2: Serve with Nginx

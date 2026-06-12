@@ -26,8 +26,8 @@
         <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
-    <!-- 仓库根 README.md 随包发布（PackageReadmeFile）。对 IsPackable=false 的项目（host / 测试）
-         这只是一个不参与编译的 None 项，无副作用。 -->
+    <!-- Package the repository root README.md via PackageReadmeFile. For IsPackable=false projects
+         (host / tests), this is only a non-compiling None item and has no side effects. -->
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false"/>
     </ItemGroup>

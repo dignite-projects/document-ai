@@ -47,7 +47,7 @@ Verifies the default OCR provider after a sidecar upgrade, model swap, or fresh-
 
 Verifies upgrade + new-deployment behavior after `HostDocumentTypeDataSeedContributor` / `DocumentTypeOptions` / startup-time `host.general` registration were removed. From this version onward `DocumentType` and `FieldDefinition` are managed **exclusively at runtime** via `IDocumentTypeAppService` / `IFieldDefinitionAppService`.
 
-CLAUDE.md "两层文档类型体系" enforces **strict per-layer isolation** (Host docs match `TenantId IS NULL` types; tenant docs match `TenantId = current` types). There is no cross-layer union and no fallback type.
+CLAUDE.md's "Document type system (two independent single layers)" section enforces **strict per-layer isolation** (Host docs match `TenantId IS NULL` types; tenant docs match `TenantId = current` types). There is no cross-layer union and no fallback type.
 
 ### Fresh deployment bring-up (new environment, empty DB)
 
