@@ -57,6 +57,12 @@ Also note CLAUDE.md's "OUT of scope" list: business modules (contract / invoice 
 
 The repository uses [Conventional Commits](https://www.conventionalcommits.org/): `feat(scope): …`, `fix: …`, `docs: …`, `chore: …`, `refactor(scope): …`. Existing commit descriptions are mostly written in Chinese; both Chinese and English descriptions are accepted — pick whichever expresses the change most clearly.
 
+## AI-assisted contributions
+
+AI coding assistants are welcome. Whatever tools you use, the human who opens the PR is the author and is fully responsible for the contribution: it must meet the same review, testing, and architecture-rule bar (`.claude/rules/`, [CLAUDE.md](./CLAUDE.md)) as any other change — read and understand what you submit.
+
+Listing an AI tool as a commit `Co-Authored-By` trailer is **not required**; the project's git history attributes authorship and accountability to people.
+
 ## Pull requests
 
 - Target the `main` branch.
