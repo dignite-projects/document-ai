@@ -63,3 +63,27 @@ The repository uses [Conventional Commits](https://www.conventionalcommits.org/)
 - CI (`.github/workflows/ci.yml`) must pass: it builds the core solution and the host, runs the backend test suites (Domain, Application, EntityFrameworkCore, MCP, OCR VisionLlm, and host), and builds / lints / tests the Angular workspace.
 - Keep PRs scoped to one concern, and reference the related Issue (required for boundary-touching changes, see above).
 - Use the PR template checklist (`.github/pull_request_template.md`).
+
+## Versioning and releases
+
+The project follows three-part [Semantic Versioning](https://semver.org/) (`MAJOR.MINOR.PATCH`), as declared in [CHANGELOG.md](./CHANGELOG.md). SemVer is not cosmetic here: the version **is** the stability signal to downstream consumers. A breaking change to an exit contract (REST / MCP / EventBus / Webhook, event payloads, `TextExtractionResult` shape) requires a `MAJOR` bump; a backward-compatible addition (e.g. a new nullable named field) is a `MINOR`; a fix that changes no contract is a `PATCH`.
+
+- **Pre-1.0 (`0.y.z`)** — the exit contracts are still being shaped (Webhook is not yet shipped; the field architecture is evolving). Under `0.y.z`, consumers should expect contracts to change. Graduating to `1.0.0` is an earned milestone — all four exits present, the contracts validated against at least one real downstream consumer — not a default for the first release.
+- **Pre-release suffixes** — use SemVer pre-release tags for previews on the way to a stable version: `0.1.0-preview.1` → `0.1.0-rc.1` → `0.1.0`. Both NuGet and npm understand their precedence (a suffixed version always ranks below the matching final version) and treat them as non-stable by default.
+- **Do not use CalVer** (e.g. `2026.6.0`) — it communicates *when* a release was cut, not whether it is *safe to upgrade*, which is the opposite of what this project's positioning needs.
+
+### Where the version lives
+
+| Property | Segments | Purpose |
+|----------|----------|---------|
+| `<Version>` in [`common.props`](./common.props) | 3-segment SemVer | The NuGet package version and the value a `v*` tag must match. **This is the release version.** |
+| `<AssemblyVersion>` | 4-segment | Keep coarse and stable (e.g. `0.1.0.0`); do not move it for every `MINOR`/`PATCH`, to avoid assembly-binding churn. The 4-segment `1.0.0.0` form belongs here — never as a package version or tag. |
+| `<FileVersion>` | 4-segment | Diagnostic only; CI may stamp it from a build number or commit count. |
+| `version` in [`angular/packages/document-ai/package.json`](./angular/packages/document-ai/package.json) | 3-segment SemVer | The npm package version. **Keep it in lockstep with `<Version>`** as a single product version, until the backend and frontend release cadences genuinely diverge. |
+
+### Cutting a release
+
+1. Move the CHANGELOG `[Unreleased]` section to `## [x.y.z] - YYYY-MM-DD`.
+2. Confirm `<Version>` in `common.props` and the npm `version` match the intended release (tags do not drive the version — the release workflow reads it from `common.props`).
+3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. The release workflow (`.github/workflows/release.yml`) triggers on `v*` tags; `workflow_dispatch` only builds artifacts and does not create a GitHub Release.
+4. The npm package (`@dignite/document-ai`) is **published manually** for now — see the header comment in `release.yml`.
