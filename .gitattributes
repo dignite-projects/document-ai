@@ -1,2 +1,5 @@
 # Auto detect text files and normalize line endings to LF
 * text=auto
+
+# Git hook scripts must always use LF so bash can execute them on any platform
+.githooks/* text eol=lf
