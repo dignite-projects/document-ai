@@ -6,6 +6,12 @@ Thank you for considering a contribution. This page covers the practical workflo
 
 Follow [README → Getting started](./README.md#getting-started-local-development). In short: .NET SDK 10, Node.js 20+, SQL Server (LocalDB works), optionally Docker Desktop for the PaddleOCR sidecar and the local OpenTelemetry dashboard. An OpenAI-compatible LLM API key is mandatory — see [docs/ai-provider.md](./docs/ai-provider.md).
 
+After cloning, activate the shared git hooks once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Running tests
 
 ### Backend (xUnit)
@@ -52,6 +58,30 @@ Any change that touches a **channel boundary** — the OCR / text-extraction pip
 Pure implementation details (bug fixes, wording corrections) don't need an Issue — a descriptive commit message is enough.
 
 Also note CLAUDE.md's "OUT of scope" list: business modules (contract / invoice / HR management), RAG features (vectorization, retrieval, chat), and end-user LLM configuration are not accepted into this repository — downstream consumers build those in their own repositories against the exit contracts.
+
+## Branch naming
+
+Branches follow `<type>/<issue-number>-<short-description>` (issue number is required for boundary-touching changes; may be omitted for minor work with no associated Issue):
+
+| Prefix | When to use |
+|---|---|
+| `feat/` | New feature |
+| `fix/` | Bug fix |
+| `chore/` | Build, release, dependency update |
+| `docs/` | Documentation only |
+| `refactor/` | Refactor with no functional change |
+| `ci/` | CI/CD configuration |
+
+Rules: all lowercase, words separated by `-`, no underscores or spaces.
+
+```
+feat/312-document-type-filter   ✓
+fix/298-ocr-timeout-retry       ✓
+chore/release-0.2.0             ✓  (no issue number needed)
+Feature_DocumentType            ✗
+```
+
+A `post-checkout` hook warns immediately when a branch name is non-conforming, and a `pre-push` hook blocks the push until the branch is renamed (`git branch -m <new-name>`). See the setup step in [Development environment](#development-environment) to activate these hooks.
 
 ## Commit style
 

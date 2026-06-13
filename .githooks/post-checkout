@@ -1,0 +1,29 @@
+#!/bin/bash
+# Warn when a newly created branch does not follow the naming convention.
+# post-checkout cannot block the checkout, so this is advisory only.
+# The pre-push hook enforces the rule before any push reaches the remote.
+
+# $3 = 1 means branch switch; 0 means file checkout — skip file checkouts
+if [ "$3" != "1" ]; then
+  exit 0
+fi
+
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+# Protected branches are always valid
+if echo "$BRANCH" | grep -qE '^(main|develop)$'; then
+  exit 0
+fi
+
+PATTERN='^(feat|fix|chore|docs|refactor|ci)/([0-9]+-)?[a-z0-9][a-z0-9-]*$'
+if ! echo "$BRANCH" | grep -qE "$PATTERN"; then
+  echo ""
+  echo "WARNING: branch '$BRANCH' does not follow the naming convention."
+  echo "  Expected : <type>/<issue>-<description>  or  <type>/<description>"
+  echo "  Types    : feat  fix  chore  docs  refactor  ci"
+  echo "  Example  : feat/312-document-type-filter"
+  echo "  Rename   : git branch -m <new-name>"
+  echo ""
+fi
+
+exit 0

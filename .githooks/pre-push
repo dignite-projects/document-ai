@@ -1,0 +1,24 @@
+#!/bin/bash
+# Block pushes from branches that do not follow the naming convention.
+# To bypass in an emergency: git push --no-verify
+
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+# Protected branches are always valid
+if echo "$BRANCH" | grep -qE '^(main|develop)$'; then
+  exit 0
+fi
+
+PATTERN='^(feat|fix|chore|docs|refactor|ci)/([0-9]+-)?[a-z0-9][a-z0-9-]*$'
+if ! echo "$BRANCH" | grep -qE "$PATTERN"; then
+  echo ""
+  echo "ERROR: push blocked — branch '$BRANCH' does not follow the naming convention."
+  echo "  Expected : <type>/<issue>-<description>  or  <type>/<description>"
+  echo "  Types    : feat  fix  chore  docs  refactor  ci"
+  echo "  Example  : feat/312-document-type-filter"
+  echo "  Rename   : git branch -m <new-name>"
+  echo ""
+  exit 1
+fi
+
+exit 0
