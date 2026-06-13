@@ -27,12 +27,14 @@
         <RepositoryType>git</RepositoryType>
         <PackageTags>abp;document-ai;document-processing;ocr;markdown;mcp</PackageTags>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
     </PropertyGroup>
 
-    <!-- Package the repository root README.md via PackageReadmeFile. For IsPackable=false projects
-         (host / tests), this is only a non-compiling None item and has no side effects. -->
+    <!-- Package the repository root README.md and .github/icon.png. For IsPackable=false projects
+         (host / tests), these are only non-compiling None items and have no side effects. -->
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false"/>
+        <None Include="$(MSBuildThisFileDirectory).github\icon.png" Pack="true" PackagePath="\" Visible="false"/>
     </ItemGroup>
 
     <ItemGroup>
