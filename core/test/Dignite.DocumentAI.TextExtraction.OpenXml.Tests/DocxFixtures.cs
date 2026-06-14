@@ -61,6 +61,9 @@ internal static class DocxFixtures
     /// </summary>
     public sealed record AltImageSpec(ImageSpec Image) : BlockSpec;
 
+    /// <summary>A native table: rows of cells (first row is the header).</summary>
+    public sealed record TableSpec(IReadOnlyList<IReadOnlyList<string>> Rows) : BlockSpec;
+
     public sealed class DocSpec
     {
         public List<BlockSpec> Blocks { get; } = new();
@@ -109,6 +112,12 @@ internal static class DocxFixtures
             Blocks.Add(new AltImageSpec(image));
             return this;
         }
+
+        public DocSpec Table(IReadOnlyList<IReadOnlyList<string>> rows)
+        {
+            Blocks.Add(new TableSpec(rows));
+            return this;
+        }
     }
 
     public static byte[] Build(DocSpec spec)
@@ -142,6 +151,10 @@ internal static class DocxFixtures
 
                     case AltTextBoxSpec altTextBox:
                         body.Append(AlternateContentTextBoxXml(altTextBox.Text));
+                        break;
+
+                    case TableSpec tableSpec:
+                        body.Append(TableXml(tableSpec));
                         break;
                 }
             }
@@ -259,6 +272,20 @@ internal static class DocxFixtures
            </mc:AlternateContent>
          </w:r></w:p>
          """;
+
+    private static string TableXml(TableSpec table)
+    {
+        var columns = table.Rows.Count == 0 ? 0 : table.Rows.Max(r => r.Count);
+        var grid = string.Concat(Enumerable.Repeat("<w:gridCol w:w=\"2000\"/>", columns));
+        var rows = string.Concat(table.Rows.Select(row =>
+        {
+            var cells = string.Concat(row.Select(cell =>
+                $"<w:tc><w:tcPr/><w:p><w:r><w:t xml:space=\"preserve\">{Escape(cell)}</w:t></w:r></w:p></w:tc>"));
+            return $"<w:tr>{cells}</w:tr>";
+        }));
+
+        return $"<w:tbl><w:tblPr/><w:tblGrid>{grid}</w:tblGrid>{rows}</w:tbl>";
+    }
 
     private static string Escape(string text) => new System.Xml.Linq.XText(text).ToString();
 }

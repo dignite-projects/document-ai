@@ -381,6 +381,43 @@ public class DocxExtractor_Tests
             Arg.Any<Stream>(), Arg.Any<OcrOptions>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Renders_table_as_a_markdown_table()
+    {
+        var docx = DocxFixtures.Build(new DocxFixtures.DocSpec()
+            .Table(new IReadOnlyList<string>[]
+            {
+                new[] { "Name", "Amount" },
+                new[] { "Widget", "42" }
+            }));
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(docx), DocxContext());
+
+        result.Markdown.ShouldContain("| Name | Amount |");
+        result.Markdown.ShouldContain("| --- | --- |");
+        result.Markdown.ShouldContain("| Widget | 42 |");
+    }
+
+    [Fact]
+    public async Task Renders_a_ragged_table_as_a_rectangular_markdown_table()
+    {
+        // First row is a single cell; data rows have 3 columns. The separator and every row must use the
+        // widest row's column count, or the Markdown table renders broken (mirrors the PPTX renderer).
+        var docx = DocxFixtures.Build(new DocxFixtures.DocSpec()
+            .Table(new IReadOnlyList<string>[]
+            {
+                new[] { "Summary" },
+                new[] { "A", "B", "C" },
+                new[] { "1", "2", "3" }
+            }));
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(docx), DocxContext());
+
+        result.Markdown.ShouldContain("| --- | --- | --- |");
+        result.Markdown.ShouldContain("| Summary |  |  |");
+        result.Markdown.ShouldContain("| A | B | C |");
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var count = 0;

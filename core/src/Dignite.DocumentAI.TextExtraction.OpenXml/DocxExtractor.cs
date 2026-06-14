@@ -19,8 +19,8 @@ namespace Dignite.DocumentAI.TextExtraction.OpenXml;
 
 /// <summary>
 /// OpenXML-based Markdown provider for Word documents (#308, Phase 3 of #299). Owns the full <c>.docx</c>
-/// parsing pass so it can rebuild the document's structure (headings, and — in later #308 build-order
-/// steps — tables, lists, inline formatting, hyperlinks) <b>and</b> extract embedded raster images,
+/// parsing pass so it can rebuild the document's structure (headings, tables, and — in later #308
+/// build-order steps — lists, inline formatting, hyperlinks) <b>and</b> extract embedded raster images,
 /// transcribe each through the host-selected <see cref="IOcrProvider"/>, and inline the transcription into
 /// the Markdown at its reading position. This closes the silent-image-loss gap where embedded figures in
 /// Word documents were degraded to a constant <c>![image](embedded-image)</c> placeholder — the exact
@@ -58,10 +58,10 @@ namespace Dignite.DocumentAI.TextExtraction.OpenXml;
 /// hatch — it is <b>not</b> silently re-routed to ElBruno at runtime.
 /// </para>
 /// <para>
-/// <b>Current scope (walking skeleton).</b> This step ships headings + flowing paragraph text + embedded
-/// raster image transcription end-to-end. Subsequent #308 steps add: tables (<c>w:tbl</c> → Markdown
-/// table), lists (<c>w:numPr</c> → bullet/ordered with nesting), inline formatting (bold/italic),
-/// hyperlinks, and charts (<c>ChartPart</c> → Markdown table, reusing <see cref="ChartRenderer"/>).
+/// <b>Current scope.</b> Headings, flowing paragraph text, embedded raster image transcription, and tables
+/// (<c>w:tbl</c> → Markdown table). Subsequent #308 steps add: lists (<c>w:numPr</c> → bullet/ordered with
+/// nesting), inline formatting (bold/italic), hyperlinks, and charts (<c>ChartPart</c> → Markdown table,
+/// reusing <see cref="ChartRenderer"/>).
 /// </para>
 /// </summary>
 [ExposeServices(typeof(IMarkdownTextProvider))]
@@ -206,10 +206,10 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
     }
 
     /// <summary>
-    /// Renders one top-level body element into <paramref name="blocks"/>. This step handles paragraphs
-    /// (headings via <see cref="WordStyleMap"/> + flowing text + embedded images). Tables, content-control
-    /// (<c>w:sdt</c>) recursion, and chart drawings are added in later #308 build-order steps; until then
-    /// non-paragraph elements are skipped.
+    /// Renders one top-level body element into <paramref name="blocks"/>. Handles paragraphs (headings via
+    /// <see cref="WordStyleMap"/> + flowing text + embedded images) and tables
+    /// (<see cref="WordTableRenderer"/>). Content-control (<c>w:sdt</c>) recursion and chart drawings are
+    /// added in later #308 build-order steps; other elements are skipped.
     /// </summary>
     protected virtual async Task RenderBlockAsync(
         DocumentFormat.OpenXml.OpenXmlElement element,
@@ -224,7 +224,21 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
                 await ProcessParagraphAsync(paragraph, mainPart, blocks, state, cancellationToken);
                 break;
 
-            // TODO(#308 later steps): W.Table -> WordTableRenderer; W.SdtBlock -> recurse into content.
+            case W.Table table:
+            {
+                // Native table -> Markdown table (pure structured extraction, no OCR). A null/empty render
+                // (layout-only or empty grid) is simply not added; a parse fault is caught by the caller's
+                // per-block try/catch and tripped as FailedBlocks.
+                var renderedTable = WordTableRenderer.Render(table);
+                if (!string.IsNullOrWhiteSpace(renderedTable))
+                {
+                    blocks.Add(renderedTable!);
+                }
+
+                break;
+            }
+
+            // TODO(#308 later steps): W.SdtBlock -> recurse into content; chart drawings -> ChartRenderer.
         }
     }
 
