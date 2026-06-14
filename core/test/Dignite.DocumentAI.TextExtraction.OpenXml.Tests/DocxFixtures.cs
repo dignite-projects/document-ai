@@ -5,6 +5,7 @@ using System.Text;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using C = DocumentFormat.OpenXml.Drawing.Charts;
 
 namespace Dignite.DocumentAI.TextExtraction.OpenXml;
 
@@ -25,8 +26,10 @@ internal static class DocxFixtures
     private const string NsMc = "http://schemas.openxmlformats.org/markup-compatibility/2006";
     private const string NsWps = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
     private const string NsV = "urn:schemas-microsoft-com:vml";
+    private const string NsC = "http://schemas.openxmlformats.org/drawingml/2006/chart";
     private const string PictureUri = "http://schemas.openxmlformats.org/drawingml/2006/picture";
     private const string WpsUri = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+    private const string ChartUri = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 
     /// <summary>An image to embed: raster bytes, MIME type, optional alt-text, EMU display extent.</summary>
     public sealed record ImageSpec(
@@ -81,6 +84,9 @@ internal static class DocxFixtures
 
     /// <summary>A list item: text, zero-based nesting level, and whether the list is ordered (vs a bullet).</summary>
     public sealed record ListItemSpec(string Text, int Level, bool Ordered) : BlockSpec;
+
+    /// <summary>A chart: title + category labels + a single named series of values (aligned to the categories).</summary>
+    public sealed record ChartSpec(string Title, IReadOnlyList<string> Categories, string SeriesName, IReadOnlyList<string> Values) : BlockSpec;
 
     public sealed class DocSpec
     {
@@ -172,6 +178,12 @@ internal static class DocxFixtures
             Blocks.Add(new ListItemSpec(text, level, Ordered: true));
             return this;
         }
+
+        public DocSpec Chart(string title, IReadOnlyList<string> categories, string seriesName, IReadOnlyList<string> values)
+        {
+            Blocks.Add(new ChartSpec(title, categories, seriesName, values));
+            return this;
+        }
     }
 
     public static byte[] Build(DocSpec spec)
@@ -193,6 +205,7 @@ internal static class DocxFixtures
             var body = new StringBuilder();
             var imageRel = 0;
             var hyperlinkRel = 0;
+            var chartRel = 0;
             foreach (var block in spec.Blocks)
             {
                 switch (block)
@@ -241,6 +254,14 @@ internal static class DocxFixtures
 
                     case ListItemSpec listItem:
                         body.Append(ListItemXml(listItem));
+                        break;
+
+                    case ChartSpec chart:
+                        var chartRelId = $"rIdChart{chartRel++}";
+                        var chartPart = mainPart.AddNewPart<ChartPart>(chartRelId);
+                        chartPart.ChartSpace = new C.ChartSpace(ChartSpaceXml(chart));
+                        chartPart.ChartSpace.Save();
+                        body.Append(ChartDrawingXml(chartRelId));
                         break;
                 }
             }
@@ -403,6 +424,46 @@ internal static class DocxFixtures
            <w:ins w:id="1" w:author="t" w:date="2024-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">{Escape(spec.Inserted)}</w:t></w:r></w:ins>
            <w:del w:id="2" w:author="t" w:date="2024-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">{Escape(spec.Deleted)}</w:delText></w:r></w:del>
          </w:p>
+         """;
+
+    private static string ChartSpaceXml(ChartSpec chart)
+    {
+        var title = chart.Title is { Length: > 0 }
+            ? $"<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{Escape(chart.Title)}</a:t></a:r></a:p></c:rich></c:tx></c:title>"
+            : string.Empty;
+        var cats = string.Concat(chart.Categories.Select((c, i) => $"<c:pt idx=\"{i}\"><c:v>{Escape(c)}</c:v></c:pt>"));
+        var vals = string.Concat(chart.Values.Select((v, i) => $"<c:pt idx=\"{i}\"><c:v>{Escape(v)}</c:v></c:pt>"));
+
+        return $"""
+                <c:chartSpace xmlns:c="{NsC}" xmlns:a="{NsA}" xmlns:r="{NsR}">
+                  <c:chart>
+                    {title}
+                    <c:plotArea><c:layout/><c:barChart><c:barDir val="col"/>
+                      <c:ser>
+                        <c:idx val="0"/><c:order val="0"/>
+                        <c:tx><c:strRef><c:f>n</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>{Escape(chart.SeriesName)}</c:v></c:pt></c:strCache></c:strRef></c:tx>
+                        <c:cat><c:strRef><c:f>c</c:f><c:strCache><c:ptCount val="{chart.Categories.Count}"/>{cats}</c:strCache></c:strRef></c:cat>
+                        <c:val><c:numRef><c:f>v</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="{chart.Values.Count}"/>{vals}</c:numCache></c:numRef></c:val>
+                      </c:ser>
+                    </c:barChart></c:plotArea>
+                  </c:chart>
+                </c:chartSpace>
+                """;
+    }
+
+    private static string ChartDrawingXml(string relId) =>
+        $"""
+         <w:p><w:r><w:drawing>
+           <wp:inline>
+             <wp:extent cx="4000000" cy="3000000"/>
+             <wp:docPr id="200" name="Chart 1"/>
+             <a:graphic>
+               <a:graphicData uri="{ChartUri}">
+                 <c:chart xmlns:c="{NsC}" xmlns:r="{NsR}" r:id="{relId}"/>
+               </a:graphicData>
+             </a:graphic>
+           </wp:inline>
+         </w:drawing></w:r></w:p>
          """;
 
     private static string NumberingXml()

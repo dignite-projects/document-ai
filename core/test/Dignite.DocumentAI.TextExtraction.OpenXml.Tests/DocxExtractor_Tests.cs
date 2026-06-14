@@ -529,6 +529,24 @@ public class DocxExtractor_Tests
     }
 
     [Fact]
+    public async Task Renders_chart_backing_data_as_a_markdown_table()
+    {
+        var docx = DocxFixtures.Build(new DocxFixtures.DocSpec()
+            .Chart("Quarterly Revenue", new[] { "Q1", "Q2" }, "Revenue", new[] { "10", "20" }));
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(docx), DocxContext());
+
+        result.Markdown.ShouldContain("Quarterly Revenue");
+        result.Markdown.ShouldContain("| Category | Revenue |");
+        result.Markdown.ShouldContain("| Q1 | 10 |");
+        result.Markdown.ShouldContain("| Q2 | 20 |");
+        result.IsComplete.ShouldBeTrue();
+        // Charts are pure structured extraction from the format — no OCR call.
+        await _ocr.DidNotReceive().RecognizeAsync(
+            Arg.Any<Stream>(), Arg.Any<OcrOptions>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Renders_bullet_list_items()
     {
         var docx = DocxFixtures.Build(new DocxFixtures.DocSpec()

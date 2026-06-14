@@ -14,7 +14,7 @@ public class DocxIncompleteReason_Tests
     [Fact]
     public void Null_when_nothing_was_lost()
     {
-        DocxExtractor.BuildIncompleteReason(0, 0, 0, 0, 0, 0).ShouldBeNull();
+        DocxExtractor.BuildIncompleteReason(0, 0, 0, 0, 0, 0, 0).ShouldBeNull();
     }
 
     [Fact]
@@ -22,7 +22,7 @@ public class DocxIncompleteReason_Tests
     {
         var reason = DocxExtractor.BuildIncompleteReason(
             failedBlocks: 1, droppedByCap: 2, undecodable: 3, oversizedImages: 7,
-            truncatedOcr: 4, failedFigureOcr: 5);
+            truncatedOcr: 4, failedFigureOcr: 5, chartFailures: 6);
 
         reason.ShouldNotBeNull();
         reason!.ShouldContain("1 document block");
@@ -31,6 +31,7 @@ public class DocxIncompleteReason_Tests
         reason.ShouldContain("size cap");
         reason.ShouldContain("5 embedded image");   // failed OCR
         reason.ShouldContain("4 image transcription");
+        reason.ShouldContain("6 chart");
         reason.ShouldContain("2 image");            // cap
         reason.ShouldEndWith(".");
     }
@@ -38,7 +39,7 @@ public class DocxIncompleteReason_Tests
     [Fact]
     public void Single_cause_reads_cleanly()
     {
-        DocxExtractor.BuildIncompleteReason(0, 0, 1, 0, 0, 0)
+        DocxExtractor.BuildIncompleteReason(0, 0, 1, 0, 0, 0, 0)
             .ShouldBe("1 embedded image(s) could not be decoded to a supported raster format (e.g. EMF/WMF vector).");
     }
 }

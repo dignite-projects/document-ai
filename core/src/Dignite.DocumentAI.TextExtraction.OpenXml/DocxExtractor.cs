@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Volo.Abp.DependencyInjection;
 using A = DocumentFormat.OpenXml.Drawing;
+using C = DocumentFormat.OpenXml.Drawing.Charts;
 using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 using W = DocumentFormat.OpenXml.Wordprocessing;
 
@@ -19,7 +20,7 @@ namespace Dignite.DocumentAI.TextExtraction.OpenXml;
 
 /// <summary>
 /// OpenXML-based Markdown provider for Word documents (#308, Phase 3 of #299). Owns the full <c>.docx</c>
-/// parsing pass so it can rebuild the document's structure (headings, tables, inline formatting,
+/// parsing pass so it can rebuild the document's structure (headings, tables, charts, inline formatting,
 /// hyperlinks, lists) <b>and</b> extract embedded raster images,
 /// transcribe each through the host-selected <see cref="IOcrProvider"/>, and inline the transcription into
 /// the Markdown at its reading position. This closes the silent-image-loss gap where embedded figures in
@@ -60,8 +61,9 @@ namespace Dignite.DocumentAI.TextExtraction.OpenXml;
 /// <para>
 /// <b>Current scope.</b> Headings, flowing paragraph text with inline formatting (bold/italic) and
 /// hyperlinks, lists (<c>w:numPr</c> → bullet/ordered with nesting), text boxes (<c>w:txbxContent</c> →
-/// text block), embedded raster image transcription, and tables (<c>w:tbl</c> → Markdown table). The
-/// remaining #308 step adds charts (<c>ChartPart</c> → Markdown table, reusing <see cref="ChartRenderer"/>).
+/// text block), embedded raster image transcription, tables (<c>w:tbl</c> → Markdown table), and charts
+/// (<c>ChartPart</c> backing data → Markdown table, reusing <see cref="ChartRenderer"/>). This completes the
+/// structural rebuild for #308.
 /// </para>
 /// </summary>
 [ExposeServices(typeof(IMarkdownTextProvider))]
@@ -184,7 +186,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
             // null iff nothing was lost; completeness derives from it (no parallel hand-synced predicate).
             var incompleteReason = BuildIncompleteReason(
                 state.FailedBlocks, state.DroppedByCap, state.Undecodable, state.OversizedImages,
-                state.TruncatedOcr, state.FailedFigureOcr);
+                state.TruncatedOcr, state.FailedFigureOcr, state.ChartFailures);
             var complete = incompleteReason is null;
             if (!complete)
             {
@@ -211,8 +213,9 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
     /// <summary>
     /// Renders one top-level body element into <paramref name="blocks"/>. Handles paragraphs (headings via
     /// <see cref="WordStyleMap"/> + flowing text + embedded images) and tables
-    /// (<see cref="WordTableRenderer"/>). Content-control (<c>w:sdt</c>) recursion and chart drawings are
-    /// added in later #308 build-order steps; other elements are skipped.
+    /// (<see cref="WordTableRenderer"/>). Charts and images ride the paragraph's drawings (handled in
+    /// <see cref="ProcessParagraphAsync"/>); content-control (<c>w:sdt</c>) recursion is a later step, and
+    /// other top-level elements are skipped.
     /// </summary>
     protected virtual async Task RenderBlockAsync(
         DocumentFormat.OpenXml.OpenXmlElement element,
@@ -241,7 +244,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
                 break;
             }
 
-            // TODO(#308 later steps): W.SdtBlock -> recurse into content; chart drawings -> ChartRenderer.
+            // TODO(#308 later step): W.SdtBlock -> recurse into content controls.
         }
     }
 
@@ -335,8 +338,9 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         var embed = drawing.Descendants<A.Blip>().FirstOrDefault()?.Embed?.Value;
         if (string.IsNullOrEmpty(embed))
         {
-            // No image blip: a chart / SmartArt / diagram drawing. Charts are handled in a later #308 step;
-            // SmartArt/diagrams are an accepted blind spot. Not counted against completeness.
+            // No image blip: a chart (render its backing data as a table) or SmartArt/diagram/OLE (an
+            // accepted blind spot). Charts go through the format-agnostic ChartRenderer — no OCR / vision.
+            HandleChart(drawing, mainPart, blocks, state);
             return;
         }
 
@@ -440,6 +444,43 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
             : "**" + MarkdownCell.Inline(caption) + "**\n\n" + transcription;
 
         blocks.Add(markdown);
+    }
+
+    /// <summary>
+    /// Renders an embedded chart's backing data as a Markdown table via the format-agnostic
+    /// <see cref="ChartRenderer"/> (pure structured extraction — no OCR / vision / LLM). A chart with no
+    /// renderable category/value cache (e.g. scatter/bubble) or an unreadable part trips the completeness
+    /// signal (#268); a non-chart drawing with no blip (SmartArt / diagram / OLE) is an accepted blind spot.
+    /// </summary>
+    private void HandleChart(W.Drawing drawing, MainDocumentPart mainPart, List<string> blocks, ExtractionState state)
+    {
+        var chartId = drawing.Descendants<C.ChartReference>().FirstOrDefault()?.Id?.Value;
+        if (string.IsNullOrEmpty(chartId))
+        {
+            // SmartArt / diagram / OLE object: accepted blind spot, not counted against completeness.
+            return;
+        }
+
+        string? table;
+        try
+        {
+            var part = mainPart.GetPartById(chartId);
+            table = part is ChartPart chartPart ? ChartRenderer.Render(chartPart) : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogWarning(ex, "Failed to render an embedded chart; skipping it.");
+            table = null;
+        }
+
+        if (string.IsNullOrWhiteSpace(table))
+        {
+            // Unsupported chart family (scatter/bubble) or an unreadable cache — count it as lost (#268).
+            state.ChartFailures++;
+            return;
+        }
+
+        blocks.Add(table!);
     }
 
     /// <summary>Whether the drawing's display size is below the decorative threshold (skipped silently).</summary>
@@ -555,7 +596,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
     /// path lands in a later #308 build-order step.
     /// </summary>
     internal static string? BuildIncompleteReason(
-        int failedBlocks, int droppedByCap, int undecodable, int oversizedImages, int truncatedOcr, int failedFigureOcr)
+        int failedBlocks, int droppedByCap, int undecodable, int oversizedImages, int truncatedOcr, int failedFigureOcr, int chartFailures)
     {
         var parts = new List<string>();
         if (failedBlocks > 0)
@@ -583,6 +624,11 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
             parts.Add($"{truncatedOcr} image transcription(s) were truncated or discarded by the OCR provider");
         }
 
+        if (chartFailures > 0)
+        {
+            parts.Add($"{chartFailures} chart(s) could not be rendered as a table");
+        }
+
         if (droppedByCap > 0)
         {
             parts.Add($"{droppedByCap} image(s) were skipped after reaching the per-file image cap");
@@ -601,6 +647,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         public int OversizedImages;
         public int TruncatedOcr;
         public int FailedFigureOcr;
+        public int ChartFailures;
         public IList<string> LanguageHints = new List<string>();
     }
 }
