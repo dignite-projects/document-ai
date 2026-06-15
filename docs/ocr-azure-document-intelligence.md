@@ -2,11 +2,13 @@
 
 > One of Document AI's OCR providers. Overview & comparison: [text-extraction.md](text-extraction.md).
 
+> 🧪 **Status: awaiting real-world validation.** The provider is implemented and unit-tested (at the mocked SDK boundary), but has not yet been run against a live Azure Document Intelligence resource. If you use Azure DI, testing and feedback are very welcome — see [#327](https://github.com/dignite-projects/document-ai/issues/327).
+
 Recommended for production workloads where data is allowed to leave the network and the team prefers not to operate a sidecar.
 
 1. Create an Azure AI Document Intelligence resource (F0 for trial, S0 for production).
 2. Copy the **Endpoint** and **API Key**.
-3. In `host/src/DocumentAIHostModule.cs`, swap `DocumentAIPaddleOcrModule` for `DocumentAIAzureDocumentIntelligenceModule`. Re-enable the matching `ProjectReference` in `host/src/Dignite.DocumentAI.Host.csproj`.
+3. In `host/src/DocumentAIHostModule.cs`, swap `DocumentAIVisionLlmOcrModule` (the current default) for `DocumentAIAzureDocumentIntelligenceModule`, and re-enable the matching `ProjectReference` in `host/src/Dignite.DocumentAI.Host.csproj`. You can also drop the Vision-LLM vision `IChatClient` block in `ConfigureAI` — it fail-fasts on `DocumentAI:VisionOcrModelId`.
 4. Add to `host/src/appsettings.Development.json` (or `appsettings.Production.json`):
 
 ```json
