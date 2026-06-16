@@ -46,3 +46,17 @@
     margin-top: 0.75rem;
   }
 }
+
+.stat-card {
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .stat-label {
+    margin-top: 0.25rem;
+    font-size: 0.8125rem;
+    color: var(--bs-secondary-color, #6c757d);
+  }
+}

@@ -18,6 +18,7 @@ import {
   DOCUMENT_AI_PERMISSIONS,
 } from '@dignite/document-ai';
 import { ClientPagedResult, configureEntityTable, DOCUMENT_AI_TABLES } from '../../shared/extensible-table';
+import { formatBytes } from '../../shared/format-bytes';
 
 @Component({
   selector: 'lib-document-recycle-bin',
@@ -94,7 +95,7 @@ export class DocumentRecycleBinComponent implements OnInit {
         sortable: false,
         columnWidth: 140,
         valueResolver: data =>
-          of(`<span class="text-muted small">${escapeHtmlChars(this.formatFileSize(data.record.fileOrigin?.fileSize ?? 0))}</span>`),
+          of(`<span class="text-muted small">${escapeHtmlChars(formatBytes(data.record.fileOrigin?.fileSize))}</span>`),
       }),
       EntityProp.create<DocumentListItemDto>({
         type: ePropType.String,
@@ -182,12 +183,6 @@ export class DocumentRecycleBinComponent implements OnInit {
 
   isImage(doc: DocumentListItemDto): boolean {
     return doc.fileOrigin?.contentType?.startsWith('image/') ?? false;
-  }
-
-  formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   private formatDateTime(value: string | null | undefined): string {
