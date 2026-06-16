@@ -164,6 +164,51 @@ public class EfCoreDocumentRepository
             .ToListAsync(GetCancellationToken(cancellationToken));
     }
 
+    public virtual async Task<DocumentStatisticsModel> GetStatisticsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var dbSet = await GetDbSetAsync();
+
+        // A single GROUP BY pass yields per-status document counts, per-status byte sums, and the needs-review
+        // tally folded in as a conditional sum — one DB round-trip. The ambient IMultiTenant + ISoftDelete global
+        // filters keep this to the current layer's non-deleted documents (no filter disabling, no hand-written
+        // tenant predicate). FileOrigin is an owned value object mapped to the same table, so Sum(FileOrigin.FileSize)
+        // translates to a plain SQL SUM.
+        //
+        // The needs-review condition mirrors the canonical DocumentReviewQueries.RequiresAttention
+        // (ReviewReasons != None && ReviewDisposition != Rejected, shared with DocumentAppService.ApplyFilter). It is
+        // inlined here rather than reusing that Expression because EF Core cannot fold a shared Expression into a
+        // grouped projection; keep the two in sync.
+        var byStatus = await dbSet
+            .GroupBy(d => d.LifecycleStatus)
+            .Select(g => new
+            {
+                Status = g.Key,
+                Count = g.LongCount(),
+                Bytes = g.Sum(d => d.FileOrigin.FileSize),
+                NeedsReview = g.Sum(d =>
+                    d.ReviewReasons != DocumentReviewReasons.None
+                    && d.ReviewDisposition != DocumentReviewDisposition.Rejected
+                        ? 1L
+                        : 0L)
+            })
+            .ToListAsync(GetCancellationToken(cancellationToken));
+
+        long CountOf(DocumentLifecycleStatus status)
+            => byStatus.FirstOrDefault(b => b.Status == status)?.Count ?? 0;
+
+        return new DocumentStatisticsModel
+        {
+            TotalCount = byStatus.Sum(b => b.Count),
+            UploadedCount = CountOf(DocumentLifecycleStatus.Uploaded),
+            ProcessingCount = CountOf(DocumentLifecycleStatus.Processing),
+            ReadyCount = CountOf(DocumentLifecycleStatus.Ready),
+            FailedCount = CountOf(DocumentLifecycleStatus.Failed),
+            NeedsReviewCount = byStatus.Sum(b => b.NeedsReview),
+            TotalStorageBytes = byStatus.Sum(b => b.Bytes)
+        };
+    }
+
     /// <summary>
     /// Shared scope predicate for bulk reprocessing (#289). <c>IMultiTenant</c> + <c>ISoftDelete</c> global filters are applied
     /// automatically by ambient state, so trash / cross-tenant documents are out of scope. Always requires completed text extraction

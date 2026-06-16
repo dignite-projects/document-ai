@@ -740,9 +740,10 @@ public class DocumentAppService : DocumentAIAppService, IDocumentAppService
 
         // Operator review queue (#284): any unresolved review reason (unresolved classification + missing required fields, one queue) and not rejected.
         // Rejected documents have already been handled by the operator, so they are not in the work queue; they can still be queried separately by ReviewDisposition=Rejected.
+        // Uses the canonical DocumentReviewQueries.RequiresAttention predicate, shared with the overview
+        // needs-review statistic (#333) so the queue and the count never drift.
         if (input.HasReviewReasons == true)
-            query = query.Where(d => d.ReviewReasons != DocumentReviewReasons.None
-                                  && d.ReviewDisposition != DocumentReviewDisposition.Rejected);
+            query = query.Where(DocumentReviewQueries.RequiresAttention);
 
         return query;
     }

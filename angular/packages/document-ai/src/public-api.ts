@@ -13,6 +13,7 @@ export * from './lib/services/document-upload.service';
 
 // --- generated proxy: services ---
 export * from './lib/proxy/http-api/documents/document.service';
+export * from './lib/proxy/http-api/documents/document-statistics.service';
 export * from './lib/proxy/http-api/documents/cabinets/cabinet.service';
 export * from './lib/proxy/http-api/documents/document-types/document-type.service';
 export * from './lib/proxy/http-api/documents/exports/export-template.service';

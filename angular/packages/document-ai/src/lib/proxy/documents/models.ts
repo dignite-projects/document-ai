@@ -52,6 +52,16 @@ export interface DocumentListItemDto extends EntityDto<string> {
   extractedFields?: Record<string, any> | null;
 }
 
+export interface DocumentStatisticsDto {
+  totalCount?: number;
+  uploadedCount?: number;
+  processingCount?: number;
+  readyCount?: number;
+  failedCount?: number;
+  needsReviewCount?: number;
+  totalStorageBytes?: number;
+}
+
 export interface FileOriginDto {
   uploadedByUserName?: string;
   originalFileName?: string | null;

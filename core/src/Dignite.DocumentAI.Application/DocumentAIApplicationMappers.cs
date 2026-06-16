@@ -168,3 +168,14 @@ public partial class CabinetToDtoMapper : MapperBase<Cabinet, CabinetDto>
     public override partial CabinetDto Map(Cabinet source);
     public override partial void Map(Cabinet source, CabinetDto destination);
 }
+
+/// <summary>
+/// DocumentStatisticsModel -> DocumentStatisticsDto (#333). A flat scalar projection (overview counts +
+/// total storage bytes); all property names match 1:1 so Mapperly maps them directly with no lookup.
+/// </summary>
+[Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
+public partial class DocumentStatisticsToDtoMapper : MapperBase<DocumentStatisticsModel, DocumentStatisticsDto>
+{
+    public override partial DocumentStatisticsDto Map(DocumentStatisticsModel source);
+    public override partial void Map(DocumentStatisticsModel source, DocumentStatisticsDto destination);
+}

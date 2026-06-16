@@ -15,6 +15,106 @@
       </a>
     </div>
 
+    <!-- Overview statistics (#333): loading / error / empty / data states. -->
+    <section class="mb-4">
+      <h2 class="h5 mb-3">{{ '::Document:Home:Statistics:Title' | abpLocalization }}</h2>
+
+      @if (statsLoading()) {
+        <div class="row g-3">
+          @for (slot of skeletonSlots; track slot) {
+            <div class="col-6 col-md-4 col-xl-2">
+              <div class="card shadow-sm h-100 stat-card placeholder-glow">
+                <div class="card-body">
+                  <span class="placeholder col-5 d-block mb-2"></span>
+                  <span class="placeholder col-8"></span>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+      } @else if (statsError()) {
+        <div
+          class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2 mb-0"
+          role="alert"
+        >
+          <span>
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            {{ '::Document:Home:Statistics:LoadFailed' | abpLocalization }}
+          </span>
+          <button type="button" class="btn btn-sm btn-outline-secondary" (click)="loadStatistics()">
+            {{ '::Refresh' | abpLocalization }}
+          </button>
+        </div>
+      } @else if (isEmpty()) {
+        <div class="card shadow-sm">
+          <div class="card-body text-center text-muted py-4">
+            <i class="fas fa-chart-bar d-block mb-2 fs-4"></i>
+            {{ '::Document:Home:Statistics:Empty' | abpLocalization }}
+          </div>
+        </div>
+      } @else {
+        <div class="row g-3">
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card shadow-sm h-100 stat-card">
+              <div class="card-body">
+                <div class="stat-value">{{ stats()?.totalCount ?? 0 }}</div>
+                <div class="stat-label">{{ '::Document:Home:Statistics:Total' | abpLocalization }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card shadow-sm h-100 stat-card">
+              <div class="card-body">
+                <div class="stat-value text-info">{{ processingCount() }}</div>
+                <div class="stat-label">{{ '::Document:Home:Statistics:Processing' | abpLocalization }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card shadow-sm h-100 stat-card">
+              <div class="card-body">
+                <div class="stat-value text-success">{{ stats()?.readyCount ?? 0 }}</div>
+                <div class="stat-label">{{ '::Document:Home:Statistics:Ready' | abpLocalization }}</div>
+              </div>
+            </div>
+          </div>
+
+          @if (canReview) {
+            <div class="col-6 col-md-4 col-xl-2">
+              <div class="card shadow-sm h-100 stat-card">
+                <div class="card-body">
+                  <div class="stat-value text-warning">{{ stats()?.needsReviewCount ?? 0 }}</div>
+                  <div class="stat-label">{{ '::Document:Home:Statistics:NeedsReview' | abpLocalization }}</div>
+                </div>
+              </div>
+            </div>
+          }
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card shadow-sm h-100 stat-card">
+              <div class="card-body">
+                <div class="stat-value" [class.text-danger]="(stats()?.failedCount ?? 0) > 0">
+                  {{ stats()?.failedCount ?? 0 }}
+                </div>
+                <div class="stat-label">{{ '::Document:Home:Statistics:Failed' | abpLocalization }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-6 col-md-4 col-xl-2">
+            <div class="card shadow-sm h-100 stat-card">
+              <div class="card-body">
+                <div class="stat-value">{{ formatBytes(stats()?.totalStorageBytes) }}</div>
+                <div class="stat-label">{{ '::Document:Home:Statistics:Storage' | abpLocalization }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+    </section>
+
     <div class="row g-4 align-items-stretch">
       <div class="col-xl-8">
         @if (canUpload) {

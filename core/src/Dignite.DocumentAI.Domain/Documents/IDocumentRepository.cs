@@ -108,4 +108,20 @@ public interface IDocumentRepository : IRepository<Document, Guid>
         Guid? afterId,
         int maxCount,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Aggregate overview statistics for the current ambient layer (#333): per-lifecycle document counts,
+    /// the needs-review count, and the total original uploaded size (sum of <c>FileOrigin.FileSize</c>).
+    /// <para>
+    /// <c>IMultiTenant</c> + <c>ISoftDelete</c> global filters apply automatically by ambient state, so the result
+    /// covers only the current layer's non-deleted documents (active tenant -> that tenant; no tenant -> Host).
+    /// Neither filter is disabled, keeping statistics within a single layer and excluding the recycle bin.
+    /// </para>
+    /// <para>
+    /// Needs-review uses the canonical review-queue predicate
+    /// (<c>ReviewReasons != None &amp;&amp; ReviewDisposition != Rejected</c>, shared with <c>DocumentAppService.ApplyFilter</c>);
+    /// it overlaps the lifecycle buckets and is not part of the <c>TotalCount</c> partition.
+    /// </para>
+    /// </summary>
+    Task<DocumentStatisticsModel> GetStatisticsAsync(CancellationToken cancellationToken = default);
 }

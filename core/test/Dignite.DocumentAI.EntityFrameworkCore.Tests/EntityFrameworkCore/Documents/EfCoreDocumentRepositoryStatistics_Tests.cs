@@ -1,0 +1,149 @@
+using System;
+using System.Threading.Tasks;
+using Dignite.DocumentAI.Documents;
+using Shouldly;
+using Volo.Abp.Guids;
+using Volo.Abp.MultiTenancy;
+using Xunit;
+
+namespace Dignite.DocumentAI.EntityFrameworkCore.Documents;
+
+/// <summary>
+/// Integration tests for <see cref="IDocumentRepository.GetStatisticsAsync"/> (#333): per-lifecycle counts,
+/// needs-review count, storage sum, recycle-bin exclusion, and current-layer (tenant) scoping.
+/// </summary>
+public class EfCoreDocumentRepositoryStatistics_Tests : DocumentAIEntityFrameworkCoreTestBase
+{
+    private readonly IDocumentRepository _documentRepository;
+    private readonly IGuidGenerator _guidGenerator;
+    private readonly ICurrentTenant _currentTenant;
+
+    public EfCoreDocumentRepositoryStatistics_Tests()
+    {
+        _documentRepository = GetRequiredService<IDocumentRepository>();
+        _guidGenerator = GetRequiredService<IGuidGenerator>();
+        _currentTenant = GetRequiredService<ICurrentTenant>();
+    }
+
+    [Fact]
+    public async Task GetStatistics_Returns_Zeroes_When_No_Documents()
+    {
+        var stats = await WithUnitOfWorkAsync(() => _documentRepository.GetStatisticsAsync());
+
+        stats.TotalCount.ShouldBe(0);
+        stats.UploadedCount.ShouldBe(0);
+        stats.ProcessingCount.ShouldBe(0);
+        stats.ReadyCount.ShouldBe(0);
+        stats.FailedCount.ShouldBe(0);
+        stats.NeedsReviewCount.ShouldBe(0);
+        stats.TotalStorageBytes.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task GetStatistics_Counts_By_Lifecycle_NeedsReview_And_Sums_Storage()
+    {
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await SeedDocAsync(DocumentLifecycleStatus.Uploaded, 100);
+            await SeedDocAsync(DocumentLifecycleStatus.Processing, 200);
+            await SeedDocAsync(DocumentLifecycleStatus.Ready, 300);
+            await SeedDocAsync(DocumentLifecycleStatus.Ready, 400);
+            await SeedDocAsync(DocumentLifecycleStatus.Failed, 500);
+            // Needs review: an unresolved reason is set and it is not rejected; lifecycle stays Uploaded.
+            await SeedDocAsync(DocumentLifecycleStatus.Uploaded, 50, needsReview: true);
+            // Rejected: carries a reason but disposition == Rejected, so it does NOT count as needs-review;
+            // RejectReview also transitions it to Failed.
+            await SeedDocAsync(DocumentLifecycleStatus.Failed, 60, rejected: true);
+
+            // Soft-deleted Ready doc: excluded from every count and the storage sum.
+            var deleted = NewDocument(9999);
+            deleted.TransitionLifecycle(DocumentLifecycleStatus.Ready);
+            await _documentRepository.InsertAsync(deleted, autoSave: true);
+            await _documentRepository.DeleteAsync(deleted.Id);
+        });
+
+        var stats = await WithUnitOfWorkAsync(() => _documentRepository.GetStatisticsAsync());
+
+        stats.TotalCount.ShouldBe(7);            // 8 active inserts - 1 soft-deleted
+        stats.UploadedCount.ShouldBe(2);         // plain Uploaded + needs-review (still Uploaded)
+        stats.ProcessingCount.ShouldBe(1);
+        stats.ReadyCount.ShouldBe(2);
+        stats.FailedCount.ShouldBe(2);           // explicit Failed + rejected (-> Failed)
+        stats.NeedsReviewCount.ShouldBe(1);      // the rejected one is excluded
+        stats.TotalStorageBytes.ShouldBe(1610);  // 100+200+300+400+500+50+60
+    }
+
+    [Fact]
+    public async Task GetStatistics_Is_Scoped_To_Current_Layer()
+    {
+        var tenantId = Guid.NewGuid();
+
+        // Host layer: one Ready document.
+        await WithUnitOfWorkAsync(() => SeedDocAsync(DocumentLifecycleStatus.Ready, 100));
+
+        // Tenant layer: two Ready documents.
+        await WithUnitOfWorkAsync(async () =>
+        {
+            using (_currentTenant.Change(tenantId))
+            {
+                await SeedDocAsync(DocumentLifecycleStatus.Ready, 200);
+                await SeedDocAsync(DocumentLifecycleStatus.Ready, 300);
+            }
+        });
+
+        // Host sees only its own document; no cross-layer union.
+        var hostStats = await WithUnitOfWorkAsync(() => _documentRepository.GetStatisticsAsync());
+        hostStats.TotalCount.ShouldBe(1);
+        hostStats.TotalStorageBytes.ShouldBe(100);
+
+        // Tenant sees only its two documents.
+        var tenantStats = await WithUnitOfWorkAsync(async () =>
+        {
+            using (_currentTenant.Change(tenantId))
+            {
+                return await _documentRepository.GetStatisticsAsync();
+            }
+        });
+        tenantStats.TotalCount.ShouldBe(2);
+        tenantStats.TotalStorageBytes.ShouldBe(500);
+    }
+
+    // ─── helpers ───────────────────────────────────────────────────────────
+
+    private async Task SeedDocAsync(
+        DocumentLifecycleStatus status,
+        long fileSize,
+        bool needsReview = false,
+        bool rejected = false)
+    {
+        var doc = NewDocument(fileSize);
+
+        if (needsReview || rejected)
+        {
+            doc.SetReviewReason(DocumentReviewReasons.UnresolvedClassification, present: true);
+        }
+
+        if (rejected)
+        {
+            doc.RejectReview("rejected for test"); // -> ReviewDisposition.Rejected + LifecycleStatus.Failed
+        }
+        else if (status != DocumentLifecycleStatus.Uploaded)
+        {
+            doc.TransitionLifecycle(status);
+        }
+
+        await _documentRepository.InsertAsync(doc, autoSave: true);
+    }
+
+    private Document NewDocument(long fileSize) =>
+        new(
+            _guidGenerator.Create(),
+            _currentTenant.Id,
+            new FileOrigin(
+                blobName: $"blobs/{Guid.NewGuid():N}.pdf",
+                uploadedByUserName: "test-user",
+                contentType: "application/pdf",
+                contentHash: $"{Guid.NewGuid():N}{Guid.NewGuid():N}",
+                fileSize: fileSize,
+                originalFileName: "test.pdf"));
+}
