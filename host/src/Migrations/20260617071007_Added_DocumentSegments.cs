@@ -40,6 +40,12 @@ namespace Dignite.DocumentAI.Host.Migrations
                 });
 
             migrationBuilder.CreateIndex(
+                name: "IX_DocAIDocumentSegments_SourceDocumentId_Ordinal",
+                table: "DocAIDocumentSegments",
+                columns: new[] { "SourceDocumentId", "Ordinal" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_DocAIDocumentSegments_SourceDocumentId_SegmentKey",
                 table: "DocAIDocumentSegments",
                 columns: new[] { "SourceDocumentId", "SegmentKey" },

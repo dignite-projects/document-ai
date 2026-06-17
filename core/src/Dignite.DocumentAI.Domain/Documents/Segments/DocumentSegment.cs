@@ -102,14 +102,4 @@ public class DocumentSegment : CreationAuditedAggregateRoot<Guid>, IMultiTenant
         RoutedDocumentId = Check.NotDefaultOrNull<Guid>(routedDocumentId, nameof(routedDocumentId));
         Status = DocumentSegmentStatus.Spawned;
     }
-
-    /// <summary>
-    /// Records that the LLM classified this slice as a non-document segment (cover / index / transmittal, #346):
-    /// moves <see cref="Status"/> to <see cref="DocumentSegmentStatus.NotADocument"/>. The row is retained as an
-    /// audit + idempotency marker so a re-run does not re-evaluate it; it is never spawned.
-    /// </summary>
-    public void MarkNotADocument()
-    {
-        Status = DocumentSegmentStatus.NotADocument;
-    }
 }

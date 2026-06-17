@@ -88,6 +88,25 @@ public class MarkdownSlicer_Tests
     }
 
     [Fact]
+    public void Matches_A_Marker_Only_At_A_Line_Start_Not_A_Mid_Line_Occurrence()
+    {
+        // "Amount" appears mid-line inside the first slice's body AND at the start of the second slice's line. The
+        // cut must bind to the line-start occurrence, not the earlier mid-line one (which would silently mis-slice).
+        const string markdown = "Invoice 1 Amount X\nAmount\npaid";
+        var boundaries = new List<SegmentBoundary>
+        {
+            new("Invoice 1", IsDocument: true),
+            new("Amount", IsDocument: true)
+        };
+
+        MarkdownSlicer.TrySlice(markdown, boundaries, out var slices).ShouldBeTrue();
+
+        slices.Count.ShouldBe(2);
+        slices[0].Text.ShouldBe("Invoice 1 Amount X"); // full first line; the mid-line "Amount" is not used as the cut
+        slices[1].Text.ShouldBe("Amount\npaid");
+    }
+
+    [Fact]
     public void Returns_False_When_A_Marker_Is_Not_Found_Verbatim()
     {
         const string markdown = "Invoice A first\nInvoice B second";

@@ -272,6 +272,14 @@ public static class DocumentAIDbContextModelCreatingExtensions
             // is a plain (portable) unique index, not a filtered one.
             b.HasIndex(x => new { x.SourceDocumentId, x.SegmentKey })
                 .IsUnique();
+
+            // Concurrency guard (#346): one split per container. The LLM split is non-deterministic, so two
+            // concurrent segmentation runs would otherwise produce different SegmentKeys and both commit (a double
+            // split). Every split numbers its slices from Ordinal 0, so this unique index makes the second
+            // committer collide on Ordinal 0 and roll back its whole insert — only one split survives; the loser
+            // retries and resumes from the winner's persisted rows.
+            b.HasIndex(x => new { x.SourceDocumentId, x.Ordinal })
+                .IsUnique();
         });
 
         builder.Entity<DocumentType>(b =>
