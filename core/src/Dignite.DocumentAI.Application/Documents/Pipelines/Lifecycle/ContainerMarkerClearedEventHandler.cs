@@ -63,9 +63,22 @@ public class ContainerMarkerClearedEventHandler
         // Retract the spawned sub-documents: soft-delete each + publish DocumentDeletedEto so downstream archives the
         // derived data. A container that was never segmented (or whose segmentation never spawned) yields an empty
         // list — a no-op, which is correct.
+        //
+        // Bounded fan-out: the sub-document count is already capped upstream by
+        // DocumentAIBehaviorOptions.MaxSegmentsPerDocument (default 50) — the segmentation job (SplitAndPersistAsync)
+        // refuses to spawn when the split exceeds that cap (flagging the container for review instead), so at most
+        // MaxSegmentsPerDocument rows can ever come back from GetListByOriginAsync. Because that bound is small and
+        // fixed, this loop needs no Take(N)/pagination and no background job — the retraction runs synchronously,
+        // entirely within the reclassify UoW (see the per-document delete note below).
         var subDocuments = await _documentRepository.GetListByOriginAsync(containerId);
         foreach (var subDocument in subDocuments)
         {
+            // Intentional deferred flush: DeleteAsync WITHOUT autoSave (contrast the eager bulk DeleteAsync(predicate)
+            // for segments below). The soft-delete UPDATE is deferred to the ambient reclassify UoW's SaveChanges, so
+            // it commits together with that UoW. DO NOT add autoSave: true here — doing so would flush this one
+            // sub-document mid-handler, partially committing before the rest of the retraction and before the
+            // reclassify completes, breaking the all-in-one-UoW guarantee: every soft-delete, every DocumentDeletedEto,
+            // and the DocumentClassifiedEto must land in a single transactional-outbox commit (atomic, all-or-nothing).
             await _documentRepository.DeleteAsync(subDocument);
 
             await _distributedEventBus.PublishAsync(

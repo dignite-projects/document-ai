@@ -38,6 +38,16 @@ public class ContainerReclassifyRetractionTestModule : AbpModule
 /// <see cref="DocumentSegment"/> rows, while the container itself becomes a normal concrete-typed document. Runs
 /// against the real SQLite DB so the <c>ContainerMarkerClearedEvent</c> local event actually dispatches to
 /// <c>ContainerMarkerClearedEventHandler</c> on UoW completion.
+/// <para>
+/// <b>Scope of these assertions.</b> <see cref="IDistributedEventBus"/> is an NSubstitute substitute, so these tests
+/// verify, precisely: (1) the local event dispatches to the handler on the reclassify UoW's completion; (2) the four
+/// retraction post-conditions hold against the real DB — the container becomes a concrete-typed non-container, its
+/// sub-documents are soft-deleted, and its segment rows are gone; (3) <c>PublishAsync</c> is invoked exactly once per
+/// sub-document (and never when there are no sub-documents). They do <b>not</b> assert that those publishes enrolled
+/// in the same transactional outbox as the soft-deletes, nor that publish + soft-delete are atomic — the substitute
+/// records calls but does not exercise ABP's real outbox, so outbox atomicity is out of scope here (it is a
+/// framework guarantee; see the all-in-one-UoW note in <c>ContainerMarkerClearedEventHandler</c>).
+/// </para>
 /// </summary>
 public class ContainerReclassifyRetraction_Tests
     : DocumentAITestBase<ContainerReclassifyRetractionTestModule>
@@ -86,7 +96,8 @@ public class ContainerReclassifyRetraction_Tests
             (await _segmentRepository.GetListAsync(s => s.SourceDocumentId == containerId)).ShouldBeEmpty();
         });
 
-        // (b) A DocumentDeletedEto was published per sub-document.
+        // (b) PublishAsync was invoked exactly once per sub-document (call count only; outbox enrolment / atomicity
+        // with the soft-deletes is not asserted here — see the class summary).
         await _eventBus.Received(2).PublishAsync(Arg.Any<DocumentDeletedEto>());
     }
 
