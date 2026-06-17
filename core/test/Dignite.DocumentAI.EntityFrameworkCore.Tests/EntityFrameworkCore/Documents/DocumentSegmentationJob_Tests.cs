@@ -41,6 +41,14 @@ public class DocumentSegmentationJobTestModule : AbpModule
             Options.Create(new DocumentAIBehaviorOptions()),
             new DefaultPromptProvider());
         context.Services.AddSingleton(workflow);
+
+        // Lower the caps so the bound tests don't need 50 slices / 200k chars. All other tests in this class use
+        // <= 2 distinct slices and < 100-char Markdown, so they are unaffected.
+        context.Services.Configure<DocumentAIBehaviorOptions>(o =>
+        {
+            o.MaxSegmentsPerDocument = 4;
+            o.MaxSegmentationMarkdownLength = 100;
+        });
     }
 }
 
@@ -296,6 +304,54 @@ public class DocumentSegmentationJob_Tests : DocumentAITestBase<DocumentSegmenta
             (await _documentRepository.GetAsync(containerId)).ReviewReasons.ShouldBe(DocumentReviewReasons.None);
             (await _documentRepository.GetListAsync(d => d.OriginDocumentId == containerId)).Count.ShouldBe(2);
         });
+    }
+
+    [Fact]
+    public async Task Total_Slice_Count_Over_The_Cap_Flags_Container_Even_When_Most_Are_Non_Document()
+    {
+        // #346 fix: the cap bounds TOTAL slices, not just document slices — a flood of cover/index slices cannot
+        // insert unbounded rows. 2 documents + 3 covers = 5 total > the test cap of 4, so the container is flagged
+        // even though only 2 are documents.
+        var containerId = await ArrangeContainerAsync("A doc\nB doc\nC cover\nD cover\nE cover");
+        StubSplit(("A doc", true), ("B doc", true), ("C cover", false), ("D cover", false), ("E cover", false));
+
+        await _job.ExecuteAsync(new DocumentSegmentationJobArgs { ContainerDocumentId = containerId });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            (await _documentRepository.GetAsync(containerId)).ReviewReasons
+                .ShouldBe(DocumentReviewReasons.SegmentationIncomplete);
+            (await _segmentRepository.GetListAsync(s => s.SourceDocumentId == containerId)).ShouldBeEmpty();
+        });
+    }
+
+    [Fact]
+    public async Task Oversized_Container_Markdown_Flags_For_Review_Without_Calling_The_LLM()
+    {
+        // #346 fix: segmentation feeds the whole Markdown to the LLM, so an over-limit container degrades to a
+        // review signal instead of paying for an enormous prompt — and the LLM is never called.
+        var oversized = new string('x', 150); // > the test cap of 100
+        var containerId = await ArrangeContainerAsync(oversized);
+
+        await _job.ExecuteAsync(new DocumentSegmentationJobArgs { ContainerDocumentId = containerId });
+
+        await _workflow.DidNotReceive().RunAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await WithUnitOfWorkAsync(async () =>
+            (await _documentRepository.GetAsync(containerId)).ReviewReasons
+                .ShouldBe(DocumentReviewReasons.SegmentationIncomplete));
+    }
+
+    [Fact]
+    public async Task Two_Splits_Of_The_Same_Container_Collide_On_The_Ordinal_Unique_Index()
+    {
+        // #346 fix: the unique (SourceDocumentId, Ordinal) index makes concurrent double-splits mutually exclusive —
+        // every split numbers its first slice Ordinal 0, so the second committer is rejected by the DB.
+        var containerId = await ArrangeContainerAsync("Invoice A first\nInvoice B second");
+        await WithUnitOfWorkAsync(async () =>
+            await _segmentRepository.InsertAsync(NewSegment(containerId, "first split slice", 0), autoSave: true));
+
+        await Should.ThrowAsync<Exception>(() => WithUnitOfWorkAsync(async () =>
+            await _segmentRepository.InsertAsync(NewSegment(containerId, "second split slice", 0), autoSave: true)));
     }
 
     private async Task<Guid> ArrangeContainerAsync(string markdown)

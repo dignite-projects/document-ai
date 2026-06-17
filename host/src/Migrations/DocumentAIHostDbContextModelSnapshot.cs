@@ -676,6 +676,9 @@ namespace Dignite.DocumentAI.Host.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SourceDocumentId", "Ordinal")
+                        .IsUnique();
+
                     b.HasIndex("SourceDocumentId", "SegmentKey")
                         .IsUnique();
 

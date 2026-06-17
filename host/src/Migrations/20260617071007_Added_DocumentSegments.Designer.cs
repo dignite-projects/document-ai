@@ -13,7 +13,7 @@ using Volo.Abp.EntityFrameworkCore;
 namespace Dignite.DocumentAI.Host.Migrations
 {
     [DbContext(typeof(DocumentAIHostDbContext))]
-    [Migration("20260617055228_Added_DocumentSegments")]
+    [Migration("20260617071007_Added_DocumentSegments")]
     partial class Added_DocumentSegments
     {
         /// <inheritdoc />
@@ -678,6 +678,9 @@ namespace Dignite.DocumentAI.Host.Migrations
                         .HasColumnName("TenantId");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("SourceDocumentId", "Ordinal")
+                        .IsUnique();
 
                     b.HasIndex("SourceDocumentId", "SegmentKey")
                         .IsUnique();

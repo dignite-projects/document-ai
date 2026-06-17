@@ -178,6 +178,17 @@ public class DocumentSegmentationJob
             return;
         }
 
+        // Segmentation feeds the WHOLE Markdown to the LLM (boundaries can be anywhere; truncating would lose tail
+        // documents), so an unbounded container is an unbounded prompt-token cost. Above the cap, degrade to a review
+        // signal (a human splits / reclassifies it) instead of paying for an enormous, low-confidence single call.
+        if (context.Markdown.Length > _behaviorOptions.MaxSegmentationMarkdownLength)
+        {
+            await MarkSegmentationIncompleteAsync(
+                context,
+                $"the container Markdown ({context.Markdown.Length} chars) exceeds the segmentation limit of {_behaviorOptions.MaxSegmentationMarkdownLength}");
+            return;
+        }
+
         // Gate (external, no UoW): the LLM proposes boundaries; keep the ambient tenant aligned as classification does.
         // A schema-drift / non-JSON structured response is a recoverable bad-output case (mirrors
         // DocumentClassificationBackgroundJob): flag the container for review rather than letting the exception fault
@@ -241,11 +252,14 @@ public class DocumentSegmentationJob
             return;
         }
 
-        if (documentSliceCount > _behaviorOptions.MaxSegmentsPerDocument)
+        // Cap the TOTAL number of slices (document + cover/index), not just the document ones, so a flood of
+        // non-document slices cannot insert an unbounded number of rows in one UoW — the blast-radius bound the
+        // option promises.
+        if (deduped.Count > _behaviorOptions.MaxSegmentsPerDocument)
         {
             await MarkSegmentationIncompleteAsync(
                 context,
-                $"the split produced {documentSliceCount} document slices, over the MaxSegmentsPerDocument limit of {_behaviorOptions.MaxSegmentsPerDocument}");
+                $"the split produced {deduped.Count} slices, over the MaxSegmentsPerDocument limit of {_behaviorOptions.MaxSegmentsPerDocument}");
             return;
         }
 

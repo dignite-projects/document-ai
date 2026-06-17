@@ -85,7 +85,7 @@ public static class MarkdownSlicer
             return -1;
         }
 
-        var pos = markdown.IndexOf(marker, cursor, StringComparison.Ordinal);
+        var pos = FindLineStart(markdown, marker, cursor);
         if (pos >= 0)
         {
             return pos;
@@ -95,10 +95,33 @@ public static class MarkdownSlicer
         // came back carrying that encoding, decode it before retrying against the raw Markdown.
         if (marker.Contains("&lt;", StringComparison.Ordinal))
         {
-            var decoded = marker.Replace("&lt;", "<", StringComparison.Ordinal);
-            return markdown.IndexOf(decoded, cursor, StringComparison.Ordinal);
+            return FindLineStart(markdown, marker.Replace("&lt;", "<", StringComparison.Ordinal), cursor);
         }
 
         return -1;
+    }
+
+    // The LLM is asked to return each constituent's FIRST LINE as the marker, so a marker is only a valid cut point
+    // at the START of a line (offset 0 or immediately after a newline). Anchoring to a line start prevents a short
+    // marker (e.g. "Total") from binding to an earlier mid-line occurrence inside the previous slice's body, which
+    // would silently mis-cut the document while still "finding" the marker verbatim.
+    private static int FindLineStart(string markdown, string marker, int cursor)
+    {
+        var from = cursor;
+        while (true)
+        {
+            var pos = markdown.IndexOf(marker, from, StringComparison.Ordinal);
+            if (pos < 0)
+            {
+                return -1;
+            }
+
+            if (pos == 0 || markdown[pos - 1] == '\n')
+            {
+                return pos;
+            }
+
+            from = pos + 1; // this occurrence is mid-line; keep looking for a line-anchored one
+        }
     }
 }
