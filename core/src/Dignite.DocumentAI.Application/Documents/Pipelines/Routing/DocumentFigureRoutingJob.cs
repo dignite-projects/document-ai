@@ -37,8 +37,9 @@ namespace Dignite.DocumentAI.Documents.Pipelines.Routing;
 /// each figure's evaluation commits atomically with its status change, so a crash resumes the remaining
 /// candidates without re-paying the gate classification or duplicate-spawning. The unique
 /// <c>(OriginDocumentId, OriginFigureKey)</c> index on <see cref="Document"/> is the final backstop against a
-/// concurrent double-route. Per-figure failures are isolated: one bad figure is logged and left
-/// <see cref="DocumentFigureStatus.Pending"/> for a later retry without blocking the others.
+/// concurrent double-route. Per-figure failures are isolated (one bad figure does not block the others) and
+/// surfaced: a figure left <see cref="DocumentFigureStatus.Pending"/> by a fault makes the job rethrow so ABP
+/// retries it, re-loading only the still-Pending candidates.
 /// </para>
 /// <para>
 /// <b>UoW discipline</b> (background-jobs.md): the gate LLM call and blob IO run outside any UoW; only the
@@ -103,6 +104,13 @@ public class DocumentFigureRoutingJob
             return;
         }
 
+        // Per-figure faults are isolated (one bad figure must not block the rest) but NOT swallowed: each is
+        // collected, and if any remain the job rethrows at the end so ABP reschedules it. Routing is enqueued
+        // exactly once (by the write-once text-extraction job), so swallowing here would strand the figure Pending
+        // forever — never spawned, its crop never reclaimed. On retry LoadAsync re-loads ONLY the still-Pending
+        // figures (spawned/rejected ones are terminal), so retries are cheap and never duplicate-spawn.
+        var failures = new List<Exception>();
+
         if (workItem.CandidateTypes.Count == 0)
         {
             // No document types in the source's layer -> nothing can be classified as a document. Mark every
@@ -113,27 +121,49 @@ public class DocumentFigureRoutingJob
             foreach (var figure in workItem.PendingFigures)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await SafeRejectAsync(workItem, figure);
+                await RouteWithIsolationAsync(
+                    failures, figure, args.SourceDocumentId, () => SafeRejectAsync(workItem, figure));
             }
-
-            return;
+        }
+        else
+        {
+            foreach (var figure in workItem.PendingFigures)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await RouteWithIsolationAsync(
+                    failures, figure, args.SourceDocumentId, () => RouteFigureAsync(workItem, figure, cancellationToken));
+            }
         }
 
-        foreach (var figure in workItem.PendingFigures)
+        if (failures.Count > 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                await RouteFigureAsync(workItem, figure, cancellationToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // Per-figure isolation: a single bad figure (gate error, blob fault, transient DB error) must
-                // not block the rest. Leave it Pending so a later job retry re-attempts it.
-                Logger.LogWarning(ex,
-                    "Routing figure {FigureId} of source {SourceDocumentId} failed; leaving it Pending for retry.",
-                    figure.FigureId, args.SourceDocumentId);
-            }
+            // Surface the faults so ABP reschedules the job; the figures that already spawned/rejected are
+            // terminal and will not be reprocessed. A persistently-failing figure is retried under ABP's backoff
+            // until ABP gives up, leaving a durably visible failure rather than a silent permanent-Pending.
+            throw new AggregateException(
+                $"Figure routing left {failures.Count} candidate figure(s) of source {args.SourceDocumentId} Pending; the job will be retried.",
+                failures);
+        }
+    }
+
+    /// <summary>
+    /// Runs one figure's routing action with per-figure isolation: a fault is logged and collected (so
+    /// <see cref="ExecuteAsync"/> can rethrow and trigger a job retry) instead of aborting the remaining figures.
+    /// Cancellation is never collected — it propagates so the job is treated as cancelled, not failed.
+    /// </summary>
+    private async Task RouteWithIsolationAsync(
+        List<Exception> failures, FigureSnapshot figure, Guid sourceDocumentId, Func<Task> route)
+    {
+        try
+        {
+            await route();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogWarning(ex,
+                "Routing figure {FigureId} of source {SourceDocumentId} failed; left Pending for job retry.",
+                figure.FigureId, sourceDocumentId);
+            failures.Add(ex);
         }
     }
 
@@ -175,6 +205,15 @@ public class DocumentFigureRoutingJob
     protected virtual async Task RouteFigureAsync(
         RoutingWorkItem workItem, FigureSnapshot figure, CancellationToken cancellationToken)
     {
+        // A figure whose OCR transcription is empty/whitespace (decorative image, logo, or OCR found no text)
+        // cannot be a document — reject it without paying a gate LLM call, and without risking the model inventing
+        // a confident type from the candidate list alone with no content to ground it.
+        if (string.IsNullOrWhiteSpace(figure.Transcription))
+        {
+            await SafeRejectAsync(workItem, figure);
+            return;
+        }
+
         // Gate (external, no UoW): classify the figure transcription against the source's tenant type layer.
         DocumentClassificationOutcome outcome;
         using (_currentTenant.Change(workItem.TenantId))
@@ -247,11 +286,12 @@ public class DocumentFigureRoutingJob
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // The spawn UoW failed and rolled back, so the copied blob references no committed document — reclaim
-            // it, then rethrow so the per-figure handler leaves the figure Pending for a later retry (which writes
-            // a fresh copy). Mirrors the text-extraction job's failed-completion crop cleanup. The
-            // already-routed / concurrent-double-spawn paths inside CommitSpawnAsync delete the blob themselves
-            // and return without throwing, so they are not double-deleted here.
+            // The spawn UoW failed and rolled back (a concurrent unique-index collision, or any other fault), so
+            // the copied blob now references no committed document — reclaim it, then rethrow so the per-figure
+            // handler records the fault and the job is retried (which writes a fresh copy next time). Mirrors the
+            // text-extraction job's failed-completion crop cleanup. The one CommitSpawnAsync path that returns
+            // without throwing (the candidate is already non-Pending) deletes its own orphan blob, so it is not
+            // double-deleted here.
             await TryDeleteBlobAsync(derivedBlobName);
             throw;
         }
@@ -290,21 +330,13 @@ public class DocumentFigureRoutingJob
             var derived = Document.CreateDerived(
                 derivedDocumentId, workItem.TenantId, fileOrigin, workItem.SourceDocumentId, figure.ContentHash);
 
-            try
-            {
-                await _documentRepository.InsertAsync(derived, autoSave: true);
-            }
-            catch (Exception ex) when (IsUniqueConstraintViolation(ex))
-            {
-                // A concurrent route already spawned this figure's derived document (the unique
-                // (OriginDocumentId, OriginFigureKey) index fired). Roll back, drop our orphan blob, and stop;
-                // the winning run owns the figure's status.
-                Logger.LogInformation(
-                    "Figure {FigureId} of source {SourceDocumentId} was already spawned concurrently; skipping.",
-                    figure.FigureId, workItem.SourceDocumentId);
-                await TryDeleteBlobAsync(derivedBlobName);
-                return;
-            }
+            // A concurrent route that already committed this figure's derived document trips the unique
+            // (OriginDocumentId, OriginFigureKey) index here. The failure propagates to SpawnDerivedDocumentAsync,
+            // which reclaims this run's orphan blob and rethrows so the job retries; on retry LoadAsync sees the
+            // figure as Spawned (the winner committed it) and skips it — self-healing, no duplicate. Not narrowing
+            // to a specific exception type is deliberate: any non-unique DB failure also surfaces (job retry)
+            // instead of being silently swallowed as a "concurrency skip".
+            await _documentRepository.InsertAsync(derived, autoSave: true);
 
             entity.MarkSpawned(derivedDocumentId);
             await _figureRepository.UpdateAsync(entity);
@@ -338,26 +370,6 @@ public class DocumentFigureRoutingJob
         {
             Logger.LogWarning(ex, "Failed to delete blob {BlobName} during figure routing cleanup.", blobName);
         }
-    }
-
-    /// <summary>Whether the exception is (or wraps) a DB unique-constraint violation, used to detect a concurrent double-spawn.</summary>
-    protected virtual bool IsUniqueConstraintViolation(Exception ex)
-    {
-        for (var current = ex; current != null; current = current.InnerException)
-        {
-            if (current is Volo.Abp.Data.AbpDbConcurrencyException)
-            {
-                return true;
-            }
-
-            var typeName = current.GetType().Name;
-            if (typeName == "DbUpdateException" || typeName == "UniqueConstraintException")
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static string ImageExtensionForContentType(string contentType)

@@ -168,7 +168,64 @@ public class DocumentFigureRoutingJob_Tests : DocumentAITestBase<DocumentFigureR
             (await _documentRepository.GetListAsync(d => d.OriginDocumentId == sourceId)).ShouldBeEmpty());
     }
 
-    private async Task<(Guid FigureId, string ContentHash, string CropBlobName)> ArrangeAsync(Guid sourceId, bool withType)
+    [Fact]
+    public async Task Figure_Fault_Rethrows_To_Trigger_Job_Retry_And_Leaves_It_Pending()
+    {
+        var sourceId = _guidGenerator.Create();
+        var (figureId, _, cropBlobName) = await ArrangeAsync(sourceId, withType: true);
+        StubGate(TypeCode, 0.92);          // confident -> proceeds to spawn, which reads the crop
+        StubCropBlobThrows(cropBlobName);  // the crop read faults on every run (e.g. transient blob loss)
+
+        // The fault must NOT be swallowed: ExecuteAsync rethrows so ABP reschedules the job. Routing is enqueued
+        // only once, so swallowing would strand the figure Pending forever.
+        await Should.ThrowAsync<AggregateException>(
+            () => _job.ExecuteAsync(new DocumentFigureRoutingJobArgs { SourceDocumentId = sourceId }));
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            (await _figureRepository.GetAsync(figureId)).Status.ShouldBe(DocumentFigureStatus.Pending);
+            (await _documentRepository.GetListAsync(d => d.OriginDocumentId == sourceId)).ShouldBeEmpty();
+        });
+    }
+
+    [Fact]
+    public async Task Blank_Transcription_Figure_Is_Rejected_Without_Calling_The_Gate()
+    {
+        var sourceId = _guidGenerator.Create();
+        var (figureId, _, cropBlobName) = await ArrangeAsync(sourceId, withType: true, transcription: "   ");
+        StubCropBlob(cropBlobName);
+
+        await _job.ExecuteAsync(new DocumentFigureRoutingJobArgs { SourceDocumentId = sourceId });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            (await _documentRepository.GetListAsync(d => d.OriginDocumentId == sourceId)).ShouldBeEmpty();
+            (await _figureRepository.GetAsync(figureId)).Status.ShouldBe(DocumentFigureStatus.NotADocument);
+        });
+
+        await _blobContainer.Received(1).DeleteAsync(cropBlobName, Arg.Any<CancellationToken>());
+        // An empty/whitespace transcription is short-circuited to reject; the gate LLM is never called.
+        await _workflow.DidNotReceive().RunAsync(
+            Arg.Any<IReadOnlyList<DocumentType>>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Duplicate_Derived_Document_For_Same_Source_Figure_Is_Rejected_By_Unique_Index()
+    {
+        var sourceId = _guidGenerator.Create();
+        var figureKey = $"{Guid.NewGuid():N}{Guid.NewGuid():N}"[..64];
+
+        await WithUnitOfWorkAsync(async () =>
+            await _documentRepository.InsertAsync(NewDerived(sourceId, figureKey), autoSave: true));
+
+        // The filtered unique index on (OriginDocumentId, OriginFigureKey) is routing's concurrency backstop: a
+        // second derived document for the same source figure must be rejected by the database.
+        await Should.ThrowAsync<Exception>(() => WithUnitOfWorkAsync(async () =>
+            await _documentRepository.InsertAsync(NewDerived(sourceId, figureKey), autoSave: true)));
+    }
+
+    private async Task<(Guid FigureId, string ContentHash, string CropBlobName)> ArrangeAsync(
+        Guid sourceId, bool withType, string transcription = "INVOICE No. 42 Total 100.00")
     {
         var contentHash = $"{Guid.NewGuid():N}{Guid.NewGuid():N}"[..64];
         var cropBlobName = $"figures/{sourceId}/{contentHash}";
@@ -197,7 +254,7 @@ public class DocumentFigureRoutingJob_Tests : DocumentAITestBase<DocumentFigureR
             await _figureRepository.InsertAsync(new DocumentFigure(
                 figureId, tenantId: null, sourceDocumentId: sourceId,
                 contentHash: contentHash, cropBlobName: cropBlobName, contentType: "image/png",
-                transcription: "INVOICE No. 42 Total 100.00", pageNumber: 2), autoSave: true);
+                transcription: transcription, pageNumber: 2), autoSave: true);
         });
 
         return (figureId, contentHash, cropBlobName);
@@ -209,4 +266,18 @@ public class DocumentFigureRoutingJob_Tests : DocumentAITestBase<DocumentFigureR
     private void StubGate(string typeCode, double confidence)
         => _workflow.RunAsync(Arg.Any<IReadOnlyList<DocumentType>>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new DocumentClassificationOutcome { TypeCode = typeCode, ConfidenceScore = confidence });
+
+    private void StubCropBlobThrows(string cropBlobName)
+        => _blobContainer.GetAsync(cropBlobName).Returns<Stream>(_ => throw new InvalidOperationException("blob unavailable"));
+
+    private Document NewDerived(Guid sourceId, string figureKey)
+    {
+        var id = _guidGenerator.Create();
+        return Document.CreateDerived(
+            id, tenantId: null,
+            fileOrigin: new FileOrigin(
+                blobName: $"{id:N}.png", uploadedByUserName: "test-user", contentType: "image/png",
+                contentHash: figureKey, fileSize: 4, originalFileName: "figure.png"),
+            originDocumentId: sourceId, originFigureKey: figureKey);
+    }
 }
