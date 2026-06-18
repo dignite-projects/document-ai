@@ -260,8 +260,14 @@ public class DocumentSegmentationJob
         var prepared = new List<PreparedSegment>();
         foreach (var slice in markedSlices)
         {
-            var isFigure = ImageOcrMarkup.Contains(slice.Text);
-            var cleanText = isFigure ? ImageOcrMarkup.Strip(slice.Text) : slice.Text;
+            // #371 hardening (own /code-review): a span's kind is a STRUCTURAL property of its opening boundary, not
+            // of whether a sentinel appears somewhere in its body. A genuine text constituent that embeds an inline
+            // figure block (#301 inlines the transcription into the body) must stay Kind=Text — otherwise it would be
+            // mislabeled Figure and survive the container→type retraction (which keeps Kind==Figure), a #364-class
+            // leak. cleanText always strips any sentinels (a text constituent's inline figures are just inline text
+            // in the spawned child).
+            var isFigure = slice.IsFigure;
+            var cleanText = ImageOcrMarkup.Strip(slice.Text);
             if (string.IsNullOrWhiteSpace(cleanText))
             {
                 continue; // a slice that was only sentinels

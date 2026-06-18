@@ -197,6 +197,42 @@ public class DocumentSegmentationJob_Tests : DocumentAITestBase<DocumentSegmenta
     }
 
     [Fact]
+    public async Task Text_Constituent_Embedding_An_Inline_Figure_Is_Kind_Text_Not_Figure()
+    {
+        // #371 hardening (own /code-review): a genuine text constituent (a contract) that embeds an inline figure —
+        // its MARKED slice is prose PLUS an [Image OCR] block (#301) — must be recorded Kind.Text. The span's kind is
+        // the kind of its OPENING boundary (prose), NOT "does the body contain a sentinel somewhere". Otherwise it
+        // would be mislabeled Figure and survive the container→type retraction (which keeps Kind==Figure), a
+        // #364-class stale-sub-document leak. The child's seed also strips the sentinels (the inline figure is just
+        // inline text in the spawned child).
+        var marked = $"Contract A clauses\n{ImageOcrMarkup.Wrap("FIG seal stamp", 1)}\nmore clauses\nContract B clauses";
+        var containerId = await ArrangeContainerAsync(
+            markdown: "Contract A clauses\nmore clauses\nContract B clauses", asContainer: true, markedMarkdown: marked);
+
+        // The LLM returns each contract as ONE span keyed on its prose first line; the inline figure stays inside
+        // contract A's span rather than being emitted as its own [Image OCR] boundary.
+        StubSplit(
+            ("Contract A clauses", true),
+            ("Contract B clauses", true));
+
+        await _job.ExecuteAsync(new DocumentSegmentationJobArgs { SourceDocumentId = containerId });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var segments = await _segmentRepository.GetListAsync(s => s.SourceDocumentId == containerId);
+            segments.Count.ShouldBe(2);
+            // Both opened on prose -> both Kind.Text, even though contract A's slice body carries an [Image OCR]
+            // block. NONE mislabeled Figure.
+            segments.ShouldAllBe(s => s.Kind == DocumentSegmentKind.Text);
+
+            var contractASeg = segments.Single(s => s.SliceText.Contains("Contract A clauses"));
+            contractASeg.SliceText.ShouldContain("FIG seal stamp");
+            contractASeg.SliceText.ShouldNotContain(ImageOcrMarkup.OpenPagePrefix); // sentinels stripped from the child seed
+            contractASeg.SliceText.ShouldNotContain(ImageOcrMarkup.CloseMarker);
+        });
+    }
+
+    [Fact]
     public async Task Untrusted_Split_Flags_Container_And_Spawns_Nothing()
     {
         var containerId = await ArrangeContainerAsync("Invoice A first\nInvoice B second");
