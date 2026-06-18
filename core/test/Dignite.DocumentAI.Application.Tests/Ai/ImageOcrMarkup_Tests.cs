@@ -43,19 +43,36 @@ public class ImageOcrMarkup_Tests
     [Fact]
     public void TryParsePage_And_Line_Predicates_Recognize_Both_Open_Forms_And_The_Close()
     {
-        ImageOcrMarkup.TryParsePage("[Image OCR p:3]").ShouldBe(3);
-        ImageOcrMarkup.TryParsePage("[Image OCR]").ShouldBeNull();
+        ImageOcrMarkup.TryParsePage(ImageOcrMarkup.OpenPagePrefix + "3]").ShouldBe(3);
+        ImageOcrMarkup.TryParsePage(ImageOcrMarkup.OpenMarker).ShouldBeNull();
 
-        ImageOcrMarkup.IsOpenLine("[Image OCR p:3]").ShouldBeTrue();
-        ImageOcrMarkup.IsOpenLine("[Image OCR]").ShouldBeTrue();
+        ImageOcrMarkup.IsOpenLine(ImageOcrMarkup.OpenPagePrefix + "3]").ShouldBeTrue();
+        ImageOcrMarkup.IsOpenLine(ImageOcrMarkup.OpenMarker).ShouldBeTrue();
 
-        ImageOcrMarkup.IsCloseLine("[End OCR]").ShouldBeTrue();
+        ImageOcrMarkup.IsCloseLine(ImageOcrMarkup.CloseMarker).ShouldBeTrue();
     }
 
     [Fact]
     public void Strip_Leaves_A_Body_Line_That_Merely_Mentions_The_Label_As_A_Substring()
     {
         // Only a WHOLE trimmed-line sentinel is removed; the label embedded mid-line is ordinary prose and survives.
-        ImageOcrMarkup.Strip("see [Image OCR] note").ShouldBe("see [Image OCR] note");
+        var midLine = "see " + ImageOcrMarkup.OpenMarker + " note";
+        ImageOcrMarkup.Strip(midLine).ShouldBe(midLine);
+    }
+
+    [Fact]
+    public void Bare_MarkItDown_Style_Markers_Are_Not_Mistaken_For_Sentinels()
+    {
+        // #376: the sentinel carries a collision-resistant salt, so a real content line equal to MarkItDown's own bare
+        // "[Image OCR]" / "[End OCR]" (e.g. a document MarkItDown produced and then re-ingested) is ORDINARY content —
+        // it must survive Strip and never be parsed as a figure boundary, or the egress Markdown would silently lose
+        // those lines and the slicer would mis-close a figure block on them.
+        ImageOcrMarkup.IsOpenLine("[Image OCR]").ShouldBeFalse();
+        ImageOcrMarkup.IsOpenLine("[Image OCR p:3]").ShouldBeFalse();
+        ImageOcrMarkup.IsCloseLine("[End OCR]").ShouldBeFalse();
+
+        const string reingested = "intro\n[Image OCR]\nold transcription\n[End OCR]\noutro";
+        ImageOcrMarkup.Strip(reingested).ShouldBe(reingested); // nothing stripped — content, not our sentinels
+        ImageOcrMarkup.Contains(reingested).ShouldBeFalse();
     }
 }

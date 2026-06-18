@@ -46,11 +46,12 @@ public class DocumentSegmentationJobTestModule : AbpModule
         context.Services.AddSingleton(workflow);
 
         // Lower the caps so the bound tests don't need 50 slices / 200k chars. All other tests in this class use
-        // <= 2 distinct slices and < 100-char Markdown, so they are unaffected.
+        // <= 2 distinct slices and < 130-char Markdown (the salted figure sentinels, #376, add ~18 chars per figure),
+        // so they are unaffected.
         context.Services.Configure<DocumentAIBehaviorOptions>(o =>
         {
             o.MaxSegmentsPerDocument = 4;
-            o.MaxSegmentationMarkdownLength = 100;
+            o.MaxSegmentationMarkdownLength = 130;
         });
     }
 }
@@ -587,7 +588,7 @@ public class DocumentSegmentationJob_Tests : DocumentAITestBase<DocumentSegmenta
     {
         // #346 fix: segmentation feeds the whole Markdown to the LLM, so an over-limit container degrades to a
         // review signal instead of paying for an enormous prompt — and the LLM is never called.
-        var oversized = new string('x', 150); // > the test cap of 100
+        var oversized = new string('x', 150); // > the test cap of 130
         var containerId = await ArrangeContainerAsync(oversized);
 
         await _job.ExecuteAsync(new DocumentSegmentationJobArgs { SourceDocumentId = containerId });

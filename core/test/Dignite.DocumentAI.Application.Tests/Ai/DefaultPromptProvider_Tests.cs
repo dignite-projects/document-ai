@@ -1,3 +1,4 @@
+using Dignite.DocumentAI.Abstractions.TextExtraction;
 using Shouldly;
 using Xunit;
 
@@ -66,7 +67,7 @@ public class DefaultPromptProvider_Tests
         var instructions = _provider.GetSegmentationPrompt("en").SystemInstructions;
 
         instructions.ShouldContain("isSubDocument");
-        instructions.ShouldContain("[Image OCR]");
+        instructions.ShouldContain(ImageOcrMarkup.OpenMarker);
     }
 
     [Fact]
@@ -79,6 +80,6 @@ public class DefaultPromptProvider_Tests
         var instructions = _provider.GetClassificationPrompt("en").SystemInstructions;
 
         instructions.ShouldContain("containsEmbeddedDocument");
-        instructions.ShouldContain("[Image OCR]");
+        instructions.ShouldContain(ImageOcrMarkup.OpenMarker);
     }
 }

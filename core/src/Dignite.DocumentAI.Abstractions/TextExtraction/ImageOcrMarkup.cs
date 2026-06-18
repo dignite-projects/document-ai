@@ -29,14 +29,26 @@ namespace Dignite.DocumentAI.Abstractions.TextExtraction;
 /// </summary>
 public static class ImageOcrMarkup
 {
-    /// <summary>The open sentinel with no page anchor.</summary>
-    public const string OpenMarker = "[Image OCR]";
+    /// <summary>
+    /// A fixed, high-entropy salt baked into every sentinel (#376). MarkItDown's bare <c>[Image OCR]</c> /
+    /// <c>[End OCR]</c> is a string a real document line can legitimately equal — most concretely, a document that was
+    /// itself produced by MarkItDown and then re-ingested carries those exact lines. Without the salt,
+    /// <see cref="Strip"/> would delete such a content line from the egress Markdown (silent data loss) and
+    /// <see cref="ExtractBodies"/> / the slicer would mis-close a figure block on it. The salt makes a coincidental
+    /// collision astronomically unlikely while the readable "Image OCR" label keeps the marker LLM-legible. It is
+    /// pipeline-internal and never reaches the egress (<see cref="Strip"/> removes the whole sentinel line before the
+    /// Markdown is persisted).
+    /// </summary>
+    private const string Salt = "9f1d3a7c";
 
-    /// <summary>Prefix of a page-anchored open sentinel; the full line is <c>[Image OCR p:{page}]</c>.</summary>
-    public const string OpenPagePrefix = "[Image OCR p:";
+    /// <summary>The open sentinel with no page anchor (<c>[Image OCR 9f1d3a7c]</c>).</summary>
+    public const string OpenMarker = "[Image OCR " + Salt + "]";
 
-    /// <summary>The close sentinel.</summary>
-    public const string CloseMarker = "[End OCR]";
+    /// <summary>Prefix of a page-anchored open sentinel; the full line is <c>[Image OCR 9f1d3a7c p:{page}]</c>.</summary>
+    public const string OpenPagePrefix = "[Image OCR " + Salt + " p:";
+
+    /// <summary>The close sentinel (<c>[End OCR 9f1d3a7c]</c>).</summary>
+    public const string CloseMarker = "[End OCR " + Salt + "]";
 
     /// <summary>
     /// Wraps a figure's OCR <paramref name="transcription"/> in the open/close sentinels, each on its own line,
