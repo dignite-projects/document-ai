@@ -114,6 +114,11 @@ export class DocumentListComponent implements OnInit {
   typeFilter = signal<string>('');
   cabinetFilter = signal<string>('');
   lifecycleFilter = signal<DocumentLifecycleStatus | undefined>(undefined);
+  // #354: when set, the list shows only the sub-documents derived from this source document (a container's
+  // children). subDocumentsParent is the container itself (for the indicator banner); it is null when the filter
+  // was seeded from a deep-link query param and the parent row is not in hand.
+  originDocumentIdFilter = signal<string>('');
+  subDocumentsParent = signal<DocumentListItemDto | null>(null);
   confirmingDoc = signal<DocumentListItemDto | null>(null);
   documentTypes = signal<DocumentTypeDto[]>([]);
   cabinets = signal<CabinetDto[]>([]);
@@ -128,6 +133,12 @@ export class DocumentListComponent implements OnInit {
 
   reviewNeededCount = computed(() =>
     this.documents().items.filter(d => d.requiresReview).length,
+  );
+
+  // #354: render the row actions column when the user has confirm/delete actions OR any row is a container —
+  // containers expose a "view sub-documents" action regardless of those permissions.
+  readonly showActionsColumn = computed(
+    () => this.hasDocumentActions || this.documents().items.some(d => d.isContainer),
   );
 
   readonly DocumentLifecycleStatus = DocumentLifecycleStatus;
@@ -173,6 +184,12 @@ export class DocumentListComponent implements OnInit {
     if (typeCode) {
       this.typeFilter.set(typeCode);
     }
+    // #354: deep-link into a container's sub-documents (the parent row may not be loaded, so the banner falls
+    // back to showing the id until/unless the operator navigated via the in-list "view sub-documents" action).
+    const originDocumentId = params.get('originDocumentId');
+    if (originDocumentId) {
+      this.originDocumentIdFilter.set(originDocumentId);
+    }
   }
 
   onLifecycleFilterChange(value: DocumentLifecycleStatus | undefined): void {
@@ -191,6 +208,23 @@ export class DocumentListComponent implements OnInit {
 
   onCabinetFilterChange(value: string): void {
     this.cabinetFilter.set(value);
+    this.refreshListFromFirstPage();
+  }
+
+  // #354: focus the list on a container's sub-documents (those whose OriginDocumentId is this container).
+  viewSubDocuments(doc: DocumentListItemDto, event?: Event): void {
+    event?.stopPropagation();
+    if (!doc.id) {
+      return;
+    }
+    this.subDocumentsParent.set(doc);
+    this.originDocumentIdFilter.set(doc.id);
+    this.refreshListFromFirstPage();
+  }
+
+  clearSubDocumentsFilter(): void {
+    this.subDocumentsParent.set(null);
+    this.originDocumentIdFilter.set('');
     this.refreshListFromFirstPage();
   }
 
@@ -233,6 +267,7 @@ export class DocumentListComponent implements OnInit {
     return {
       documentTypeCode: this.typeFilter() || undefined,
       cabinetId: this.cabinetFilter() || undefined,
+      originDocumentId: this.originDocumentIdFilter() || undefined,
       lifecycleStatus: this.lifecycleFilter(),
       hasReviewReasons: this.hasReviewReasonsFilter(),
     };
@@ -267,9 +302,8 @@ export class DocumentListComponent implements OnInit {
             : 'fas fa-file-pdf fa-lg text-danger';
           // #350: a container is a bundle of sub-documents and is not itself a business record. Flag it
           // with a badge so operators don't mistake it for a normal document. isContainer is a
-          // system-controlled signal carried on the list DTO.
-          // TODO(#350): wire a "view sub-documents" filter (query OriginDocumentId === this id) once the
-          // list endpoint exposes an originDocumentId filter; for now only the badge is shown.
+          // system-controlled signal carried on the list DTO. #354: the row's "view sub-documents" action
+          // (containers only) drills into its children via the originDocumentId filter.
           const bundleBadge = doc.isContainer
             ? ` <span class="badge bg-dark">${escapeHtmlChars(localization.instant('::Document:Bundle'))}</span>`
             : '';

@@ -75,6 +75,25 @@
     }
   </div>
 
+  <!-- Sub-documents filter indicator (#354) -->
+  @if (originDocumentIdFilter()) {
+    <div class="alert alert-info d-flex justify-content-between align-items-center py-2 mb-3">
+      <span>
+        <i class="fas fa-sitemap me-2"></i>
+        {{ '::Document:ViewingSubDocumentsOf' | abpLocalization }}
+        <strong>{{
+          subDocumentsParent()?.title ||
+            subDocumentsParent()?.fileOrigin?.originalFileName ||
+            originDocumentIdFilter()
+        }}</strong>
+      </span>
+      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="clearSubDocumentsFilter()">
+        <i class="fas fa-times me-1"></i>
+        {{ '::Document:ShowAllDocuments' | abpLocalization }}
+      </button>
+    </div>
+  }
+
   <!-- Loading spinner -->
   @if (isLoading() && documents().items.length === 0) {
     <div class="text-center py-5">
@@ -103,12 +122,18 @@
     <div class="card shadow-sm document-list-table">
       <div class="card-body p-0">
         <ng-template #actionsTemplate let-doc>
-          @if ((needsConfirmation(doc) && canConfirm) || canDelete) {
+          @if ((needsConfirmation(doc) && canConfirm) || canDelete || doc.isContainer) {
             <div ngbDropdown container="body" class="d-inline-block" (click)="$event.stopPropagation()">
               <button type="button" class="btn btn-sm btn-primary" ngbDropdownToggle>
                 {{ 'AbpUi::Actions' | abpLocalization }}
               </button>
               <div ngbDropdownMenu>
+                @if (doc.isContainer) {
+                  <button type="button" ngbDropdownItem (click)="viewSubDocuments(doc, $event)">
+                    <i class="fas fa-sitemap me-2"></i>
+                    {{ '::Document:ViewSubDocuments' | abpLocalization }}
+                  </button>
+                }
                 @if (needsConfirmation(doc) && canConfirm) {
                   <button type="button" ngbDropdownItem (click)="openConfirmDialog(doc, $event)">
                     <i class="fas fa-check me-2"></i>
@@ -127,7 +152,7 @@
         </ng-template>
 
         @for (key of [tableKey()]; track key) {
-          @if (hasDocumentActions) {
+          @if (showActionsColumn()) {
             <abp-extensible-table
               [data]="documents().items"
               [recordsTotal]="documents().totalCount"
