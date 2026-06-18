@@ -109,10 +109,10 @@ public class DocumentSegmentationJob
             return; // document removed before the pass ran
         }
 
-        // Phase A: detect once. If THIS mode's split already persisted rows, skip the LLM (resumable, no re-split).
-        // The skip is mode-aware (#372): a Figure row left by an earlier concrete-embedded run does not count as a
-        // completed container split, so a re-recognized container still runs.
-        if (!context.HasExistingSplit)
+        // Phase A: detect once. Skip the LLM split when the document is already marked segmented (#377) — a precise
+        // resume gate set in the same transaction as the segment rows. A concrete→container re-recognition (#355)
+        // clears the marker, so a re-recognized container runs its container split exactly once (#372).
+        if (!context.AlreadySegmented)
         {
             await DetectAndPersistAsync(context, cancellationToken);
         }
@@ -142,11 +142,11 @@ public class DocumentSegmentationJob
         }
     }
 
-    /// <summary>Load phase (short UoW + a post-UoW blob read): snapshot the source's tenant/uploader, marked Markdown, container flag, parent context, and whether THIS mode's split already produced rows (#372, mode-aware).</summary>
+    /// <summary>Load phase (short UoW + a post-UoW blob read): snapshot the source's tenant/uploader, marked Markdown, container flag, parent context, and whether the document is already marked segmented (#377, the precise resume gate).</summary>
     protected virtual async Task<DetectionContext?> LoadAsync(Guid sourceDocumentId)
     {
         Document? source;
-        bool hasExistingSplit;
+        bool alreadySegmented;
         string? parentTypeCode = null;
         string? parentTypeDisplayName = null;
 
@@ -161,25 +161,13 @@ public class DocumentSegmentationJob
                 return null;
             }
 
-            // #372: the resume skip is MODE-AWARE. Since #371 a concrete document with an embedded figure routes a
-            // Kind=Figure segment (embedded mode); if that document is later re-recognized as a container (#355), the
-            // container split — which yields the bundle's Kind=Text constituents — must STILL run. Keying the skip on
-            // "any segment row exists" would treat the leftover figure row as a completed split and leave the container
-            // forever undecomposed. So a container resumes (skips re-detection) only once a Text row exists; an
-            // embedded-document source only once a Figure row exists.
-            //
-            // KNOWN LIMITATION (#377): keying on row Kind cannot tell an embedded-run figure row apart from a
-            // container-run figure row, so a *figure-only* container (a real ≥2-figure bundle, zero Text) is seen as
-            // never-split and re-runs the LLM on each re-entry — and the idempotent insert below reconciles only an
-            // IDENTICAL re-split (same content keys), not a divergent one (different figure-boundary composition over
-            // the same marked Markdown), which can append spurious rows. A clean fix needs an explicit
-            // "container-split-completed" marker; tracked in #377. Both edges are deep-tail (rare re-recognition/retry
-            // plus non-deterministic LLM divergence) and lose no source data.
-            var existingKinds = (await _segmentRepository.GetListAsync(s => s.SourceDocumentId == sourceDocumentId))
-                .ConvertAll(s => s.Kind);
-            hasExistingSplit = source.IsContainer
-                ? existingKinds.Contains(DocumentSegmentKind.Text)
-                : existingKinds.Contains(DocumentSegmentKind.Figure);
+            // #377: resume on the precise IsSegmented marker (set in the same transaction as the segment rows on a
+            // terminal SUCCESS), not on inferring completion from segment-row Kind. A concrete document's embedded-run
+            // figure row and a figure-only container's split row are indistinguishable by Kind, so the old heuristic
+            // either left a re-recognized container undecomposed (#372) or re-ran the LLM forever on a figure-only
+            // container; the marker is exact. MarkAsContainer clears it on a concrete→container re-recognition (#355),
+            // so the container split runs exactly once.
+            alreadySegmented = source.IsSegmented;
 
             // Best-effort parent type for the gate's "standalone vs element-of-parent" grounding (#365). The
             // container path has none (DocumentTypeId null); the embedded-document path has the parent's concrete
@@ -213,7 +201,7 @@ public class DocumentSegmentationJob
             source.FileOrigin.UploadedByUserName,
             markedMarkdown,
             source.IsContainer,
-            hasExistingSplit,
+            alreadySegmented,
             detection);
     }
 
@@ -319,46 +307,58 @@ public class DocumentSegmentationJob
             return;
         }
 
-        // A container must be a real bundle (≥2 distinct sub-documents); a lone slice is not a bundle, so let an
-        // operator reclassify it instead of spawning a duplicate of the container.
-        if (context.IsContainer && prepared.Count < 2)
+        // Constituents this source already routed in a DIFFERENT-mode pass (a concrete doc's embedded figure routed
+        // before a container re-recognition, #372/#377): they count toward the container "≥2 real bundle" test and the
+        // cap, and the idempotent insert below skips the ones re-detected this run. Heuristic read (tenant-scoped); the
+        // insert UoW re-reads authoritatively.
+        HashSet<string> existingKeys;
+        using (_currentTenant.Change(context.TenantId))
+        {
+            existingKeys = (await _segmentRepository.GetListAsync(s => s.SourceDocumentId == context.SourceDocumentId))
+                .Select(s => s.SegmentKey)
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        var newCount = prepared.Count(p => !existingKeys.Contains(p.Key));
+
+        // A container must be a real bundle (≥2 distinct sub-documents) — counting constituents already routed in a
+        // different mode (#377 edge 1), not just this run's freshly-detected spans, so a surviving figure plus one new
+        // text correctly reads as a 2-constituent bundle. A lone slice is not a bundle, so let an operator reclassify
+        // it instead of spawning a duplicate of the container.
+        if (context.IsContainer && existingKeys.Count + newCount < 2)
         {
             await MarkSegmentationIncompleteAsync(context, "fewer than two distinct document slices were identified");
             return;
         }
 
-        // An embedded-document parent with nothing standalone to route is a clean no-op: the parent extracts normally.
-        if (!context.IsContainer && prepared.Count == 0)
+        // An embedded-document parent with nothing NEW standalone to route is a clean no-op: the parent extracts
+        // normally. Mark it segmented (#377) so a retry / re-enqueue does not re-pay the LLM for the same answer.
+        if (!context.IsContainer && newCount == 0)
         {
             Logger.LogInformation(
                 "Embedded-document source {SourceId}: no embedded standalone document found; nothing to route.",
                 context.SourceDocumentId);
+            await MarkDocumentSegmentedAsync(context.SourceDocumentId, context.TenantId);
             return;
         }
 
-        // Cap the rows inserted in one UoW (blast-radius bound the option promises).
-        if (prepared.Count > _behaviorOptions.MaxSegmentsPerDocument)
+        // Cap the NEW rows inserted in one UoW (blast-radius bound the option promises).
+        if (newCount > _behaviorOptions.MaxSegmentsPerDocument)
         {
             await IncompleteOrSkipAsync(
                 context,
-                $"the split produced {prepared.Count} sub-documents, over the MaxSegmentsPerDocument limit of {_behaviorOptions.MaxSegmentsPerDocument}");
+                $"the split produced {newCount} sub-documents, over the MaxSegmentsPerDocument limit of {_behaviorOptions.MaxSegmentsPerDocument}");
             return;
         }
 
         using (_currentTenant.Change(context.TenantId))
         using (var uow = _unitOfWorkManager.Begin(requiresNew: true))
         {
-            var existing = await _segmentRepository.GetListAsync(s => s.SourceDocumentId == context.SourceDocumentId);
-
-            // Concurrency + resume re-check, mode-aware (#372): another run — or an earlier pass in a DIFFERENT mode —
-            // may have committed rows between LoadAsync and here. Re-check the same mode-aware signal as LoadAsync: a
-            // committed split FOR THIS MODE means drop this one and let Phase B spawn from the committed rows. A Figure
-            // row left by a prior concrete-embedded run is NOT a committed container split, so a re-recognized
-            // container still proceeds to add its Text constituents.
-            var alreadySplit = context.IsContainer
-                ? existing.Exists(s => s.Kind == DocumentSegmentKind.Text)
-                : existing.Exists(s => s.Kind == DocumentSegmentKind.Figure);
-            if (alreadySplit)
+            // Load the source to set the completion marker atomically with the rows, and to re-check it: a concurrent
+            // run (or a prior committed split) may have finished between LoadAsync and here. If already segmented, drop
+            // this run and let Phase B spawn from the committed rows — no double-split, no divergent re-split (#377).
+            var source = await _documentRepository.FindAsync(context.SourceDocumentId, includeDetails: false);
+            if (source is null || source.IsSegmented)
             {
                 await uow.CompleteAsync();
                 return;
@@ -366,15 +366,15 @@ public class DocumentSegmentationJob
 
             // Idempotent insert (#372): skip a span already persisted by an earlier pass in another mode (e.g. the
             // figure a concrete-embedded run already routed, now re-detected by the container split — identical content
-            // hash), and number Ordinal AFTER the existing rows so the unique (SourceDocumentId, Ordinal) index never
-            // collides with them. Two CONCURRENT splits of the same mode still collide (both start past the same
-            // baseline on either the Ordinal or the SegmentKey unique index) — only one wins; the loser's UoW throws
-            // and the job resumes from the winner's rows.
-            var existingKeys = existing.ConvertAll(s => s.SegmentKey).ToHashSet(StringComparer.Ordinal);
-            var ordinal = existing.Count == 0 ? 0 : existing.Max(s => s.Ordinal) + 1;
+            // hash), numbering Ordinal AFTER the existing rows so the unique (SourceDocumentId, Ordinal) index never
+            // collides with them. Two CONCURRENT splits still collide on the Ordinal / SegmentKey unique index or the
+            // Document concurrency stamp below — only one wins; the loser's UoW throws and the job resumes.
+            var committed = await _segmentRepository.GetListAsync(s => s.SourceDocumentId == context.SourceDocumentId);
+            var committedKeys = committed.ConvertAll(s => s.SegmentKey).ToHashSet(StringComparer.Ordinal);
+            var ordinal = committed.Count == 0 ? 0 : committed.Max(s => s.Ordinal) + 1;
             foreach (var p in prepared)
             {
-                if (!existingKeys.Add(p.Key))
+                if (!committedKeys.Add(p.Key))
                 {
                     continue; // already persisted by an earlier pass — same content, same identity
                 }
@@ -389,6 +389,28 @@ public class DocumentSegmentationJob
                     p.Kind,
                     DocumentSegmentStatus.Pending,
                     p.PageNumber));
+            }
+
+            // #377: mark the document segmented in the SAME transaction as the rows — the precise resume gate, so a
+            // retry / re-enqueue does not re-pay the LLM and a divergent re-split cannot append spurious rows.
+            source.MarkSegmented();
+            await _documentRepository.UpdateAsync(source);
+
+            await uow.CompleteAsync();
+        }
+    }
+
+    /// <summary>Short UoW: mark the document segmented (#377) on a terminal no-op (an embedded source with nothing standalone to route), so a retry / re-enqueue does not re-pay the LLM. Tenant-scoped + idempotent.</summary>
+    protected virtual async Task MarkDocumentSegmentedAsync(Guid sourceDocumentId, Guid? tenantId)
+    {
+        using (_currentTenant.Change(tenantId))
+        using (var uow = _unitOfWorkManager.Begin(requiresNew: true))
+        {
+            var source = await _documentRepository.FindAsync(sourceDocumentId, includeDetails: false);
+            if (source is not null && !source.IsSegmented)
+            {
+                source.MarkSegmented();
+                await _documentRepository.UpdateAsync(source);
             }
 
             await uow.CompleteAsync();
@@ -656,7 +678,7 @@ public class DocumentSegmentationJob
         string UploadedByUserName,
         string MarkedMarkdown,
         bool IsContainer,
-        bool HasExistingSplit,
+        bool AlreadySegmented,
         SubDocumentDetectionContext Detection);
 
     /// <summary>A standalone span prepared for persistence: its content key, clean slice text, kind, and figure page anchor.</summary>

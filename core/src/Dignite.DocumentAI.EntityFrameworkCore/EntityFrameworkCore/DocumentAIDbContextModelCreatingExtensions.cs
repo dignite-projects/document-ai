@@ -74,6 +74,10 @@ public static class DocumentAIDbContextModelCreatingExtensions
             // #346 container marker: non-null bool, default false (generic truth-source column, not a business field).
             b.Property(x => x.IsContainer).IsRequired();
 
+            // #377 segmentation-completed marker: non-null bool, default false. Internal pipeline state (the precise
+            // resume gate for the unified sub-document pass); not exposed at the egress.
+            b.Property(x => x.IsSegmented).IsRequired();
+
             // #306 / #346 Scenario B back-reference: content-derived key of the source constituent (= FileOrigin.ContentHash).
             b.Property(x => x.OriginConstituentKey).HasMaxLength(DocumentConsts.MaxOriginConstituentKeyLength);
 

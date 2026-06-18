@@ -317,6 +317,86 @@ public class DocumentSegmentationJob_Tests : DocumentAITestBase<DocumentSegmenta
     }
 
     [Fact]
+    public async Task Container_Re_Split_Omitting_The_Surviving_Figure_Still_Persists_The_New_Text_Constituent()
+    {
+        // #377 edge 1: a concrete doc with one already-routed figure is re-recognized as a container; the
+        // container-mode re-split returns exactly ONE new text constituent and (non-deterministically) OMITS the
+        // figure's [Image OCR] boundary this run. The "≥2 real bundle" guard must count the surviving figure row
+        // toward the bundle (not just this run's spans), so the legitimate text constituent is PERSISTED rather than
+        // dropped and the container flagged incomplete. Pre-#377 the guard saw prepared.Count == 1 < 2 and flagged.
+        var figureText = "INVOICE No 9 Total 9";
+        var marked = $"Invoice A whole body\n{ImageOcrMarkup.Wrap(figureText, 1)}";
+        var containerId = await ArrangeContainerAsync(
+            markdown: "Invoice A whole body", asContainer: true, markedMarkdown: marked);
+
+        var figureKey = ContentHasher.Sha256Hex(Encoding.UTF8.GetBytes(figureText));
+        // The figure was routed by the embedded run; #355 then re-recognized the doc as a container -> marker cleared.
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var fig = new DocumentSegment(
+                _guidGenerator.Create(), tenantId: null, sourceDocumentId: containerId,
+                segmentKey: figureKey, sliceText: figureText, ordinal: 0, kind: DocumentSegmentKind.Figure);
+            fig.MarkSpawned(_guidGenerator.Create());
+            await _segmentRepository.InsertAsync(fig, autoSave: true);
+        });
+
+        // The container re-split returns ONLY the one text constituent (it omits the figure boundary this run).
+        StubSplit(("Invoice A whole body", true));
+
+        await _job.ExecuteAsync(new DocumentSegmentationJobArgs { SourceDocumentId = containerId });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var segments = await _segmentRepository.GetListAsync(s => s.SourceDocumentId == containerId);
+            // Surviving figure + the newly persisted text = a real 2-constituent bundle; NOT flagged incomplete.
+            segments.Count.ShouldBe(2);
+            segments.Count(s => s.Kind == DocumentSegmentKind.Figure).ShouldBe(1);
+            segments.Count(s => s.Kind == DocumentSegmentKind.Text).ShouldBe(1);
+
+            var container = await _documentRepository.GetAsync(containerId);
+            container.ReviewReasons.ShouldBe(DocumentReviewReasons.None);
+            container.IsSegmented.ShouldBeTrue();
+        });
+    }
+
+    [Fact]
+    public async Task Figure_Only_Container_Does_Not_Re_Run_The_Llm_On_Re_Enqueue()
+    {
+        // #377 edge 2: a figure-only container (a real ≥2-figure bundle, zero Text) is split successfully, setting the
+        // IsSegmented marker. A re-enqueue (e.g. a re-classification that KEEPS it a container) must NOT re-run the
+        // LLM — the old Kind-based resume (keyed on a Text row) re-ran forever for a figure-only container, and a
+        // divergent re-split could append spurious figure rows. The precise marker stops the re-run.
+        var marked = $"{ImageOcrMarkup.Wrap("FIGURE INVOICE A", 1)}\n{ImageOcrMarkup.Wrap("FIGURE INVOICE B", 2)}";
+        var containerId = await ArrangeContainerAsync(
+            markdown: "scan bundle", asContainer: true, markedMarkdown: marked);
+
+        StubSplit(
+            (ImageOcrMarkup.OpenPagePrefix + "1]", true),
+            (ImageOcrMarkup.OpenPagePrefix + "2]", true));
+
+        // First run: splits the two figures, persists them, sets IsSegmented.
+        await _job.ExecuteAsync(new DocumentSegmentationJobArgs { SourceDocumentId = containerId });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var segments = await _segmentRepository.GetListAsync(s => s.SourceDocumentId == containerId);
+            segments.Count.ShouldBe(2);
+            segments.ShouldAllBe(s => s.Kind == DocumentSegmentKind.Figure);
+            (await _documentRepository.GetAsync(containerId)).IsSegmented.ShouldBeTrue();
+        });
+
+        _workflow.ClearReceivedCalls();
+
+        // Re-enqueue (still a container): the marker is set, so Phase A must NOT re-run the LLM and nothing is appended.
+        await _job.ExecuteAsync(new DocumentSegmentationJobArgs { SourceDocumentId = containerId });
+
+        await _workflow.DidNotReceive().RunAsync(
+            Arg.Any<string>(), Arg.Any<SubDocumentDetectionContext>(), Arg.Any<CancellationToken>());
+        await WithUnitOfWorkAsync(async () =>
+            (await _segmentRepository.GetListAsync(s => s.SourceDocumentId == containerId)).Count.ShouldBe(2));
+    }
+
+    [Fact]
     public async Task Untrusted_Split_Flags_Container_And_Spawns_Nothing()
     {
         var containerId = await ArrangeContainerAsync("Invoice A first\nInvoice B second");
@@ -358,11 +438,15 @@ public class DocumentSegmentationJob_Tests : DocumentAITestBase<DocumentSegmenta
     {
         var containerId = await ArrangeContainerAsync("Invoice A first\nInvoice B second");
 
-        // Simulate a crash after the split persisted but before any spawn: two Pending segments already exist.
+        // Simulate a crash after the split persisted but before any spawn. The rows and the IsSegmented marker commit
+        // atomically (#377), so a realistic crashed-after-split state has both: two Pending segments + the marker.
         await WithUnitOfWorkAsync(async () =>
         {
             await _segmentRepository.InsertAsync(NewSegment(containerId, "Invoice A first", 0), autoSave: true);
             await _segmentRepository.InsertAsync(NewSegment(containerId, "Invoice B second", 1), autoSave: true);
+            var doc = await _documentRepository.GetAsync(containerId);
+            doc.MarkSegmented();
+            await _documentRepository.UpdateAsync(doc, autoSave: true);
         });
 
         await _job.ExecuteAsync(new DocumentSegmentationJobArgs { SourceDocumentId = containerId });
@@ -446,6 +530,7 @@ public class DocumentSegmentationJob_Tests : DocumentAITestBase<DocumentSegmenta
         {
             var container = await _documentRepository.GetAsync(containerId);
             container.SetReviewReason(DocumentReviewReasons.SegmentationIncomplete, present: true);
+            container.MarkSegmented(); // #377: a successful prior split set the marker atomically with the rows
             await _documentRepository.UpdateAsync(container, autoSave: true);
 
             // Two segments already fully Spawned (as if a concurrent worker finished them).
