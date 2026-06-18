@@ -25,8 +25,10 @@ namespace Dignite.DocumentAI.Documents.Segments;
 /// written fresh from it at spawn time (derived-owned, so it outlives the container). <see cref="SegmentKey"/> is
 /// the SHA-256 of the slice text and doubles as the derived document's <c>FileOrigin.ContentHash</c> /
 /// <c>OriginConstituentKey</c>, giving idempotent routing (unique <c>(SourceDocumentId, SegmentKey)</c>);
-/// <see cref="Ordinal"/> is reading-order provenance only. Re-running segmentation is barred (container status is
-/// sticky, #346), so a key collision only ever comes from a job retry, never a deliberate re-split.
+/// <see cref="Ordinal"/> is reading-order provenance only. A container's status is sticky (#346), so within one mode
+/// a key collision only ever comes from a job retry; the one cross-mode case — a concrete document's embedded-figure
+/// row surviving into a later container re-recognition (#355) — is handled by the mode-aware, idempotent re-split in
+/// <c>DocumentSegmentationJob</c> (#372), which skips the already-persisted key and continues the ordinal.
 /// </para>
 /// </summary>
 public class DocumentSegment : CreationAuditedAggregateRoot<Guid>, IMultiTenant

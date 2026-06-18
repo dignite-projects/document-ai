@@ -263,6 +263,59 @@ public class DocumentSegmentationJob_Tests : DocumentAITestBase<DocumentSegmenta
     }
 
     [Fact]
+    public async Task Concrete_Doc_With_A_Routed_Figure_Re_Recognized_As_Container_Still_Runs_The_Split()
+    {
+        // #372 (own /code-review): since #371 a concrete document with an embedded figure routes a Kind=Figure segment
+        // (embedded mode). If that document is later re-recognized as a container (#355), the container split must STILL
+        // run and add the bundle's Kind=Text constituents — the leftover Figure row must NOT be mistaken for a completed
+        // split (the pre-#372 "any row exists -> skip" guard would leave the container forever undecomposed), and the
+        // new rows must not collide with it on the unique (SourceDocumentId, Ordinal)/(SourceDocumentId, SegmentKey)
+        // indexes. The container split re-detects that same figure, and it is inserted idempotently (skipped, never
+        // duplicated).
+        var figureText = "INVOICE No 9 Total 9";
+        var marked = $"Invoice A first\n{ImageOcrMarkup.Wrap(figureText, 1)}\nInvoice B second";
+        var containerId = await ArrangeContainerAsync(
+            markdown: "Invoice A first\nInvoice B second", asContainer: true, markedMarkdown: marked);
+
+        var figureKey = ContentHasher.Sha256Hex(Encoding.UTF8.GetBytes(figureText));
+        // Pre-seed the figure already routed by the prior concrete-embedded run: Kind=Figure, Ordinal 0, Spawned.
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var fig = new DocumentSegment(
+                _guidGenerator.Create(), tenantId: null, sourceDocumentId: containerId,
+                segmentKey: figureKey, sliceText: figureText, ordinal: 0, kind: DocumentSegmentKind.Figure);
+            fig.MarkSpawned(_guidGenerator.Create());
+            await _segmentRepository.InsertAsync(fig, autoSave: true);
+        });
+
+        // The container split re-detects all three spans, INCLUDING the already-routed figure.
+        StubSplit(
+            ("Invoice A first", true),
+            (ImageOcrMarkup.OpenPagePrefix + "1]", true),
+            ("Invoice B second", true));
+
+        await _job.ExecuteAsync(new DocumentSegmentationJobArgs { SourceDocumentId = containerId });
+
+        // Phase A ran: the leftover figure row did NOT short-circuit the container split (contrast the resume tests).
+        await _workflow.Received().RunAsync(
+            Arg.Any<string>(), Arg.Any<SubDocumentDetectionContext>(), Arg.Any<CancellationToken>());
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var segments = await _segmentRepository.GetListAsync(s => s.SourceDocumentId == containerId);
+            // The pre-existing figure (kept) + the two new text constituents — no duplicate figure, no ordinal collision.
+            segments.Count.ShouldBe(3);
+            segments.Count(s => s.SegmentKey == figureKey).ShouldBe(1);
+            segments.Single(s => s.SegmentKey == figureKey).Kind.ShouldBe(DocumentSegmentKind.Figure);
+            segments.Count(s => s.Kind == DocumentSegmentKind.Text).ShouldBe(2);
+            segments.Select(s => s.Ordinal).Distinct().Count().ShouldBe(3);
+
+            // The two text constituents spawned; the figure was already Spawned and is not re-spawned.
+            (await _documentRepository.GetListAsync(d => d.OriginDocumentId == containerId)).Count.ShouldBe(2);
+        });
+    }
+
+    [Fact]
     public async Task Untrusted_Split_Flags_Container_And_Spawns_Nothing()
     {
         var containerId = await ArrangeContainerAsync("Invoice A first\nInvoice B second");

@@ -109,8 +109,10 @@ public class DocumentSegmentationJob
             return; // document removed before the pass ran
         }
 
-        // Phase A: detect once. If a prior run already persisted segment rows, skip the LLM (resumable, no re-split).
-        if (!context.HasExistingSegments)
+        // Phase A: detect once. If THIS mode's split already persisted rows, skip the LLM (resumable, no re-split).
+        // The skip is mode-aware (#372): a Figure row left by an earlier concrete-embedded run does not count as a
+        // completed container split, so a re-recognized container still runs.
+        if (!context.HasExistingSplit)
         {
             await DetectAndPersistAsync(context, cancellationToken);
         }
@@ -140,11 +142,11 @@ public class DocumentSegmentationJob
         }
     }
 
-    /// <summary>Load phase (short UoW + a post-UoW blob read): snapshot the source's tenant/uploader, marked Markdown, container flag, parent context, and whether segment rows already exist.</summary>
+    /// <summary>Load phase (short UoW + a post-UoW blob read): snapshot the source's tenant/uploader, marked Markdown, container flag, parent context, and whether THIS mode's split already produced rows (#372, mode-aware).</summary>
     protected virtual async Task<DetectionContext?> LoadAsync(Guid sourceDocumentId)
     {
         Document? source;
-        bool hasExistingSegments;
+        bool hasExistingSplit;
         string? parentTypeCode = null;
         string? parentTypeDisplayName = null;
 
@@ -159,8 +161,18 @@ public class DocumentSegmentationJob
                 return null;
             }
 
-            hasExistingSegments =
-                await _segmentRepository.FirstOrDefaultAsync(s => s.SourceDocumentId == sourceDocumentId) is not null;
+            // #372: the resume skip is MODE-AWARE. Since #371 a concrete document with an embedded figure routes a
+            // Kind=Figure segment (embedded mode); if that document is later re-recognized as a container (#355), the
+            // container split — which yields the bundle's Kind=Text constituents — must STILL run. Keying the skip on
+            // "any segment row exists" would treat the leftover figure row as a completed split and leave the container
+            // forever undecomposed. So a container resumes (skips re-detection) only once a Text row exists; an
+            // embedded-document source only once a Figure row exists. (A rare figure-only container re-runs the LLM on
+            // a retry, but DetectAndPersistAsync inserts idempotently, so that is safe.)
+            var existingKinds = (await _segmentRepository.GetListAsync(s => s.SourceDocumentId == sourceDocumentId))
+                .ConvertAll(s => s.Kind);
+            hasExistingSplit = source.IsContainer
+                ? existingKinds.Contains(DocumentSegmentKind.Text)
+                : existingKinds.Contains(DocumentSegmentKind.Figure);
 
             // Best-effort parent type for the gate's "standalone vs element-of-parent" grounding (#365). The
             // container path has none (DocumentTypeId null); the embedded-document path has the parent's concrete
@@ -194,7 +206,7 @@ public class DocumentSegmentationJob
             source.FileOrigin.UploadedByUserName,
             markedMarkdown,
             source.IsContainer,
-            hasExistingSegments,
+            hasExistingSplit,
             detection);
     }
 
@@ -329,20 +341,37 @@ public class DocumentSegmentationJob
         using (_currentTenant.Change(context.TenantId))
         using (var uow = _unitOfWorkManager.Begin(requiresNew: true))
         {
-            // Concurrency guard: another run may have committed segments between LoadAsync and here. Re-check inside
-            // the UoW; if so, drop this split and let Phase B spawn from the committed rows (no double-split).
-            if (await _segmentRepository.FirstOrDefaultAsync(s => s.SourceDocumentId == context.SourceDocumentId) is not null)
+            var existing = await _segmentRepository.GetListAsync(s => s.SourceDocumentId == context.SourceDocumentId);
+
+            // Concurrency + resume re-check, mode-aware (#372): another run — or an earlier pass in a DIFFERENT mode —
+            // may have committed rows between LoadAsync and here. Re-check the same mode-aware signal as LoadAsync: a
+            // committed split FOR THIS MODE means drop this one and let Phase B spawn from the committed rows. A Figure
+            // row left by a prior concrete-embedded run is NOT a committed container split, so a re-recognized
+            // container still proceeds to add its Text constituents.
+            var alreadySplit = context.IsContainer
+                ? existing.Exists(s => s.Kind == DocumentSegmentKind.Text)
+                : existing.Exists(s => s.Kind == DocumentSegmentKind.Figure);
+            if (alreadySplit)
             {
                 await uow.CompleteAsync();
                 return;
             }
 
-            // Ordinal is numbered 0..N over the persisted (spawnable) rows so the unique (SourceDocumentId, Ordinal)
-            // index makes two concurrent splits collide on Ordinal 0 — only one split survives; the loser resumes
-            // from the winner's rows.
-            var ordinal = 0;
+            // Idempotent insert (#372): skip a span already persisted by an earlier pass in another mode (e.g. the
+            // figure a concrete-embedded run already routed, now re-detected by the container split — identical content
+            // hash), and number Ordinal AFTER the existing rows so the unique (SourceDocumentId, Ordinal) index never
+            // collides with them. Two CONCURRENT splits of the same mode still collide (both start past the same
+            // baseline on either the Ordinal or the SegmentKey unique index) — only one wins; the loser's UoW throws
+            // and the job resumes from the winner's rows.
+            var existingKeys = existing.ConvertAll(s => s.SegmentKey).ToHashSet(StringComparer.Ordinal);
+            var ordinal = existing.Count == 0 ? 0 : existing.Max(s => s.Ordinal) + 1;
             foreach (var p in prepared)
             {
+                if (!existingKeys.Add(p.Key))
+                {
+                    continue; // already persisted by an earlier pass — same content, same identity
+                }
+
                 await _segmentRepository.InsertAsync(new DocumentSegment(
                     _guidGenerator.Create(),
                     context.TenantId,
@@ -620,7 +649,7 @@ public class DocumentSegmentationJob
         string UploadedByUserName,
         string MarkedMarkdown,
         bool IsContainer,
-        bool HasExistingSegments,
+        bool HasExistingSplit,
         SubDocumentDetectionContext Detection);
 
     /// <summary>A standalone span prepared for persistence: its content key, clean slice text, kind, and figure page anchor.</summary>
