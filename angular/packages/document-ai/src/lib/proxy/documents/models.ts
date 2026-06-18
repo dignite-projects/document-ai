@@ -80,6 +80,7 @@ export interface GetDocumentListInput extends PagedAndSortedResultRequestDto {
   hasReviewReasons?: boolean | null;
   isDeleted?: boolean | null;
   cabinetId?: string | null;
+  originDocumentId?: string | null;
   fieldFilters?: DocumentFieldFilter[] | null;
 }
 
