@@ -342,12 +342,16 @@ public class DocumentSegmentationJob
             return;
         }
 
-        // Cap the NEW rows inserted in one UoW (blast-radius bound the option promises).
-        if (newCount > _behaviorOptions.MaxSegmentsPerDocument)
+        // Cap the document's TOTAL constituents (already-routed cross-mode rows + this run's new ones), consistent
+        // with the ≥2 floor above — so a cross-mode lifecycle (a concrete doc routes N figures, then is re-recognized
+        // as a container that splits M texts) cannot accumulate past the per-document bound the option promises
+        // (#377 review). For a fresh split (no existing rows) this is exactly this run's count, unchanged.
+        var totalConstituents = existingKeys.Count + newCount;
+        if (totalConstituents > _behaviorOptions.MaxSegmentsPerDocument)
         {
             await IncompleteOrSkipAsync(
                 context,
-                $"the split produced {newCount} sub-documents, over the MaxSegmentsPerDocument limit of {_behaviorOptions.MaxSegmentsPerDocument}");
+                $"the document would have {totalConstituents} sub-documents, over the MaxSegmentsPerDocument limit of {_behaviorOptions.MaxSegmentsPerDocument}");
             return;
         }
 
@@ -533,6 +537,15 @@ public class DocumentSegmentationJob
     /// Phase-A degradation: a container raises the <see cref="DocumentReviewReasons.SegmentationIncomplete"/> review
     /// signal (it produced no usable sub-documents and must not silently yield zero); an embedded-document parent
     /// just logs and returns (it extracts normally — a failed figure route is not the parent's problem).
+    /// <para>
+    /// #377-review note (accepted trade-off): unlike the success and no-op paths, this degradation deliberately does
+    /// <b>not</b> set <c>Document.IsSegmented</c> on the embedded path, so a later re-recognition re-runs the LLM
+    /// split. That is intentional — a schema-drift / un-verifiable-boundary outcome is usually a transient LLM
+    /// hiccup that a retry can resolve, and the figure's transcription stays inline in the parent's Markdown
+    /// meanwhile (no data loss). The cost is a re-paid detection call on each operator-driven re-recognition of a
+    /// persistently-failing figure route; it is bounded (the job returns cleanly, so ABP does not auto-retry — only
+    /// operator action re-enqueues) and low-severity, accepted in favour of recoverability over cost-suppression.
+    /// </para>
     /// </summary>
     private async Task IncompleteOrSkipAsync(DetectionContext context, string reason)
     {
