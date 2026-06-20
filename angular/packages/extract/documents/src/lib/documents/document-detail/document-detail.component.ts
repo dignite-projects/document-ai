@@ -11,7 +11,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { forkJoin, of, switchMap, tap } from 'rxjs';
 import { ActivatedRoute, Router } from '@angular/router';
-import { CommonModule } from '@angular/common';
+import { CommonModule, Location } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { marked } from 'marked';
 import { LocalizationPipe, LocalizationService, PermissionService } from '@abp/ng.core';
@@ -73,6 +73,7 @@ const KNOWN_PIPELINE_CODES = [
 export class DocumentDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly location = inject(Location);
   private readonly documentService = inject(DocumentService);
   private readonly documentPipelineRunService = inject(DocumentPipelineRunService);
   private readonly documentTypeService = inject(DocumentTypeService);
@@ -483,7 +484,16 @@ export class DocumentDetailComponent implements OnInit {
   }
 
   goBack(): void {
-    this.router.navigate(['/documents/list']);
+    // Return to wherever the operator came from — the review queue, the list, a cabinet-filtered view, etc.
+    // — instead of always the list. The Angular Router stamps an incrementing navigationId on history.state;
+    // it is > 1 once any in-app navigation has happened, and 1 on a direct deep-link / refresh (no in-app
+    // history to pop). Fall back to the list in that case so Back never leaves the app.
+    const navId = (this.location.getState() as { navigationId?: number } | null)?.navigationId;
+    if (navId && navId > 1) {
+      this.location.back();
+    } else {
+      this.router.navigate(['/documents/list']);
+    }
   }
 
   delete(): void {
