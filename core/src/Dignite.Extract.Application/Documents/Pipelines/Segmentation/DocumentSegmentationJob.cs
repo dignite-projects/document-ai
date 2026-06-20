@@ -136,7 +136,7 @@ public class DocumentSegmentationJob
         }
     }
 
-    /// <summary>Load phase (short UoW): snapshot the source's tenant/uploader, Document.Markdown (with inline figure markers, #381), container flag, parent context, and whether the document is already marked segmented (#377, the precise resume gate).</summary>
+    /// <summary>Load phase (short UoW): snapshot the source's tenant, Document.Markdown (with inline figure markers, #381), container flag, parent context, and whether the document is already marked segmented (#377, the precise resume gate).</summary>
     protected virtual async Task<DetectionContext?> LoadAsync(Guid sourceDocumentId)
     {
         Document? source;
@@ -189,7 +189,6 @@ public class DocumentSegmentationJob
         return new DetectionContext(
             sourceDocumentId,
             source.TenantId,
-            source.FileOrigin?.UploadedByUserName ?? string.Empty,
             markdown,
             source.IsContainer,
             alreadySegmented,
@@ -422,7 +421,7 @@ public class DocumentSegmentationJob
 
         var snapshot = pending
             .OrderBy(s => s.Ordinal)
-            .Select(s => new PendingSegment(s.Id, s.SegmentKey, s.SliceText, s.Ordinal))
+            .Select(s => new PendingSegment(s.Id, s.SegmentKey, s.Ordinal))
             .ToList();
 
         await uow.CompleteAsync();
@@ -619,11 +618,10 @@ public class DocumentSegmentationJob
     private static bool IsSchemaDeserializationError(Exception ex)
         => ex is JsonException || ex.GetBaseException() is JsonException;
 
-    /// <summary>Per-source detection context loaded once up front: provenance, the Document.Markdown to detect over (with inline figure markers, #381), the container flag, whether a prior split exists, and the parent context for the LLM.</summary>
+    /// <summary>Per-source detection context loaded once up front: the source id + tenant, the Document.Markdown to detect over (with inline figure markers, #381), the container flag, whether a prior split exists, and the parent context for the LLM.</summary>
     protected sealed record DetectionContext(
         Guid SourceDocumentId,
         Guid? TenantId,
-        string UploadedByUserName,
         string Markdown,
         bool IsContainer,
         bool AlreadySegmented,
@@ -632,8 +630,10 @@ public class DocumentSegmentationJob
     /// <summary>A standalone span prepared for persistence: its content key, clean slice text, kind, and figure page anchor.</summary>
     private sealed record PreparedSegment(string Key, string CleanText, DocumentSegmentKind Kind, int? PageNumber);
 
-    /// <summary>Detached snapshot of one still-Pending segment, carried across the per-segment external + UoW phases.</summary>
-    protected sealed record PendingSegment(Guid SegmentId, string SegmentKey, string SliceText, int Ordinal);
+    /// <summary>Detached snapshot of one still-Pending segment, carried across the per-segment external + UoW phases.
+    /// Carries no slice text: the spawn path keys off <see cref="SegmentKey"/>, and the derived document's Markdown
+    /// is seeded by <c>DocumentParseBackgroundJob</c> reading the segment's <c>SliceText</c> column fresh from the DB.</summary>
+    protected sealed record PendingSegment(Guid SegmentId, string SegmentKey, int Ordinal);
 }
 
 public class DocumentSegmentationJobArgs

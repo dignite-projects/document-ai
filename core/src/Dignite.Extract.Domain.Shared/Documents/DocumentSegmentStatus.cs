@@ -13,8 +13,5 @@ public enum DocumentSegmentStatus
     Pending = 0,
 
     /// <summary>Spawned into a derived <c>Document</c> (recorded in <see cref="DocumentSegment.RoutedDocumentId"/>).</summary>
-    Spawned = 1,
-
-    /// <summary>The LLM classified the slice as a non-document segment (cover / index / transmittal); not spawned.</summary>
-    NotADocument = 2
+    Spawned = 1
 }
