@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-20
+
 ### Changed
 
 - **Cross-database portability for layer-scoped uniqueness** — replaced the four soft-delete-filtered unique indexes on `DocumentTypes` (`TenantId, TypeCode`), `FieldDefinitions` (`TenantId, DocumentTypeId, Name`), `ExportTemplates` (`TenantId, Name`), and `Cabinets` (`TenantId, Name`) with application-layer uniqueness enforcement in dedicated domain services (`DocumentTypeManager` / `FieldDefinitionManager` / `ExportTemplateManager` / `CabinetManager`), #304. The schema now emits no provider-specific index DDL (no `HasFilter("IsDeleted = 0")` literal, no reliance on SQL Server's "unique index treats NULLs as equal" semantics) and applies cleanly on SQL Server and PostgreSQL — removing the v0.1.0 SQL-Server-only baseline caveat. Layer-scoped uniqueness (same key allowed across the Host / tenant layers, rejected within a layer), the soft-delete-aware `delete → recreate → restore` semantics, and the egress `(TenantId, DocumentTypeCode)` contract are all unchanged; the only behavioral change is an accepted TOCTOU race window on these low-frequency, admin-managed configuration entities.
@@ -42,5 +44,6 @@ First public release of Dignite Extract — a **channel layer** that turns physi
 - **Webhook exit is not yet implemented** — the exit contract names four exits (REST / MCP server / EventBus / Webhook); this release ships the first three.
 - **MCP server is pull-only** — no resource subscriptions or lifecycle notifications yet (follow-up increment, #197).
 
-[Unreleased]: https://github.com/dignite-projects/dignite-extract/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dignite-projects/dignite-extract/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dignite-projects/dignite-extract/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dignite-projects/dignite-extract/releases/tag/v0.1.0
