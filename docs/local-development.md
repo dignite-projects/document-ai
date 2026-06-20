@@ -114,8 +114,10 @@ The API will be available at `https://localhost:44348`. Swagger UI: `https://loc
 
 ## Running the Angular frontend
 
+The Angular SPA lives in the repository-root `angular/` directory (an Nx workspace):
+
 ```bash
-cd host/angular
+cd angular
 npm install
 npm start
 ```
@@ -131,13 +133,30 @@ Default credentials (seeded on first run):
 
 ---
 
+## Regenerating HTTP client proxies
+
+After adding or modifying backend API endpoints, regenerate the Angular HTTP client proxies so the frontend stays in sync. The backend API must be running first (`dotnet run` in `host/src`).
+
+```bash
+cd angular
+npm run generate-proxy
+```
+
+This uses `@abp/nx.generators` (a local Nx generator — no global `nx` or `ng` install needed) to read the Swagger spec from `https://localhost:44348` and regenerate the proxy files under `angular/packages/extract/src/lib/proxy/`.
+
+> Do **not** use `abp generate-proxy -t ng` (requires `angular.json`, which Nx projects don't have) or bare `nx g` / `ng g` (require global installs). `npm run generate-proxy` is the only correct entry point.
+
+Commit the regenerated proxy files together with the API change.
+
+---
+
 ## Full startup checklist
 
 1. SQL Server is running and the target database (e.g. `Dignite Extract-Dev`) is reachable
 2. `docker compose up -d paddleocr` completed successfully in `host/` (only required if you upload scanned documents)
 3. `host/src/appsettings.Development.json` exists with a valid connection string, passphrase, and `Extract` provider config (the host won't start without it — see [Backend configuration](#backend-configuration))
 4. `dotnet run` started without errors in `host/src`
-5. `npm start` started in `host/angular`
+5. `npm start` started in `angular/`
 
 ---
 
