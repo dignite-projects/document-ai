@@ -82,10 +82,11 @@ public class DocumentSegment : CreationAuditedAggregateRoot<Guid>, IMultiTenant
 
     /// <summary>
     /// Routing progress (#346): <see cref="DocumentSegmentStatus.Pending"/> until the job spawns this slice,
-    /// then <see cref="DocumentSegmentStatus.Spawned"/> (see <see cref="RoutedDocumentId"/>) or
-    /// <see cref="DocumentSegmentStatus.NotADocument"/> (the LLM marked the slice a cover / index / transmittal).
-    /// This is the durable, resumable work-queue marker that lets the job crash and resume from the remaining
+    /// then <see cref="DocumentSegmentStatus.Spawned"/> (see <see cref="RoutedDocumentId"/>). This is the durable,
+    /// resumable work-queue marker that lets the job crash and resume from the remaining
     /// <see cref="DocumentSegmentStatus.Pending"/> slices without duplicate-spawning or re-paying the LLM split.
+    /// A slice the LLM marks as a non-document span (cover / index / transmittal) is never persisted as a row —
+    /// the detection pass skips it rather than recording a terminal "not a document" state.
     /// </summary>
     public virtual DocumentSegmentStatus Status { get; private set; }
 
