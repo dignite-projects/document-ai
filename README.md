@@ -85,7 +85,16 @@ cd host/src
 abp install-libs
 ```
 
-### 4. Run the backend
+### 4. Initialize the database (first run only)
+
+```bash
+cd host/src
+dotnet run --migrate-database
+```
+
+This creates the database schema and seeds the admin account (`admin` / `1q2w3E*`). Only needed once per fresh database.
+
+### 5. Run the backend
 
 ```bash
 cd host/src
@@ -94,7 +103,7 @@ dotnet run
 
 API: `https://localhost:44348`. Swagger: `https://localhost:44348/swagger`.
 
-### 5. Install frontend dependencies and run Angular
+### 6. Install frontend dependencies and run Angular
 
 The Angular SPA lives in the repository-root `angular/` directory (an Nx workspace):
 
