@@ -122,7 +122,7 @@
     <div class="card shadow-sm document-list-table">
       <div class="card-body p-0">
         <ng-template #actionsTemplate let-doc>
-          @if ((needsConfirmation(doc) && canConfirm) || canDelete || doc.isContainer) {
+          @if ((needsConfirmation(doc) && canConfirm) || canDelete || doc.isContainer || doc.originDocumentId) {
             <div ngbDropdown container="body" class="d-inline-block" (click)="$event.stopPropagation()">
               <button type="button" class="btn btn-sm btn-primary" ngbDropdownToggle>
                 {{ 'AbpUi::Actions' | abpLocalization }}
@@ -132,6 +132,16 @@
                   <button type="button" ngbDropdownItem (click)="viewSubDocuments(doc, $event)">
                     <i class="fas fa-sitemap me-2"></i>
                     {{ '::Document:ViewSubDocuments' | abpLocalization }}
+                  </button>
+                }
+                @if (doc.originDocumentId) {
+                  <button type="button" ngbDropdownItem (click)="openParentDocument(doc, $event)">
+                    <i class="fas fa-arrow-up me-2"></i>
+                    {{ '::Document:ViewParentDocument' | abpLocalization }}
+                  </button>
+                  <button type="button" ngbDropdownItem (click)="viewSiblingDocuments(doc, $event)">
+                    <i class="fas fa-sitemap me-2"></i>
+                    {{ '::Document:ViewSiblingDocuments' | abpLocalization }}
                   </button>
                 }
                 @if (needsConfirmation(doc) && canConfirm) {

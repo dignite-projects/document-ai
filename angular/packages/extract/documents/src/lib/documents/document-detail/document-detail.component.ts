@@ -98,6 +98,11 @@ export class DocumentDetailComponent implements OnInit {
   );
 
   document = signal<DocumentDto | null>(null);
+  // #306/#354: when this document is a sub-document (originDocumentId set), the source/container document
+  // loaded for the provenance banner so it can show the parent's title instead of a raw id. null when this
+  // is a normal document, or when the parent is inaccessible (soft-deleted / cross-layer) — the banner then
+  // falls back to the id.
+  parentDocument = signal<DocumentDto | null>(null);
   // #216: PipelineRun was split into an independent aggregate root and removed from
   // DocumentDto.pipelineRuns. It is now an independent signal loaded separately through
   // DocumentPipelineRunService in loadDocument.
@@ -198,6 +203,11 @@ export class DocumentDetailComponent implements OnInit {
   isReady = computed(() =>
     this.document()?.lifecycleStatus === DocumentLifecycleStatus.Ready
   );
+
+  // #306/#354: this document was derived from a constituent of another (container) document. Drives the
+  // provenance banner and its "view parent / view siblings" navigation. originDocumentId is a system signal
+  // carried on the Document output contract (DocumentDto), null for normally-uploaded documents.
+  isSubDocument = computed(() => !!this.document()?.originDocumentId);
 
   // True when any critical pipeline, text extraction or classification, has an in-progress run
   // (Pending/Running).
@@ -361,6 +371,13 @@ export class DocumentDetailComponent implements OnInit {
           if (doc.documentTypeCode) {
             this.loadFieldDefinitions(doc.documentTypeCode);
           }
+          // #306/#354: a sub-document carries its source (container) id. Fetch the parent's lightweight
+          // metadata so the provenance banner can show its title; reset first so a previous document's
+          // parent never lingers when navigating between documents in the same component instance.
+          this.parentDocument.set(null);
+          if (doc.originDocumentId) {
+            this.loadParentDocument(doc.originDocumentId);
+          }
           // Cabinet name mapping: fetch only when Cabinets.Default is granted and not already loaded. If
           // there is no permission, the cabinet row is hidden.
           if (this.canViewCabinets && this.cabinets().length === 0) {
@@ -405,6 +422,18 @@ export class DocumentDetailComponent implements OnInit {
       .subscribe({
         next: list => this.cabinets.set(list),
         error: () => this.cabinets.set([]),
+      });
+  }
+
+  // #306/#354: load the source (container) document of a sub-document for the provenance banner. A
+  // soft-deleted or cross-layer parent (404 / filtered) just leaves parentDocument null so the banner
+  // falls back to the id — it never blocks the sub-document's own page.
+  private loadParentDocument(originDocumentId: string): void {
+    this.documentService.get(originDocumentId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: parent => this.parentDocument.set(parent),
+        error: () => this.parentDocument.set(null),
       });
   }
 
@@ -494,6 +523,21 @@ export class DocumentDetailComponent implements OnInit {
     } else {
       this.router.navigate(['/documents/list']);
     }
+  }
+
+  // #354: open this sub-document's source (container) document.
+  openParentDocument(): void {
+    const originDocumentId = this.document()?.originDocumentId;
+    if (!originDocumentId) return;
+    this.router.navigate(['/documents', originDocumentId]);
+  }
+
+  // #354: list the sibling sub-documents (all those derived from the same source, including this one),
+  // reusing the list's originDocumentId provenance filter via a deep-link query param.
+  viewSiblingDocuments(): void {
+    const originDocumentId = this.document()?.originDocumentId;
+    if (!originDocumentId) return;
+    this.router.navigate(['/documents/list'], { queryParams: { originDocumentId } });
   }
 
   delete(): void {

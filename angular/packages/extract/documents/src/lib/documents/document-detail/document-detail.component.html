@@ -79,6 +79,30 @@
   }
 
   @if (document()) {
+    <!-- Sub-document provenance banner (#306/#354): this document was derived from a container document.
+         Offer navigation back to the source and to its sibling sub-documents. -->
+    @if (isSubDocument()) {
+      <div class="alert alert-info d-flex flex-wrap align-items-center gap-2 mb-3" role="alert">
+        <i class="fas fa-sitemap me-1"></i>
+        <span>
+          {{ '::Document:SubDocumentOf' | abpLocalization }}
+          <strong>{{
+            parentDocument()?.title ||
+              parentDocument()?.fileOrigin?.originalFileName ||
+              document()!.originDocumentId
+          }}</strong>
+        </span>
+        <div class="ms-auto d-flex gap-2">
+          <button type="button" class="btn btn-sm btn-outline-primary" (click)="openParentDocument()">
+            <i class="fas fa-arrow-up me-1"></i>{{ '::Document:ViewParentDocument' | abpLocalization }}
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" (click)="viewSiblingDocuments()">
+            <i class="fas fa-sitemap me-1"></i>{{ '::Document:ViewSiblingDocuments' | abpLocalization }}
+          </button>
+        </div>
+      </div>
+    }
+
     <!-- Review / processing banner -->
     @if (needsReview()) {
       <div class="alert alert-warning d-flex align-items-center mb-3" role="alert">
