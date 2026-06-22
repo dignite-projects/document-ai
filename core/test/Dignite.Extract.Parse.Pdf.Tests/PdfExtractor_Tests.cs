@@ -673,4 +673,54 @@ public class PdfExtractor_Tests
         stamp.ShouldBeLessThan(table);
         result.Markdown.ShouldNotContain("| DRAFT"); // and it is not pulled into the table as a cell
     }
+
+    [Fact]
+    public async Task Maps_font_sizes_to_markdown_headings_and_merges_a_wrapped_title()
+    {
+        // #403: font size + weight encode hierarchy. Body (11pt, the bulk of the characters) is the mode; the
+        // distinct larger sizes are ranked into heading levels. A 20pt title wrapped across two lines becomes a
+        // single `#`; a 12pt BOLD section heading (only 1pt above body) becomes `##` via the weight corroboration;
+        // a 12pt NON-bold line stays body (the weak-gap guard); ordinary 11pt body is not headingified.
+        var pdf = PdfFixtures.BuildStyled(new[]
+        {
+            ("Annual Service Report For The", 50.0, 750.0, 20.0, true),       // title line 1 (H1)
+            ("Two Thousand Twenty Six Period", 50.0, 722.0, 20.0, true),      // title line 2 (wraps the title)
+
+            ("Overview Section", 50.0, 686.0, 12.0, true),                    // bold, 1pt above body → H2
+
+            ("This is the overview body paragraph and it carries enough", 50.0, 660.0, 11.0, false),
+            ("regular weight characters to be the dominant body font size.", 50.0, 638.0, 11.0, false),
+
+            ("Plain Twelve Point Line Not Bold", 50.0, 612.0, 12.0, false)    // 12pt but not bold → stays body
+        });
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(pdf), PdfContext());
+
+        // The two title lines merge into one H1.
+        result.Markdown.ShouldContain("# Annual Service Report For The Two Thousand Twenty Six Period");
+        // The bold section heading is H2.
+        result.Markdown.ShouldContain("## Overview Section");
+        // Body prose is present but not a heading.
+        result.Markdown.ShouldContain("This is the overview body paragraph");
+        result.Markdown.ShouldNotContain("# This is the overview");
+        // A 12pt non-bold line is body, not a heading (weak-gap guard rejects size alone).
+        result.Markdown.ShouldContain("Plain Twelve Point Line Not Bold");
+        result.Markdown.ShouldNotContain("# Plain Twelve Point Line");
+    }
+
+    [Fact]
+    public async Task Leaves_a_single_font_size_document_heading_free()
+    {
+        // No typographic hierarchy (one size throughout) → no headings invented.
+        var pdf = PdfFixtures.BuildStyled(new[]
+        {
+            ("First paragraph of a uniform document.", 50.0, 700.0, 11.0, false),
+            ("Second paragraph at the very same size.", 50.0, 660.0, 11.0, false)
+        });
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(pdf), PdfContext());
+
+        result.Markdown.ShouldContain("First paragraph");
+        result.Markdown.ShouldNotContain("#");
+    }
 }

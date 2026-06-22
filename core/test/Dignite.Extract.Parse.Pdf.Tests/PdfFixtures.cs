@@ -71,6 +71,27 @@ internal static class PdfFixtures
     }
 
     /// <summary>
+    /// Builds a single-page PDF with text at explicit (X, baseline) positions, each with its own font size and
+    /// weight — needed to exercise font-size → heading detection (#403). Bold uses Helvetica-Bold (font name
+    /// contains "Bold", which the heading detector reads as the weight signal).
+    /// </summary>
+    public static byte[] BuildStyled(
+        IReadOnlyList<(string Text, double X, double BaselineY, double FontSize, bool Bold)> texts)
+    {
+        var builder = new PdfDocumentBuilder();
+        var regular = builder.AddStandard14Font(Standard14Font.Helvetica);
+        var bold = builder.AddStandard14Font(Standard14Font.HelveticaBold);
+        var page = builder.AddPage(PageWidth, PageHeight);
+
+        foreach (var (text, x, baselineY, fontSize, isBold) in texts)
+        {
+            page.AddText(text, fontSize, new PdfPoint(x, baselineY), isBold ? bold : regular);
+        }
+
+        return builder.Build();
+    }
+
+    /// <summary>
     /// Builds a multi-page PDF — one page per inner list of (Text, baselineY) lines — needed to exercise the
     /// cross-page running header/footer detection (#383), which has no signal on a single page.
     /// </summary>

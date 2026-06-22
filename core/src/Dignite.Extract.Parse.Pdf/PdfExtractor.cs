@@ -144,6 +144,11 @@ public class PdfExtractor : IMarkdownTextProvider, ITransientDependency
             // document drops nothing.
             var runningContent = PdfRunningHeaderFooter.Detect(pages.ConvertAll(p => p.Words));
 
+            // #403: build the document-wide font-size → heading-level scale once (rank of the distinct sizes
+            // larger than the char-count-weighted body size), then pass it to each page render so larger/bold
+            // lines become Markdown headings. Built from all words; a single-size document yields no headings.
+            var headingScale = PdfHeadingScale.Build(pages.SelectMany(p => p.Words));
+
             for (var pageIndex = 0; pageIndex < pages.Count; pageIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -270,7 +275,7 @@ public class PdfExtractor : IMarkdownTextProvider, ITransientDependency
                     ? pageContent.Words
                     : pageContent.Words.Where(w => !droppable.Contains(w)).ToList();
 
-                var pageMarkdown = PdfReadingOrder.RenderPage(renderWords, figures, _options.ReconstructTables);
+                var pageMarkdown = PdfReadingOrder.RenderPage(renderWords, figures, _options.ReconstructTables, headingScale);
                 if (!string.IsNullOrWhiteSpace(pageMarkdown))
                 {
                     pageMarkdowns.Add(pageMarkdown);

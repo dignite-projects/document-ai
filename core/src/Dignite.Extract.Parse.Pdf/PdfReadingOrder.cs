@@ -46,8 +46,12 @@ internal static class PdfReadingOrder
     /// <summary>An embedded image with its page placement, source page number, and the OCR transcription of its content.</summary>
     public readonly record struct Figure(PdfRectangle Bounds, string Transcription, int? PageNumber = null);
 
-    /// <summary>A reconstructed visual line of the text layer.</summary>
-    public readonly record struct TextLine(PdfRectangle Bounds, string Text);
+    /// <summary>
+    /// A reconstructed visual line of the text layer. <see cref="MaxFontSize"/> (largest glyph point size) and
+    /// <see cref="Bold"/> (line is predominantly bold) carry the typographic signal used for heading detection
+    /// (#403); both default to neutral values so a line built without font data behaves as before.
+    /// </summary>
+    public readonly record struct TextLine(PdfRectangle Bounds, string Text, double MaxFontSize = 0, bool Bold = false);
 
     /// <summary>
     /// A reconstructed visual line plus the <see cref="Word"/> instances it was built from (left-to-right,
@@ -114,10 +118,49 @@ internal static class PdfReadingOrder
         var lines = new List<TextLine>(withWords.Count);
         foreach (var line in withWords)
         {
-            lines.Add(new TextLine(line.Bounds, line.Text));
+            lines.Add(new TextLine(line.Bounds, line.Text, LineMaxFontSize(line.Words), IsLineBold(line.Words)));
         }
 
         return lines;
+    }
+
+    /// <summary>The largest glyph point size on the line (its heading-candidate size, mirroring PyMuPDF4LLM's
+    /// "largest font size of the line"), or 0 when no glyph carries a size.</summary>
+    private static double LineMaxFontSize(IReadOnlyList<Word> words)
+    {
+        var max = 0.0;
+        foreach (var word in words)
+        {
+            foreach (var letter in word.Letters)
+            {
+                if (letter.PointSize > max)
+                {
+                    max = letter.PointSize;
+                }
+            }
+        }
+
+        return max;
+    }
+
+    /// <summary>Whether the majority of the line's glyphs are bold (a fully-bold heading / label line).</summary>
+    private static bool IsLineBold(IReadOnlyList<Word> words)
+    {
+        long total = 0;
+        long bold = 0;
+        foreach (var word in words)
+        {
+            foreach (var letter in word.Letters)
+            {
+                total++;
+                if (PdfHeadingScale.IsBoldFont(letter.FontName))
+                {
+                    bold++;
+                }
+            }
+        }
+
+        return total > 0 && bold * 2 >= total;
     }
 
     /// <summary>
@@ -216,7 +259,7 @@ internal static class PdfReadingOrder
     /// (and is close enough) consumes that line and renders it as the figure block's label, so the caption
     /// is not duplicated in the body text.
     /// </summary>
-    public static string Render(IReadOnlyList<TextLine> lines, IReadOnlyList<Figure> figures)
+    public static string Render(IReadOnlyList<TextLine> lines, IReadOnlyList<Figure> figures, PdfHeadingScale? headingScale = null)
     {
         var medianLineHeight = lines.Count > 0
             ? PdfGeometry.Median(lines.Select(l => l.Bounds.Height))
@@ -269,7 +312,10 @@ internal static class PdfReadingOrder
                 // emphasis / code / link span. The leading BLOCK marker is escaped later, once per folded
                 // paragraph (FlushParagraph), since only a paragraph's first line sits at line start. A figure
                 // transcription is OCR-provider Markdown (intentional structure) and is never escaped.
-                items.Add(Item.ForText(lines[i].Bounds, MarkdownText.EscapeInline(lines[i].Text)));
+                // #403: classify the line as a heading from its font size + boldness (0 = body); a heading line
+                // is emitted as its own "# …" block in step 4, never folded into a paragraph.
+                var headingLevel = headingScale?.ClassifyLine(lines[i].MaxFontSize, lines[i].Bold) ?? 0;
+                items.Add(Item.ForText(lines[i].Bounds, MarkdownText.EscapeInline(lines[i].Text), headingLevel));
             }
         }
 
@@ -333,6 +379,17 @@ internal static class PdfReadingOrder
                 continue;
             }
 
+            if (item.HeadingLevel > 0)
+            {
+                // #403: a heading line is its own block, never folded into a paragraph. Its text was already
+                // inline-escaped; the leading "#"s are intentional Markdown (so it is NOT line-start-escaped).
+                // Consecutive same-level heading blocks (a heading wrapped across lines / bands — e.g. the title
+                // and its trailing 「書」) are stitched back together by MergeAdjacentHeadings at the page level.
+                FlushParagraph();
+                blocks.Add(new string('#', item.HeadingLevel) + " " + item.Text);
+                continue;
+            }
+
             if (previousTop is double top && paragraphPitch > 0 && (top - item.Bounds.Top) > paragraphPitch)
             {
                 FlushParagraph();
@@ -345,6 +402,55 @@ internal static class PdfReadingOrder
         FlushParagraph();
 
         return string.Join("\n\n", blocks);
+    }
+
+    /// <summary>
+    /// Stitches consecutive same-level heading blocks into one heading (#403): a heading that wrapped across
+    /// visual lines / reading bands is rendered as adjacent <c>#…</c> blocks, and here they merge so e.g. the
+    /// title's trailing 「書」 rejoins its title line. Operates by splitting on the blank-line block separator
+    /// and re-joining it, so every non-heading block (paragraph, figure span) is returned unchanged.
+    /// </summary>
+    private static string MergeAdjacentHeadings(string pageMarkdown)
+    {
+        if (pageMarkdown.Length == 0)
+        {
+            return pageMarkdown;
+        }
+
+        var blocks = pageMarkdown.Split("\n\n");
+        var merged = new List<string>(blocks.Length);
+        foreach (var block in blocks)
+        {
+            var level = HeadingLevelOf(block);
+            if (level > 0 && merged.Count > 0 && HeadingLevelOf(merged[^1]) == level)
+            {
+                // Append this heading line's text (after its duplicate "#…<space>" prefix) to the open heading.
+                merged[^1] = merged[^1] + " " + block[(level + 1)..];
+            }
+            else
+            {
+                merged.Add(block);
+            }
+        }
+
+        return string.Join("\n\n", merged);
+    }
+
+    /// <summary>The heading level (1..6) of a single-line <c>"#… text"</c> heading block, or 0 otherwise.</summary>
+    private static int HeadingLevelOf(string block)
+    {
+        if (block.IndexOf('\n') >= 0)
+        {
+            return 0; // a heading block is always a single line
+        }
+
+        var hashes = 0;
+        while (hashes < block.Length && block[hashes] == '#')
+        {
+            hashes++;
+        }
+
+        return hashes is >= 1 and <= 6 && hashes < block.Length && block[hashes] == ' ' ? hashes : 0;
     }
 
     /// <summary>
@@ -379,7 +485,18 @@ internal static class PdfReadingOrder
     /// </para>
     /// </summary>
     public static string RenderPage(
-        IReadOnlyList<Word> words, IReadOnlyList<Figure> figures, bool reconstructTables = true)
+        IReadOnlyList<Word> words, IReadOnlyList<Figure> figures, bool reconstructTables = true,
+        PdfHeadingScale? headingScale = null)
+    {
+        var markdown = RenderPageCore(words, figures, reconstructTables, headingScale);
+        // #403: a heading that wrapped across lines / bands renders as adjacent same-level "# …" blocks; stitch
+        // them back into one heading (e.g. the title and its trailing 「書」). A no-op when no headings exist.
+        return headingScale is { HasHeadings: true } ? MergeAdjacentHeadings(markdown) : markdown;
+    }
+
+    private static string RenderPageCore(
+        IReadOnlyList<Word> words, IReadOnlyList<Figure> figures, bool reconstructTables,
+        PdfHeadingScale? headingScale)
     {
         IReadOnlyList<DlaTextBlock> orderedBlocks;
         try
@@ -391,7 +508,7 @@ internal static class PdfReadingOrder
             // Any segmenter/reading-order fault degrades to the flat path: the page still renders and no
             // content is lost (the digital text layer is the channel's primary, non-negotiable payload).
             // A cancellation is NOT swallowed — it propagates so a host/job shutdown aborts promptly.
-            return Render(GroupWordsIntoLines(words), figures);
+            return Render(GroupWordsIntoLines(words), figures, headingScale);
         }
 
         // A single region (or no/one-block segmentation) is exactly the #301 behavior — render the whole
@@ -400,7 +517,7 @@ internal static class PdfReadingOrder
         // attempted here — an accepted #329 first-pass limitation.)
         if (orderedBlocks.Count <= 1)
         {
-            return Render(GroupWordsIntoLines(words), figures);
+            return Render(GroupWordsIntoLines(words), figures, headingScale);
         }
 
         // Non-lossy guard: RecursiveXYCut partitions every word into a leaf, so block words should account
@@ -411,7 +528,7 @@ internal static class PdfReadingOrder
             block => block.TextLines.Sum(line => line.Words.Count(w => !string.IsNullOrWhiteSpace(w.Text))));
         if (blockMeaningful < inputMeaningful)
         {
-            return Render(GroupWordsIntoLines(words), figures);
+            return Render(GroupWordsIntoLines(words), figures, headingScale);
         }
 
         // Attach each figure to the block it reads with (nearest block centroid) so figure inlining +
@@ -463,7 +580,7 @@ internal static class PdfReadingOrder
                 continue;
             }
 
-            var blockMarkdown = Render(blockLines, blockFigures);
+            var blockMarkdown = Render(blockLines, blockFigures, headingScale);
             if (!string.IsNullOrWhiteSpace(blockMarkdown))
             {
                 rendered.Add(blockMarkdown);
@@ -1065,11 +1182,12 @@ internal static class PdfReadingOrder
 
     private static double Sq(double v) => v * v;
 
-    private readonly record struct Item(PdfRectangle Bounds, string Text, bool IsFigure, string? Caption, int? PageNumber)
+    private readonly record struct Item(PdfRectangle Bounds, string Text, bool IsFigure, string? Caption, int? PageNumber, int HeadingLevel)
     {
-        public static Item ForText(PdfRectangle bounds, string text) => new(bounds, text, false, null, null);
+        public static Item ForText(PdfRectangle bounds, string text, int headingLevel = 0)
+            => new(bounds, text, false, null, null, headingLevel);
 
         public static Item ForFigure(PdfRectangle bounds, string text, string? caption, int? pageNumber)
-            => new(bounds, text, true, caption, pageNumber);
+            => new(bounds, text, true, caption, pageNumber, 0);
     }
 }
