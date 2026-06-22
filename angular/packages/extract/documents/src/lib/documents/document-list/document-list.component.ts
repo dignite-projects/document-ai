@@ -137,10 +137,11 @@ export class DocumentListComponent implements OnInit {
   // #333), not a page-local count, so it stays correct across pagination and once the list is unfiltered.
   reviewQueueCount = signal(0);
 
-  // #354: render the row actions column when the user has confirm/delete actions OR any row is a container —
-  // containers expose a "view sub-documents" action regardless of those permissions.
+  // #354: render the row actions column when the user has confirm/delete actions OR any row is a container
+  // (exposes "view sub-documents") OR any row is a sub-document (exposes "view parent / view siblings") —
+  // these provenance actions are available regardless of confirm/delete permissions.
   readonly showActionsColumn = computed(
-    () => this.hasDocumentActions || this.documents().items.some(d => d.isContainer),
+    () => this.hasDocumentActions || this.documents().items.some(d => d.isContainer || d.originDocumentId),
   );
 
   readonly DocumentLifecycleStatus = DocumentLifecycleStatus;
@@ -232,6 +233,27 @@ export class DocumentListComponent implements OnInit {
     this.refreshListFromFirstPage();
   }
 
+  // #354: from a sub-document row, open its source (container) document.
+  openParentDocument(doc: DocumentListItemDto, event?: Event): void {
+    event?.stopPropagation();
+    if (!doc.originDocumentId) {
+      return;
+    }
+    this.router.navigate(['/documents', doc.originDocumentId]);
+  }
+
+  // #354: from a sub-document row, focus the list on its siblings (all sub-documents of the same source,
+  // including this one). The parent row may not be in hand, so the banner falls back to showing the id.
+  viewSiblingDocuments(doc: DocumentListItemDto, event?: Event): void {
+    event?.stopPropagation();
+    if (!doc.originDocumentId) {
+      return;
+    }
+    this.subDocumentsParent.set(null);
+    this.originDocumentIdFilter.set(doc.originDocumentId);
+    this.refreshListFromFirstPage();
+  }
+
   private hookListQuery(): void {
     this.list.requestStatus$
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -310,8 +332,14 @@ export class DocumentListComponent implements OnInit {
           const bundleBadge = doc.isContainer
             ? ` <span class="badge bg-dark">${escapeHtmlChars(localization.instant('::Document:Bundle'))}</span>`
             : '';
+          // #354: mirror of the container Bundle badge on the child side — a sub-document carries
+          // originDocumentId (its source) and is flagged so operators can tell it apart from a
+          // normally-uploaded document; the row's "view parent / view siblings" actions drill the relationship.
+          const subDocBadge = doc.originDocumentId
+            ? ` <span class="badge bg-secondary">${escapeHtmlChars(localization.instant('::Document:SubDocument'))}</span>`
+            : '';
           return of(
-            `<span class="document-file-cell"><i class="${iconClass} me-2"></i><span class="fw-semibold text-truncate">${escapeHtmlChars(fileName)}</span>${bundleBadge}</span>`,
+            `<span class="document-file-cell"><i class="${iconClass} me-2"></i><span class="fw-semibold text-truncate">${escapeHtmlChars(fileName)}</span>${bundleBadge}${subDocBadge}</span>`,
           );
         },
       }),
