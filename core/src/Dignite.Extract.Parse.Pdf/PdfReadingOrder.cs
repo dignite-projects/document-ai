@@ -6,7 +6,6 @@ using Dignite.Extract.Abstractions.Parse;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.PageSegmenter;
-using UglyToad.PdfPig.DocumentLayoutAnalysis.ReadingOrderDetector;
 using DlaTextBlock = UglyToad.PdfPig.DocumentLayoutAnalysis.TextBlock;
 
 namespace Dignite.Extract.Parse.Pdf;
@@ -21,13 +20,13 @@ namespace Dignite.Extract.Parse.Pdf;
 /// <see cref="PdfRectangle.Top"/>.
 /// </para>
 /// <para>
-/// <b>Column-aware reading order (#310 Phase A).</b> <see cref="RenderPage"/> uses PdfPig's
-/// <c>DocumentLayoutAnalysis</c> (<see cref="RecursiveXYCut"/> page segmenter +
-/// <see cref="UnsupervisedReadingOrderDetector"/>) to order blocks before linearizing, so a multi-column
-/// label/body page no longer splices a left-column label into the middle of a right-column sentence —
-/// the failure mode of a flat <c>Top</c>-descending sort. Within a single block the order is still
-/// <c>Top</c> descending then <c>Left</c> ascending (see <see cref="Render"/>), which is correct for one
-/// column.
+/// <b>Band-aware reading order (#310 Phase A).</b> <see cref="RenderPage"/> segments the page with PdfPig's
+/// <c>DocumentLayoutAnalysis</c> (<see cref="RecursiveXYCut"/>), then orders blocks band-aware
+/// (<see cref="SegmentIntoReadingOrder"/>): horizontal bands at full-width separators, visual rows within a
+/// band. A multi-column label/body row no longer splices a left-column label into the middle of a right-column
+/// sentence (the failure mode of a flat <c>Top</c>-descending sort), and single-column prose interleaved with a
+/// table reads top-to-bottom. Within a single block the order is still <c>Top</c> descending then <c>Left</c>
+/// ascending (see <see cref="Render"/>), which is correct for one column.
 /// </para>
 /// <para>
 /// <b>Table row reconstruction (#310 Phase B).</b> On a multi-block page <see cref="RenderPage"/> also
@@ -349,9 +348,9 @@ internal static class PdfReadingOrder
     }
 
     /// <summary>
-    /// Renders a page to Markdown with column-aware reading order (#310 Phase A): segments the page's
-    /// words into layout blocks (<see cref="RecursiveXYCut"/>), orders the blocks
-    /// (<see cref="UnsupervisedReadingOrderDetector"/>, column-wise), then renders each block in reading
+    /// Renders a page to Markdown with band-aware reading order (#310 Phase A): segments the page's
+    /// words into layout blocks (<see cref="RecursiveXYCut"/>), orders the blocks band-aware
+    /// (<see cref="SegmentIntoReadingOrder"/>: full-width bands, visual rows within a band), then renders each block in reading
     /// order through the single-region <see cref="Render(IReadOnlyList{TextLine}, IReadOnlyList{Figure})"/>
     /// path (line grouping + caption binding + paragraph folding) and joins the blocks. Embedded figures
     /// are merged into the block order by their placement bbox (nearest block by squared centroid
@@ -887,13 +886,13 @@ internal static class PdfReadingOrder
     /// <para>
     /// <b>Band-aware reading order.</b> The blocks are first split into horizontal bands at full-width blocks
     /// (a full-width prose line / footnote spans every column, so content above and below it reads separately),
-    /// and only <i>within</i> each band are blocks ordered column-wise
-    /// (<see cref="UnsupervisedReadingOrderDetector"/>, <see cref="UnsupervisedReadingOrderDetector.SpatialReasoningRules.ColumnWise"/>).
-    /// A plain page-wide column-wise pass (the prior behavior) reads each column top-to-bottom across the whole
-    /// page, which on a single-column page interleaved with a table reads the table's columns vertically and
-    /// captures the surrounding full-width clause prose into them — scrambling the clause text. Banding keeps a
-    /// genuine multi-column region (no full-width separator → one band) column-wise while reading single-column
-    /// prose between tables in true top-to-bottom order. Returns an empty list when there are no meaningful words.
+    /// and only <i>within</i> each band are blocks ordered by visual row (<see cref="OrderBandRowWise"/>:
+    /// top-to-bottom rows, left-to-right within a row). A plain page-wide column-wise pass reads each column
+    /// top-to-bottom across the whole page, which on a single-column page interleaved with a table reads the
+    /// table's columns vertically and captures the surrounding full-width clause prose into them — scrambling
+    /// the clause text. Banding plus row-wise ordering reads single-column prose between tables in true
+    /// top-to-bottom order while keeping a genuine side-by-side row (a label beside its body, the #310 case)
+    /// reading left-to-right. Returns an empty list when there are no meaningful words.
     /// </para>
     /// </summary>
     private static IReadOnlyList<DlaTextBlock> SegmentIntoReadingOrder(IReadOnlyList<Word> words)
@@ -916,12 +915,12 @@ internal static class PdfReadingOrder
 
     /// <summary>
     /// Orders blocks into reading order by splitting them into horizontal bands at full-width separators and
-    /// ordering each band column-wise. A block whose width is at least
+    /// ordering each band by <see cref="OrderBandRowWise">visual row</see>. A block whose width is at least
     /// <see cref="FullWidthReadingBandFraction"/> of the page's content width spans every column and forms its
     /// own band; each run of narrower blocks between separators forms a band; bands are read top-to-bottom.
-    /// Within a multi-block band, <see cref="UnsupervisedReadingOrderDetector"/> in column-wise mode keeps a
-    /// genuine column's lines contiguous (the multi-column case that has no full-width separator is a single
-    /// band, so its behavior is unchanged); the table cells of a band reconstruct independently of this order.
+    /// Within a multi-block band, blocks are grouped into visual rows read top-to-bottom (then left-to-right
+    /// within a row), so a stamp / wrapped title char that sits above a table but in a column to its side reads
+    /// before the table, not after it; the table cells of a band reconstruct independently of this order.
     /// </summary>
     private static IReadOnlyList<DlaTextBlock> OrderByBandsThenColumns(IReadOnlyList<DlaTextBlock> blocks)
     {
@@ -956,11 +955,6 @@ internal static class PdfReadingOrder
             bands.Add(current);
         }
 
-        var detector = new UnsupervisedReadingOrderDetector(
-            T: 5,
-            spatialReasoningRule: UnsupervisedReadingOrderDetector.SpatialReasoningRules.ColumnWise,
-            useRenderingOrder: false);
-
         var result = new List<DlaTextBlock>(blocks.Count);
         foreach (var band in bands)
         {
@@ -970,8 +964,52 @@ internal static class PdfReadingOrder
             }
             else
             {
-                result.AddRange(detector.Get(band));
+                result.AddRange(OrderBandRowWise(band));
             }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Orders the blocks of a single band in reading order: group them into visual rows by vertical overlap,
+    /// read the rows top-to-bottom, and read each row left-to-right. A row-wise order (rather than a page-wide
+    /// column-wise one) is correct here because a band has already been cut at its full-width separators, so its
+    /// remaining content reads top-to-bottom; ordering by column instead would place a block that sits in its
+    /// own x-column but higher up (e.g. the page-1 「契約書案」 draft stamp / the title's wrapped 「書」, which sit
+    /// above the key-value table but in a column to its right) AFTER the table rather than before it. A genuine
+    /// side-by-side row (a label beside its body, the #310 case) is a single visual row and still reads
+    /// left-to-right; a table's cells reconstruct independently of this order.
+    /// </summary>
+    private static IReadOnlyList<DlaTextBlock> OrderBandRowWise(IReadOnlyList<DlaTextBlock> band)
+    {
+        // Cluster blocks into visual rows: a block joins a row when it vertically overlaps that row's most
+        // recently added block (compared against the last block, not an accreted union, so a tall block cannot
+        // stretch a row and pull in a block from the next one — mirrors GroupWordsIntoLines).
+        var rows = new List<List<DlaTextBlock>>();
+        foreach (var block in band.OrderByDescending(b => b.BoundingBox.Top))
+        {
+            var placed = false;
+            foreach (var row in rows)
+            {
+                if (PdfGeometry.VerticalOverlapRatio(row[^1].BoundingBox, block.BoundingBox) >= RowConnectVerticalOverlap)
+                {
+                    row.Add(block);
+                    placed = true;
+                    break;
+                }
+            }
+
+            if (!placed)
+            {
+                rows.Add(new List<DlaTextBlock> { block });
+            }
+        }
+
+        var result = new List<DlaTextBlock>(band.Count);
+        foreach (var row in rows.OrderByDescending(r => r.Max(b => b.BoundingBox.Top)))
+        {
+            result.AddRange(row.OrderBy(b => b.BoundingBox.Left));
         }
 
         return result;

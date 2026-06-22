@@ -644,4 +644,33 @@ public class PdfExtractor_Tests
         beta.ShouldBeGreaterThan(alphaCont);
         betaCont.ShouldBeGreaterThan(beta);
     }
+
+    [Fact]
+    public async Task Reads_a_stamp_above_a_table_before_the_table_not_after_it()
+    {
+        // The page-1 「契約書案」 draft stamp + the title's wrapped 「書」: they sit ABOVE the key-value table but
+        // in an x-column to its side, inside the same horizontal band. A column-wise within-band order reads the
+        // table's columns first and so emits the stamp AFTER the table; row-wise within-band order reads it by
+        // its (higher) vertical position, before the table.
+        var pdf = PdfFixtures.BuildPositioned(new[]
+        {
+            ("Master Services Agreement Document Title Reaching The Right Margin", 50.0, 716.0), // full-width title (a band on its own)
+
+            ("DRAFT", 300.0, 688.0), // a stamp above the table, in a column to its right
+
+            ("Provider", 50.0, 650.0), ("Acme Corporation", 230.0, 650.0),
+            ("Client", 50.0, 622.0), ("Beta Industries", 230.0, 622.0)
+        });
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(pdf), PdfContext());
+
+        result.Markdown.ShouldContain("| Provider | Acme Corporation |");
+        var title = result.Markdown.IndexOf("Master Services Agreement", StringComparison.Ordinal);
+        var stamp = result.Markdown.IndexOf("DRAFT", StringComparison.Ordinal);
+        var table = result.Markdown.IndexOf("| Provider | Acme Corporation |", StringComparison.Ordinal);
+        // The stamp reads after the title but before the table — matching its vertical position on the page.
+        title.ShouldBeLessThan(stamp);
+        stamp.ShouldBeLessThan(table);
+        result.Markdown.ShouldNotContain("| DRAFT"); // and it is not pulled into the table as a cell
+    }
 }
