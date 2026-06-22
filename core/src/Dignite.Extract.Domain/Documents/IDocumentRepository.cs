@@ -36,6 +36,20 @@ public interface IDocumentRepository : IRepository<Document, Guid>
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Whether <paramref name="originDocumentId"/> still has any <b>live</b> derived sub-document (#306 / #346):
+    /// a non-soft-deleted <see cref="Document"/> whose <see cref="Document.OriginDocumentId"/> equals it. Existence-only
+    /// variant of <see cref="GetListByOriginAsync"/> (compiles to SQL <c>EXISTS</c>, no row materialization), used as the
+    /// <c>DocumentAppService.DeleteAsync</c> guard: a source must not be sent to the recycle bin while its constituents
+    /// are still live, otherwise their provenance back-reference would dangle. Served by the leading column of the
+    /// composite unique index <c>(OriginDocumentId, OriginConstituentKey)</c>. <c>IMultiTenant</c> + <c>ISoftDelete</c>
+    /// global filters apply automatically by ambient state, so already-deleted sub-documents do not count and the check
+    /// stays within the source's own layer.
+    /// </summary>
+    Task<bool> AnyByOriginAsync(
+        Guid originDocumentId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Finds a Document by Id and eager-loads <b>only</b> the <see cref="Document.ExtractedFieldValues"/> child collection.
     /// Field extraction write-back paths (<c>FieldExtractionEventHandler</c>) need existing field rows present so
     /// <see cref="Document.SetFields"/> can reconcile correctly (delete old / update in place / insert new).

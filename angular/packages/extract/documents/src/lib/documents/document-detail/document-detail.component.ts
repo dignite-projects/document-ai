@@ -103,6 +103,10 @@ export class DocumentDetailComponent implements OnInit {
   // is a normal document, or when the parent is inaccessible (soft-deleted / cross-layer) — the banner then
   // falls back to the id.
   parentDocument = signal<DocumentDto | null>(null);
+  // #306/#354: true when the parent (origin) lookup failed — the source was removed (soft / permanently deleted) or is
+  // cross-layer / inaccessible. Drives the banner's "source unavailable" label and hides the dead "view parent" link,
+  // distinguishing a failed lookup from the brief in-flight window (both otherwise leave parentDocument null).
+  parentLookupFailed = signal(false);
   // #216: PipelineRun was split into an independent aggregate root and removed from
   // DocumentDto.pipelineRuns. It is now an independent signal loaded separately through
   // DocumentPipelineRunService in loadDocument.
@@ -416,6 +420,7 @@ export class DocumentDetailComponent implements OnInit {
           // metadata so the provenance banner can show its title; reset first so a previous document's
           // parent never lingers when navigating between documents in the same component instance.
           this.parentDocument.set(null);
+          this.parentLookupFailed.set(false);
           if (doc.originDocumentId) {
             this.loadParentDocument(doc.originDocumentId);
           }
@@ -469,15 +474,23 @@ export class DocumentDetailComponent implements OnInit {
       });
   }
 
-  // #306/#354: load the source (container) document of a sub-document for the provenance banner. A
-  // soft-deleted or cross-layer parent (404 / filtered) just leaves parentDocument null so the banner
-  // falls back to the id — it never blocks the sub-document's own page.
+  // #306/#354: load the source (container) document of a sub-document for the provenance banner. A removed
+  // (soft / permanently deleted) or cross-layer parent (404 / filtered) is an EXPECTED outcome — a sub-document
+  // outlives its source — so pass skipHandleError to suppress ABP's global error popup; the component handles it by
+  // flagging parentLookupFailed, and the banner shows a "source unavailable" label. It never blocks the
+  // sub-document's own page.
   private loadParentDocument(originDocumentId: string): void {
-    this.documentService.get(originDocumentId)
+    this.documentService.get(originDocumentId, { skipHandleError: true })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: parent => this.parentDocument.set(parent),
-        error: () => this.parentDocument.set(null),
+        next: parent => {
+          this.parentDocument.set(parent);
+          this.parentLookupFailed.set(false);
+        },
+        error: () => {
+          this.parentDocument.set(null);
+          this.parentLookupFailed.set(true);
+        },
       });
   }
 

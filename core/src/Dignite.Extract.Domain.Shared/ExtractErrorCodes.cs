@@ -27,6 +27,9 @@ public static class ExtractErrorCodes
         public const string UnsupportedFileType = "Extract:DocumentUnsupportedFileType";
         // Derived sub-documents spawned from segment SliceText have no source blob; download is unavailable.
         public const string NoSourceBlob = "Extract:DocumentNoSourceBlob";
+        // A document still has live (non-deleted) derived sub-documents (#306 / #346): deleting it would strand them
+        // with a dangling OriginDocumentId provenance back-reference, so the soft-delete is blocked until they are removed.
+        public const string HasSubDocuments = "Extract:DocumentHasSubDocuments";
     }
 
     public static class DocumentType
