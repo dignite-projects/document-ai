@@ -65,6 +65,20 @@ public class EfCoreDocumentRepository
             .ToListAsync(GetCancellationToken(cancellationToken));
     }
 
+    public virtual async Task<bool> AnyByOriginAsync(
+        Guid originDocumentId,
+        CancellationToken cancellationToken = default)
+    {
+        // Existence-only guard for DeleteAsync: does this source still have any LIVE derived sub-document? The default
+        // IMultiTenant + ISoftDelete global filters apply, so already-soft-deleted children do not count (a source whose
+        // sub-documents are all already in the recycle bin can still be deleted) and the check stays within the source's
+        // layer. Index-served by the leading OriginDocumentId column of the (OriginDocumentId, OriginConstituentKey) unique index.
+        var dbSet = await GetDbSetAsync();
+        return await dbSet.AnyAsync(
+            d => d.OriginDocumentId == originDocumentId,
+            GetCancellationToken(cancellationToken));
+    }
+
     public override async Task<IQueryable<Document>> WithDetailsAsync()
     {
         return (await GetQueryableAsync()).IncludeDetails();

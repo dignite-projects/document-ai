@@ -349,6 +349,20 @@ public class DocumentAppService : ExtractAppService, IDocumentAppService
     {
         var document = await _documentRepository.GetAsync(id);
 
+        // A source document must not enter the recycle bin while it still has live derived sub-documents (#306 / #346):
+        // soft-deleting it would strand its constituents — their OriginDocumentId provenance back-reference would dangle
+        // and their detail page could no longer resolve the now-gone source. Block the delete and let the operator remove
+        // its sub-documents first (the list's "view sub-documents" filter surfaces them by OriginDocumentId). Children
+        // already in the recycle bin do not count (the ambient ISoftDelete filter excludes them), so a source whose
+        // sub-documents are all already deleted can still be deleted. This guard is intentionally NOT a cascade: deleting
+        // the parent never auto-deletes children (they are independent peers that outlive the source, see
+        // Document.CreateDerived), unlike the #349 container→type reclassify retraction.
+        if (await _documentRepository.AnyByOriginAsync(id))
+        {
+            throw new BusinessException(ExtractErrorCodes.Document.HasSubDocuments)
+                .WithData("DocumentId", id);
+        }
+
         await _documentRepository.DeleteAsync(id);
 
         // Notify downstream consumers: the Document entered the trash bin, so derived data should move to a recoverable archived state.

@@ -89,16 +89,22 @@
         <i class="fas fa-sitemap me-1"></i>
         <span>
           {{ '::Document:SubDocumentOf' | abpLocalization }}
-          <strong>{{
-            parentDocument()?.title ||
-              parentDocument()?.fileOrigin?.originalFileName ||
-              document()!.originDocumentId
-          }}</strong>
+          @if (parentDocument(); as parent) {
+            <strong>{{ parent.title || parent.fileOrigin?.originalFileName || document()!.originDocumentId }}</strong>
+          } @else if (parentLookupFailed()) {
+            <!-- Source removed (soft / permanently deleted) or cross-layer: show an explicit "unavailable" label
+                 instead of a raw id, and drop the dead "view parent" link below. The sub-document stays fully usable. -->
+            <strong>{{ '::Document:SourceDocumentUnavailable' | abpLocalization }}</strong>
+          } @else {
+            <strong>{{ document()!.originDocumentId }}</strong>
+          }
         </span>
         <div class="ms-auto d-flex gap-2">
-          <button type="button" class="btn btn-sm btn-outline-primary" (click)="openParentDocument()">
-            <i class="fas fa-arrow-up me-1"></i>{{ '::Document:ViewParentDocument' | abpLocalization }}
-          </button>
+          @if (parentDocument()) {
+            <button type="button" class="btn btn-sm btn-outline-primary" (click)="openParentDocument()">
+              <i class="fas fa-arrow-up me-1"></i>{{ '::Document:ViewParentDocument' | abpLocalization }}
+            </button>
+          }
           <button type="button" class="btn btn-sm btn-outline-secondary" (click)="viewSiblingDocuments()">
             <i class="fas fa-sitemap me-1"></i>{{ '::Document:ViewSiblingDocuments' | abpLocalization }}
           </button>

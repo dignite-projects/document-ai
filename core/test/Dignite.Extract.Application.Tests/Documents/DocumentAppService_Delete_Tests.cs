@@ -88,6 +88,50 @@ public class DocumentAppService_Delete_Tests
     }
 
     [Fact]
+    public async Task DeleteAsync_Throws_HasSubDocuments_When_Document_Still_Has_Live_SubDocuments()
+    {
+        // A container (or any source document) must not be sent to the recycle bin while it still has live derived
+        // sub-documents, otherwise their OriginDocumentId provenance back-reference would dangle and their detail page
+        // would fail to resolve the now-gone source.
+        var doc = CreateDocument();
+        _documentRepository.GetAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(doc);
+        _documentRepository.AnyByOriginAsync(doc.Id, Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        var exception = await Should.ThrowAsync<BusinessException>(async () =>
+        {
+            await _appService.DeleteAsync(doc.Id);
+        });
+
+        exception.Code.ShouldBe(ExtractErrorCodes.Document.HasSubDocuments);
+
+        // Fail closed: neither the soft-delete nor the DocumentDeletedEto fire when the guard trips.
+        await _documentRepository.DidNotReceive().DeleteAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await _distributedEventBus.DidNotReceive().PublishAsync(
+            Arg.Any<DocumentDeletedEto>(), Arg.Any<bool>());
+    }
+
+    [Fact]
+    public async Task DeleteAsync_Succeeds_When_SubDocuments_Are_All_Already_Deleted()
+    {
+        // Children already in the recycle bin do not count (the ambient ISoftDelete filter excludes them, so
+        // AnyByOriginAsync returns false): a source whose sub-documents are all already deleted can still be deleted.
+        var doc = CreateDocument();
+        _documentRepository.GetAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(doc);
+        _documentRepository.AnyByOriginAsync(doc.Id, Arg.Any<CancellationToken>())
+            .Returns(false);
+
+        await _appService.DeleteAsync(doc.Id);
+
+        await _documentRepository.Received(1).DeleteAsync(doc.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await _distributedEventBus.Received(1).PublishAsync(
+            Arg.Is<DocumentDeletedEto>(e => e.DocumentId == doc.Id),
+            Arg.Any<bool>());
+    }
+
+    [Fact]
     public async Task RestoreAsync_Restores_Deleted_Document_And_Publishes_Event()
     {
         var doc = CreateDocument();
