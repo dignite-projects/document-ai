@@ -15,7 +15,7 @@ export const environment = {
   production: true,
   application: {
     baseUrl,
-    name: 'Dignite Vault Extract',
+    name: 'Vault Extract',
   },
   oAuthConfig,
   apis: {

@@ -2,6 +2,20 @@
   "culture": "zh-Hant",
   "texts": {
     "MyAccount": "我的賬戶",
-    "SamplePageMessage": "Extract 模塊的示例頁面"
+    "SamplePageMessage": "Extract 模塊的示例頁面",
+    "Document:Pipeline:text-extraction": "文字擷取",
+    "Document:Pipeline:classification": "分類",
+    "Document:Pipeline:field-extraction": "欄位擷取",
+    "Document:Pipeline:Attempt": "嘗試",
+    "Document:Pipeline:Status:Pending": "待執行",
+    "Document:Pipeline:Status:Running": "執行中",
+    "Document:Pipeline:Status:Succeeded": "已成功",
+    "Document:Pipeline:Status:Failed": "已失敗",
+    "Document:Pipeline:Status:Skipped": "已跳過",
+    "Document:Pipeline:Status:NotStarted": "未開始",
+    "Document:Pipeline:Retry": "重試",
+    "Document:Pipeline:Retrying": "正在重試...",
+    "Document:Pipeline:RetryQueued": "重試已入隊，狀態將很快重新整理。",
+    "Document:Pipeline:RetryFailed": "重試流水線失敗。"
   }
 }

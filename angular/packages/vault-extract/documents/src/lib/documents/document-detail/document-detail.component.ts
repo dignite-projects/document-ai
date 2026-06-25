@@ -60,6 +60,7 @@ interface PipelineRow {
 const KNOWN_PIPELINE_CODES = [
   'text-extraction',
   'classification',
+  'field-extraction',
 ] as const;
 
 @Component({

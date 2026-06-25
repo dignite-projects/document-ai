@@ -2,7 +2,7 @@
   "production": true,
   "application": {
     "baseUrl":"https://vault-extract-web",
-    "name": "Dignite Vault Extract",
+    "name": "Vault Extract",
     "logoUrl": ""
   },
   "oAuthConfig": {

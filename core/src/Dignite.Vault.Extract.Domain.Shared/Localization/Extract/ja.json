@@ -5,6 +5,20 @@
     "Permission:Documents": "ドキュメント",
     "Permission:Documents.Upload": "ドキュメントのアップロード",
     "Permission:Documents.Delete": "ドキュメントの削除",
-    "Permission:Documents.Export": "ドキュメントのエクスポート"
+    "Permission:Documents.Export": "ドキュメントのエクスポート",
+    "Document:Pipeline:text-extraction": "テキスト抽出",
+    "Document:Pipeline:classification": "分類",
+    "Document:Pipeline:field-extraction": "フィールド抽出",
+    "Document:Pipeline:Attempt": "試行",
+    "Document:Pipeline:Status:Pending": "待機中",
+    "Document:Pipeline:Status:Running": "実行中",
+    "Document:Pipeline:Status:Succeeded": "成功",
+    "Document:Pipeline:Status:Failed": "失敗",
+    "Document:Pipeline:Status:Skipped": "スキップ",
+    "Document:Pipeline:Status:NotStarted": "未開始",
+    "Document:Pipeline:Retry": "再試行",
+    "Document:Pipeline:Retrying": "再試行中...",
+    "Document:Pipeline:RetryQueued": "再試行がキューに追加されました。まもなく状態が更新されます。",
+    "Document:Pipeline:RetryFailed": "パイプラインの再試行に失敗しました。"
   }
 }
