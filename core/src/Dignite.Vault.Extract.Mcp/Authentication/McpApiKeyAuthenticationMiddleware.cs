@@ -45,6 +45,7 @@ public sealed class McpApiKeyAuthenticationMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<McpApiKeyAuthenticationMiddleware> _logger;
     private readonly string _headerName;
+    private readonly bool _requireHttps;
     private readonly IReadOnlyList<CompiledKey> _keys;
 
     public McpApiKeyAuthenticationMiddleware(
@@ -57,6 +58,7 @@ public sealed class McpApiKeyAuthenticationMiddleware
 
         var value = options.Value;
         _headerName = value.HeaderName;
+        _requireHttps = value.RequireHttps;
 
         // Precompute SHA-256 digests once. Comparing fixed-length digests (not the raw keys) removes the
         // length side-channel and lets FixedTimeEquals run over a constant-size buffer.
@@ -75,7 +77,7 @@ public sealed class McpApiKeyAuthenticationMiddleware
         if (values.Count == 1)
         {
             var presented = values[0];
-            if (!string.IsNullOrEmpty(presented))
+            if (!string.IsNullOrEmpty(presented) && !RejectInsecure(context))
             {
                 var matched = Match(presented);
                 if (matched != null)
@@ -98,6 +100,21 @@ public sealed class McpApiKeyAuthenticationMiddleware
         }
 
         await _next(context);
+    }
+
+    private bool RejectInsecure(HttpContext context)
+    {
+        if (!_requireHttps || context.Request.IsHttps)
+        {
+            return false;
+        }
+
+        // The key is a long-lived bearer-equivalent secret; refuse it over clear text and fall through to
+        // the Bearer chain. Never log the value. Disable via Mcp:ApiKey:RequireHttps only for a deliberate
+        // plain-HTTP deployment (e.g. local testing).
+        _logger.LogDebug(
+            "An MCP API key was presented over a non-HTTPS request; ignoring it (Mcp:ApiKey:RequireHttps=true).");
+        return true;
     }
 
     private McpApiKeyEntry? Match(string presented)

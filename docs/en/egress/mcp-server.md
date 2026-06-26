@@ -123,6 +123,7 @@ Some MCP clients cannot run the OAuth flow above but can send a **static custom 
 "Mcp": {
   "ApiKey": {
     "HeaderName": "X-Api-Key",                       // configurable; match it to the client's header
+    "RequireHttps": true,                            // ignore a key presented over plain HTTP (default true)
     "Keys": [
       {
         "Key": "<a CSPRNG secret, >= 32 chars>",     // env / user-secrets only
@@ -142,7 +143,7 @@ Some MCP clients cannot run the OAuth flow above but can send a **static custom 
 
 **Operational notes.**
 
-- **TLS only.** The key is a long-lived, bearer-equivalent secret: use the channel over HTTPS only, and configure the reverse proxy to strip any inbound copy of the header before forwarding.
+- **TLS only.** The key is a long-lived, bearer-equivalent secret. `Mcp:ApiKey:RequireHttps` (default `true`) makes the server **ignore a key presented over a non-HTTPS request** (it falls through to Bearer), so a key never travels in clear text; behind a TLS-terminating proxy this relies on the host's forwarded-headers handling. Also configure the proxy to strip any inbound copy of the header before forwarding. Set `RequireHttps: false` only for a deliberate plain-HTTP deployment (e.g. local testing).
 - **Rotation / revocation.** Multiple keys are supported, each with its own `Label` for audit attribution. Rotate with an overlap window (add the new key → migrate clients → remove the old). Revoke by removing the key from config (or removing the service account's grant). The API-key principal does **not** pass through ABP dynamic claims, so *disabling the underlying user is not an instant revocation path* — remove the key.
 - **Generation / fail-fast.** Generate keys from a CSPRNG (≥ 256 bits, e.g. 32 random bytes base64url); the host refuses to start on a placeholder value or a key shorter than 32 characters when keys are configured.
 

@@ -148,6 +148,20 @@ public class McpApiKeyAuthentication_Tests
     }
 
     [Fact]
+    public async Task A_valid_key_over_plain_http_is_rejected_when_https_is_required()
+    {
+        using var server = await BuildServerAsync(requireHttps: true);
+        using var client = server.CreateClient();
+        client.DefaultRequestHeaders.Add(HeaderName, ValidKey);
+
+        // TestServer serves plain HTTP, so the RequireHttps gate ignores the key and the request falls
+        // through unauthenticated.
+        var response = await client.GetAsync("/mcp");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
     public void Configuration_with_a_too_short_key_fails_fast()
     {
         var options = new McpApiKeyOptions
@@ -184,7 +198,7 @@ public class McpApiKeyAuthentication_Tests
         Should.NotThrow(() => options.Validate());
     }
 
-    private static async Task<TestServer> BuildServerAsync()
+    private static async Task<TestServer> BuildServerAsync(bool requireHttps = false)
     {
         var host = await new HostBuilder()
             .ConfigureWebHost(web =>
@@ -204,6 +218,9 @@ public class McpApiKeyAuthentication_Tests
                     {
                         options.HeaderName = HeaderName;
                         options.PathPrefix = "/mcp";
+                        // TestServer requests are plain HTTP; disable the HTTPS gate except where a test
+                        // explicitly exercises it.
+                        options.RequireHttps = requireHttps;
                         options.Keys = new List<McpApiKeyEntry>
                         {
                             new()

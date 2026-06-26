@@ -22,6 +22,15 @@ public class McpApiKeyOptions
     /// </summary>
     public string PathPrefix { get; set; } = McpApiKeyDefaults.DefaultPathPrefix;
 
+    /// <summary>
+    /// When <c>true</c> (default), a key presented over a non-HTTPS request is ignored (the request falls
+    /// through to Bearer) — the key is a long-lived bearer-equivalent secret and must not travel in clear
+    /// text. Behind a TLS-terminating reverse proxy this relies on the host's forwarded-headers handling so
+    /// <c>Request.IsHttps</c> reflects the original scheme. Set <c>false</c> only for a deliberately
+    /// plain-HTTP deployment (e.g. local testing).
+    /// </summary>
+    public bool RequireHttps { get; set; } = true;
+
     /// <summary>Configured keys. Empty = feature disabled.</summary>
     public List<McpApiKeyEntry> Keys { get; set; } = new();
 
