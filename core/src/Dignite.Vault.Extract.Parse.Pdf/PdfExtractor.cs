@@ -272,7 +272,27 @@ public class PdfExtractor : IMarkdownTextProvider, ITransientDependency
                     ? pageContent.Words
                     : pageContent.Words.Where(w => !droppable.Contains(w)).ToList();
 
-                var pageMarkdown = PdfReadingOrder.RenderPage(renderWords, figures, _options.ReconstructTables, headingScale);
+                // #450 lattice: the page's vector ruling-line bounds (a table's drawn grid is the authoritative
+                // column/row model). Guarded — a page whose content stream faults on path access still renders
+                // its text; lattice detection is simply skipped for it (the stream table path still applies).
+                IReadOnlyList<PdfRectangle> rulingBounds;
+                try
+                {
+                    rulingBounds = pageContent.Page.Paths
+                        .SelectMany(path => path)
+                        .Select(subpath => subpath.GetBoundingRectangle())
+                        .Where(rect => rect.HasValue)
+                        .Select(rect => rect!.Value)
+                        .ToList();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Logger.LogWarning(ex, "Failed to read vector paths on a PDF page; table lattice detection skipped for it.");
+                    rulingBounds = Array.Empty<PdfRectangle>();
+                }
+
+                var pageMarkdown = PdfReadingOrder.RenderPage(
+                    renderWords, figures, _options.ReconstructTables, headingScale, rulingBounds);
                 if (!string.IsNullOrWhiteSpace(pageMarkdown))
                 {
                     pageMarkdowns.Add(pageMarkdown);

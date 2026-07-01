@@ -636,9 +636,9 @@ internal static class PdfReadingOrder
     /// </summary>
     public static string RenderPage(
         IReadOnlyList<Word> words, IReadOnlyList<Figure> figures, bool reconstructTables = true,
-        PdfHeadingScale? headingScale = null)
+        PdfHeadingScale? headingScale = null, IReadOnlyList<PdfRectangle>? rulingBounds = null)
     {
-        var markdown = RenderPageCore(words, figures, reconstructTables, headingScale);
+        var markdown = RenderPageCore(words, figures, reconstructTables, headingScale, rulingBounds);
         // #403: a heading that wrapped across lines / bands renders as adjacent same-level "# …" blocks; stitch
         // them back into one heading (e.g. the title and its trailing 「書」). A no-op when no headings exist.
         return headingScale is { HasHeadings: true } ? MergeAdjacentHeadings(markdown) : markdown;
@@ -646,7 +646,7 @@ internal static class PdfReadingOrder
 
     private static string RenderPageCore(
         IReadOnlyList<Word> words, IReadOnlyList<Figure> figures, bool reconstructTables,
-        PdfHeadingScale? headingScale)
+        PdfHeadingScale? headingScale, IReadOnlyList<PdfRectangle>? rulingBounds)
     {
         // #407: build the page's justification-aware paragraph model once (right margin + measured wrap pitch)
         // and feed it to every Render call below, so a paragraph the segmenter cut into per-line blocks re-folds.
@@ -693,10 +693,18 @@ internal static class PdfReadingOrder
         // caption binding run within that block's single-region stream.
         var figuresByBlock = AssignFiguresToBlocks(orderedBlocks, figures);
 
+        // #450 lattice: if the page draws a table grid with vector rules, that grid is the authoritative
+        // column/row model. Detect it once from the ruling-line bounds; DetectTableClusters then prefers it for
+        // the blocks it covers and keeps the whitespace/stream path for everything else. No rules -> null -> the
+        // pure Phase A/B stream behaviour, unchanged.
+        var grid = reconstructTables && rulingBounds is { Count: > 0 }
+            ? PdfRulingLines.DetectGrid(rulingBounds)
+            : null;
+
         // Phase B: re-aggregate neighbouring blocks into candidate table clusters and reconstruct the ones
         // that confidently form a grid. A non-table page yields no clusters, so the loop below is exactly the
         // Phase A per-block path; the host switch off -> empty maps -> identical to Phase A.
-        var tables = reconstructTables ? DetectTableClusters(orderedBlocks) : TableClusters.Empty;
+        var tables = reconstructTables ? DetectTableClusters(orderedBlocks, grid) : TableClusters.Empty;
 
         var rendered = new List<string>(orderedBlocks.Count);
         var emittedTables = new HashSet<int>();
@@ -808,18 +816,72 @@ internal static class PdfReadingOrder
     /// the reconstructor, which derives the grid from glyph geometry either way. A cluster that does not
     /// reconstruct as a table is absent from the result, so its blocks fall through to the Phase A paragraph path.
     /// </summary>
-    private static TableClusters DetectTableClusters(IReadOnlyList<DlaTextBlock> blocks)
+    private static TableClusters DetectTableClusters(IReadOnlyList<DlaTextBlock> blocks, PdfRulingLines.Grid? grid)
     {
+        var result = new TableClusters();
+
+        // #450 lattice: a drawn ruling grid is the authoritative table — claim every block whose centre falls
+        // inside it as ONE table, rendered deterministically from the drawn column/row boundaries (the case the
+        // whitespace path struggles with: tight gutters, sparse or empty columns). Blocks outside the grid (a
+        // title above it, a footnote below) are left for the stream path / paragraph flow. The table is placed
+        // at its topmost (lowest-index, earliest reading-order) block.
+        var claimedByLattice = new HashSet<int>();
+        if (grid is { } g)
+        {
+            var insideBlocks = new List<int>();
+            for (var bi = 0; bi < blocks.Count; bi++)
+            {
+                if (CentroidInsideGrid(blocks[bi].BoundingBox, g))
+                {
+                    insideBlocks.Add(bi);
+                }
+            }
+
+            if (insideBlocks.Count >= 2)
+            {
+                var latticeCells = insideBlocks
+                    .SelectMany(bi => blocks[bi].TextLines.SelectMany(line => line.Words))
+                    .Where(word => !string.IsNullOrWhiteSpace(word.Text))
+                    .Select(word => new PdfTableReconstruction.Cell(word.BoundingBox, word.Text))
+                    .ToList();
+
+                var lattice = PdfTableReconstruction.TryRenderLattice(latticeCells, g);
+                if (lattice is not null)
+                {
+                    var latticeLead = insideBlocks.Min();
+                    result.MarkdownByLead[latticeLead] = lattice;
+                    result.BlocksByLead[latticeLead] = insideBlocks;
+                    foreach (var bi in insideBlocks)
+                    {
+                        result.LeadByBlock[bi] = latticeLead;
+                        claimedByLattice.Add(bi);
+                    }
+                }
+            }
+        }
+
         var medianHeight = PdfGeometry.Median(blocks.Select(b => b.BoundingBox.Height));
         if (medianHeight <= 0)
         {
-            return TableClusters.Empty;
+            return result;
         }
 
         var gutterThreshold = medianHeight * ColumnGutterScale;
-        var result = new TableClusters();
-        foreach (var clusterRows in ClusterTableCandidateBlocks(blocks, medianHeight))
+        foreach (var candidateRows in ClusterTableCandidateBlocks(blocks, medianHeight))
         {
+            // Drop any blocks already claimed by the lattice table so the stream path only reconstructs
+            // borderless tables (and never double-renders a ruled one).
+            var clusterRows = claimedByLattice.Count == 0
+                ? candidateRows
+                : candidateRows
+                    .Select(row => row.Where(bi => !claimedByLattice.Contains(bi)).ToList())
+                    .Where(row => row.Count > 0)
+                    .ToList();
+            if (clusterRows.Count == 0)
+            {
+                continue;
+            }
+
             // Peel leading heading / caption / intro rows (the "第3条（料金）" heading + "本業務の料金は…" intro
             // above the grid, the "別紙1 料金表" caption) before reconstruction. They enter the cluster from the
             // top — where no column structure is established yet, so the chaining bridge-guard cannot reject
@@ -866,6 +928,16 @@ internal static class PdfReadingOrder
         }
 
         return result;
+    }
+
+    /// <summary>Whether the box's centre falls within the drawn grid's outer extent (its column/row boundary
+    /// range) — i.e. the box is a cell of the ruled table rather than a title / footnote outside it (#450).</summary>
+    private static bool CentroidInsideGrid(PdfRectangle box, PdfRulingLines.Grid grid)
+    {
+        var centreX = (box.Left + box.Right) / 2.0;
+        var centreY = (box.Bottom + box.Top) / 2.0;
+        return centreX >= grid.ColumnBoundaries[0] && centreX <= grid.ColumnBoundaries[^1]
+            && centreY >= grid.RowBoundaries[0] && centreY <= grid.RowBoundaries[^1];
     }
 
     /// <summary>

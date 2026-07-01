@@ -132,6 +132,38 @@ internal static class PdfFixtures
     }
 
     /// <summary>
+    /// Builds a single-page PDF with positioned text plus drawn ruling lines — a lattice table (#450). Vertical
+    /// rules are (X, Y1, Y2), horizontal rules (Y, X1, X2); each is stroked with <c>DrawLine</c>, so the page's
+    /// vector paths carry the table's drawn column/row grid that <see cref="PdfRulingLines"/> reads.
+    /// </summary>
+    public static byte[] BuildWithRules(
+        IReadOnlyList<(string Text, double X, double BaselineY)> texts,
+        IReadOnlyList<(double X, double Y1, double Y2)> verticalRules,
+        IReadOnlyList<(double Y, double X1, double X2)> horizontalRules)
+    {
+        var builder = new PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+        var page = builder.AddPage(PageWidth, PageHeight);
+
+        foreach (var (text, x, baselineY) in texts)
+        {
+            page.AddText(text, 12, new PdfPoint(x, baselineY), font);
+        }
+
+        foreach (var (x, y1, y2) in verticalRules)
+        {
+            page.DrawLine(new PdfPoint(x, y1), new PdfPoint(x, y2));
+        }
+
+        foreach (var (y, x1, x2) in horizontalRules)
+        {
+            page.DrawLine(new PdfPoint(x1, y), new PdfPoint(x2, y));
+        }
+
+        return builder.Build();
+    }
+
+    /// <summary>
     /// Builds a multi-page PDF — one page per inner list of (Text, baselineY) lines — needed to exercise the
     /// cross-page running header/footer detection (#383), which has no signal on a single page.
     /// </summary>
