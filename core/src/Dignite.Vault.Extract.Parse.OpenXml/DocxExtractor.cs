@@ -11,8 +11,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Volo.Abp.DependencyInjection;
-using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
+using Pic = DocumentFormat.OpenXml.Drawing.Pictures;
 using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
 using W = DocumentFormat.OpenXml.Wordprocessing;
 
@@ -46,7 +46,8 @@ namespace Dignite.Vault.Extract.Parse.OpenXml;
 /// <b>Tracked changes: accepted view.</b> Inserted-revision text lives in <c>w:t</c> (read normally);
 /// deleted-revision text lives in <c>w:delText</c> (LocalName "delText", not "t"). Reading only <c>w:t</c>
 /// therefore yields the accepted view of tracked changes for free (#308 decision). Comments and
-/// headers/footers are excluded (author-private / page boilerplate); footnotes/endnotes are deferred.
+/// headers/footers are excluded (author-private / page boilerplate); footnotes/endnotes are surfaced as
+/// Markdown-footnote definitions at the end of the document (#315).
 /// </para>
 /// <para>
 /// <b>Relationship to ElBruno.</b> Unlike <c>.pptx</c>, the catch-all ElBruno provider <i>can</i> convert
@@ -100,24 +101,6 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
     /// </summary>
     private const int MaxListIndentLevels = 9;
 
-    /// <summary>
-    /// Open settings that collapse OOXML markup-compatibility (<c>mc:AlternateContent</c>) to its single
-    /// selected branch <b>before</b> parsing. Under the default <see cref="MarkupCompatibilityProcessMode.NoProcess"/>
-    /// both branches stay in the tree, so a <c>Descendants</c> walk would read the SAME content twice: a
-    /// modern Word text box stores its text in both the <c>mc:Choice</c> (DrawingML <c>wps:txbx</c>) and the
-    /// <c>mc:Fallback</c> (legacy VML that Word auto-writes), and an <c>AlternateContent</c>-wrapped picture
-    /// can carry a blip in both branches — duplicating text and double-OCR-ing (and double-charging the image
-    /// budget for) one logical figure. <see cref="FileFormatVersions.Office2019"/> is recent enough that the
-    /// SDK understands the modern (<c>wps</c> / DrawingML) namespaces, so it keeps the richer Choice branch
-    /// (the one whose <c>w:drawing</c> the image path can read) and drops the VML fallback.
-    /// </summary>
-    private static readonly OpenSettings McCollapsingOpenSettings = new()
-    {
-        MarkupCompatibilityProcessSettings = new MarkupCompatibilityProcessSettings(
-            MarkupCompatibilityProcessMode.ProcessAllParts,
-            DocumentFormat.OpenXml.FileFormatVersions.Office2019)
-    };
-
     private readonly IOcrProvider _ocrProvider;
     private readonly OpenXmlExtractorOptions _options;
 
@@ -148,7 +131,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         WordprocessingDocument document;
         try
         {
-            document = WordprocessingDocument.Open(new MemoryStream(bytes, writable: false), isEditable: false, McCollapsingOpenSettings);
+            document = WordprocessingDocument.Open(new MemoryStream(bytes, writable: false), isEditable: false, OpenXmlPackageSettings.McCollapsing);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -173,11 +156,15 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
             var mainPart = document.MainDocumentPart;
             var body = mainPart?.Document?.Body;
 
-            var state = new ExtractionState
+            var state = new DocxExtractionState
             {
                 ImageBudget = _options.MaxImagesPerFile,
                 LanguageHints = ResolveLanguageHints(context)
             };
+
+            // Build the per-document hyperlink id -> uri cache once (#318) so a link resolves in O(1) rather
+            // than scanning HyperlinkRelationships per hyperlink during the body render.
+            state.HyperlinkUris = mainPart is null ? null : BuildHyperlinkUris(mainPart);
 
             var blocks = new List<string>();
 
@@ -196,16 +183,21 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
                         // OpenXML parses lazily, so a malformed block can fault here on access. Skip it and
                         // mark the result incomplete rather than failing the whole document.
                         Logger.LogWarning(ex, "Failed to process a document block; skipping it.");
-                        state.FailedBlocks++;
+                        state.FailedContainers++;
                     }
                 }
             }
 
+            // Footnotes / endnotes: markers were emitted inline during the body walk (WordParagraphRenderer
+            // collected each reference); resolve their bodies from the notes parts and append them as a
+            // Markdown-footnote-style notes section at the end of the document (#315).
+            await AppendNotesAsync(mainPart, blocks, state, cancellationToken);
+
             // Single source of truth for the #268 signal: the reason is built from the counters and is
             // null iff nothing was lost; completeness derives from it (no parallel hand-synced predicate).
             var incompleteReason = BuildIncompleteReason(
-                state.FailedBlocks, state.DroppedByCap, state.Undecodable, state.OversizedImages,
-                state.TruncatedOcr, state.FailedFigureOcr, state.ChartFailures);
+                state.FailedContainers, state.DroppedByCap, state.Undecodable, state.OversizedImages,
+                state.TruncatedOcr, state.FailedFigureOcr, state.ChartFailures, state.FailedNotes);
             var complete = incompleteReason is null;
             if (!complete)
             {
@@ -240,7 +232,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         DocumentFormat.OpenXml.OpenXmlElement element,
         MainDocumentPart mainPart,
         List<string> blocks,
-        ExtractionState state,
+        DocxExtractionState state,
         int depth,
         CancellationToken cancellationToken)
     {
@@ -254,7 +246,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
                 {
                     // Native table -> Markdown table (pure structured extraction, no OCR). A null/empty render
                     // (layout-only or empty grid) is simply not added; a parse fault is caught by the caller's
-                    // per-block try/catch and tripped as FailedBlocks.
+                    // per-block try/catch and tripped as FailedContainers.
                     var renderedTable = WordTableRenderer.Render(table);
                     if (!string.IsNullOrWhiteSpace(renderedTable))
                     {
@@ -286,7 +278,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
                 if (!string.IsNullOrWhiteSpace(element.InnerText))
                 {
                     Logger.LogWarning("Skipping an unsupported body block <{Name}> that carries text.", element.LocalName);
-                    state.FailedBlocks++;
+                    state.FailedContainers++;
                 }
 
                 break;
@@ -305,10 +297,10 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         W.Paragraph paragraph,
         MainDocumentPart mainPart,
         List<string> blocks,
-        ExtractionState state,
+        DocxExtractionState state,
         CancellationToken cancellationToken)
     {
-        var headingLevel = WordStyleMap.HeadingLevel(paragraph);
+        var headingLevel = WordStyleMap.HeadingLevel(paragraph, mainPart);
         if (headingLevel is int level)
         {
             // Headings render as plain collapsed text (no inline emphasis markup inside an ATX heading).
@@ -327,11 +319,11 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         else
         {
             // Body paragraphs render with inline formatting (bold/italic) and hyperlinks.
-            var markdown = WordParagraphRenderer.Render(paragraph, mainPart);
+            var markdown = WordParagraphRenderer.Render(paragraph, mainPart, state.NoteReferences, state.HyperlinkUris);
             if (!string.IsNullOrWhiteSpace(markdown))
             {
                 // A list item (w:numPr) gets a Markdown bullet / ordered marker, indented by nesting level.
-                var list = WordListNumbering.Resolve(paragraph, mainPart.NumberingDefinitionsPart);
+                var list = WordListNumbering.Resolve(paragraph, mainPart.NumberingDefinitionsPart, state.NumberingFormatCache);
                 if (list is { } listInfo)
                 {
                     // Clamp the nesting level: a malformed / attacker w:ilvl would otherwise allocate a huge
@@ -375,36 +367,70 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
     }
 
     /// <summary>
-    /// Transcribes a container's (paragraph or table) embedded images and renders its chart drawings.
-    /// Covers both DrawingML images (<c>a:blip</c> in <c>w:drawing</c>) and legacy VML raster images
-    /// (<c>v:imagedata</c> in <c>w:pict</c>), so a compatibility-mode / legacy DOCX does not silently drop
-    /// figures. Used for both body paragraphs and table cells (a Markdown cell can't host a transcription).
+    /// Transcribes a container's (paragraph, table cell, or note) embedded images and renders its chart
+    /// drawings. Images are walked as <b>picture instances</b> (<c>pic:pic</c>) rather than <c>w:drawing</c>
+    /// elements (#322), so a grouped drawing's several pictures are each transcribed once, a text-box image is
+    /// transcribed once with its OWN extent / caption (read from the picture's nearest <c>wp:inline</c> /
+    /// <c>wp:anchor</c>), and the previous grouped-multi-image loss and double-OCR special-case both go away.
+    /// Charts ride the <c>c:chart</c> reference on a <c>w:drawing</c>; legacy VML raster images ride
+    /// <c>v:imagedata</c> — neither is a <c>pic:pic</c>, so each keeps its own pass.
     /// </summary>
     private async Task ExtractContainerFiguresAsync(
         DocumentFormat.OpenXml.OpenXmlElement container,
         MainDocumentPart mainPart,
         List<string> blocks,
-        ExtractionState state,
+        DocxExtractionState state,
         CancellationToken cancellationToken)
     {
-        // Skip drawings nested inside a text box (txbxContent): the text box's own (outer) drawing is
-        // processed once and its recursive blip lookup transcribes the inner image a single time. Without
-        // this skip the recursive Descendants walk visits BOTH the outer text-box drawing AND the nested
-        // image drawing and OCRs the same image twice (double cost + double budget + duplicate block).
-        foreach (var drawing in container.Descendants<W.Drawing>().Where(d => !HasTextBoxAncestor(d)))
+        // One subtree traversal (#318): collect the pictures, chart drawings, and legacy VML images in a
+        // single Descendants() pass, then emit in the established order (pictures, then charts, then VML) so
+        // the Markdown output is byte-for-byte unchanged. A pic:pic is transcribed regardless of a text-box
+        // ancestor (#322 — the text-box image is real content), while a chart / VML inside a text box stays
+        // skipped (an accepted blind spot). Known VML limitation: not decorative-size-filtered (its size lives
+        // in a style attribute, not wp:extent), so a tiny VML icon may be transcribed; VML in modern DOCX is
+        // rare, so this is accepted.
+        var pictures = new List<Pic.Picture>();
+        var chartDrawings = new List<W.Drawing>();
+        var vmlImages = new List<DocumentFormat.OpenXml.OpenXmlElement>();
+
+        foreach (var element in container.Descendants())
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            await HandleDrawingAsync(drawing, mainPart, blocks, state, cancellationToken);
+            switch (element)
+            {
+                case Pic.Picture picture:
+                    pictures.Add(picture);
+                    break;
+
+                case W.Drawing drawing when !HasTextBoxAncestor(drawing):
+                    chartDrawings.Add(drawing);
+                    break;
+
+                default:
+                    if (element.LocalName == "imagedata" && !HasTextBoxAncestor(element))
+                    {
+                        vmlImages.Add(element);
+                    }
+
+                    break;
+            }
         }
 
-        // Legacy VML raster images (w:pict/v:imagedata) are not W.Drawing, so the DrawingML walk above
-        // misses them. They reference PNG/JPEG bytes via an r:id (or o:relid) relationship — transcribe them
-        // too rather than silently dropping the figure. (A vector-only VML shape has no imagedata relationship.)
-        // Known limitation: VML images are NOT decorative-size-filtered (a VML shape's size lives in its style
-        // attribute, not wp:extent), so a tiny VML icon may be transcribed where its DrawingML equivalent
-        // would be skipped by IsDecorative. VML in modern DOCX is rare, so this is accepted (see #318-area).
-        foreach (var imageData in container.Descendants()
-                     .Where(e => e.LocalName == "imagedata" && !HasTextBoxAncestor(e)))
+        // Images: one transcription per picture instance, with metadata from the picture's own inline/anchor.
+        foreach (var picture in pictures)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await HandlePictureAsync(picture, mainPart, blocks, state, cancellationToken);
+        }
+
+        // Charts: a w:drawing referencing a c:chart renders as a table; HandleChart self-filters non-charts.
+        foreach (var drawing in chartDrawings)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            HandleChart(drawing, mainPart, blocks, state);
+        }
+
+        // Legacy VML raster images (v:imagedata), not pic:pic — transcribe via their r:id relationship.
+        foreach (var imageData in vmlImages)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var relationshipId = VmlImageRelationshipId(imageData);
@@ -415,12 +441,125 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         }
     }
 
+    /// <summary>
+    /// Resolves the footnote / endnote references collected during the body walk (#315) and appends each note
+    /// body as a Markdown-footnote definition (<c>[^fn{id}]: body</c>) at the end of the document, in
+    /// first-reference order and de-duplicated (a note referenced twice is defined once). The auto-inserted
+    /// separator / continuation notes are excluded (no author content). A reference that cannot be resolved —
+    /// a dangling id, or a missing FootnotesPart / EndnotesPart — trips the #268 signal via
+    /// <see cref="DocxExtractionState.FailedNotes"/> rather than being silently dropped.
+    /// </summary>
+    private async Task AppendNotesAsync(
+        MainDocumentPart? mainPart,
+        List<string> blocks,
+        DocxExtractionState state,
+        CancellationToken cancellationToken)
+    {
+        if (mainPart is null || state.NoteReferences.Count == 0)
+        {
+            return;
+        }
+
+        var footnotes = BuildNoteBodyMap(mainPart.FootnotesPart?.Footnotes?.Elements<W.Footnote>());
+        var endnotes = BuildNoteBodyMap(mainPart.EndnotesPart?.Endnotes?.Elements<W.Endnote>());
+
+        var seen = new HashSet<NoteReference>();
+        foreach (var reference in state.NoteReferences)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // A note referenced more than once is defined a single time.
+            if (!seen.Add(reference))
+            {
+                continue;
+            }
+
+            var map = reference.Kind == NoteKind.Footnote ? footnotes : endnotes;
+            if (map is null || !map.TryGetValue(reference.Id, out var note))
+            {
+                // Dangling reference, or the notes part is missing entirely — surface the loss (#268).
+                Logger.LogWarning(
+                    "A {Kind} reference (id {Id}) could not be resolved to a note body.", reference.Kind, reference.Id);
+                state.FailedNotes++;
+                continue;
+            }
+
+            var body = await RenderNoteBodyAsync(note, mainPart, state, cancellationToken);
+            blocks.Add(string.IsNullOrWhiteSpace(body) ? $"{reference.Marker}:" : $"{reference.Marker}: {body}");
+        }
+    }
+
+    /// <summary>
+    /// Indexes footnote / endnote definitions by <c>w:id</c>, excluding the auto-inserted
+    /// <c>separator</c> / <c>continuationSeparator</c> notes (they carry no author content). Returns
+    /// <c>null</c> when the part is absent, so the caller distinguishes "no notes part" (a reference is
+    /// therefore dangling) from an empty part.
+    /// </summary>
+    private static IReadOnlyDictionary<long, W.FootnoteEndnoteType>? BuildNoteBodyMap(
+        IEnumerable<W.FootnoteEndnoteType>? notes)
+    {
+        if (notes is null)
+        {
+            return null;
+        }
+
+        var map = new Dictionary<long, W.FootnoteEndnoteType>();
+        foreach (var note in notes)
+        {
+            if (note.Id?.Value is not { } id)
+            {
+                continue;
+            }
+
+            var type = note.Type?.Value;
+            if (type == W.FootnoteEndnoteValues.Separator || type == W.FootnoteEndnoteValues.ContinuationSeparator)
+            {
+                continue;
+            }
+
+            map[id] = note;
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// Renders a footnote / endnote body to Markdown by reusing the body paragraph/run renderer (so a note
+    /// that carries formatting / links is handled consistently) and transcribing any embedded image in the
+    /// note through the shared <see cref="OpenXmlFigureTranscriber"/> (#315 red line: notes go through the
+    /// host <see cref="IOcrProvider"/>, no new LLM call site). Paragraphs are joined with blank lines. A
+    /// nested note reference inside a note is not followed (no collector is passed), so it does not recurse.
+    /// </summary>
+    private async Task<string> RenderNoteBodyAsync(
+        W.FootnoteEndnoteType note,
+        MainDocumentPart mainPart,
+        DocxExtractionState state,
+        CancellationToken cancellationToken)
+    {
+        var parts = new List<string>();
+        foreach (var paragraph in note.Elements<W.Paragraph>())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var text = WordParagraphRenderer.Render(paragraph, mainPart);
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                parts.Add(text);
+            }
+
+            // A figure inside a note (rare) is transcribed via the same host OCR path, appended after its text.
+            await ExtractContainerFiguresAsync(paragraph, mainPart, parts, state, cancellationToken);
+        }
+
+        return string.Join("\n\n", parts);
+    }
+
     /// <summary>Recursively renders the block-level children of a content-control / custom-XML wrapper.</summary>
     private async Task RenderChildBlocksAsync(
         DocumentFormat.OpenXml.OpenXmlElement? container,
         MainDocumentPart mainPart,
         List<string> blocks,
-        ExtractionState state,
+        DocxExtractionState state,
         int depth,
         CancellationToken cancellationToken)
     {
@@ -436,7 +575,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
             Logger.LogWarning("Content-control nesting exceeded depth {Max}; skipping the remaining subtree.", MaxBlockNestingDepth);
             if (!string.IsNullOrWhiteSpace(container.InnerText))
             {
-                state.FailedBlocks++;
+                state.FailedContainers++;
             }
 
             return;
@@ -449,23 +588,26 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         }
     }
 
-    private async Task HandleDrawingAsync(
-        W.Drawing drawing,
+    /// <summary>
+    /// Transcribes one embedded picture (<c>pic:pic</c>) via the host OCR path, reading its decorative-size
+    /// threshold and caption from the picture's own <c>wp:inline</c> / <c>wp:anchor</c> ancestor so a grouped
+    /// or text-box image uses its OWN extent / alt-text rather than the group's / text box's (#322).
+    /// </summary>
+    private async Task HandlePictureAsync(
+        Pic.Picture picture,
         MainDocumentPart mainPart,
         List<string> blocks,
-        ExtractionState state,
+        DocxExtractionState state,
         CancellationToken cancellationToken)
     {
-        var embed = drawing.Descendants<A.Blip>().FirstOrDefault()?.Embed?.Value;
+        var embed = picture.BlipFill?.Blip?.Embed?.Value;
         if (string.IsNullOrEmpty(embed))
         {
-            // No image blip: a chart (render its backing data as a table) or SmartArt/diagram/OLE (an
-            // accepted blind spot). Charts go through the format-agnostic ChartRenderer — no OCR / vision.
-            HandleChart(drawing, mainPart, blocks, state);
+            // A picture with no embedded blip (e.g. a linked / external image) — nothing to transcribe.
             return;
         }
 
-        if (IsDecorative(drawing))
+        if (IsDecorative(picture))
         {
             // Icon / bullet / logo / spacer — not figure content, not counted against completeness.
             return;
@@ -473,116 +615,31 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
 
         // Native alt-text (wp:docPr/@descr, fallback @title) is a real caption signal — strictly better than
         // PDF's nearest-text heuristic.
-        await TranscribeEmbeddedImageAsync(embed, AltTextOf(drawing), mainPart, blocks, state, cancellationToken);
+        await TranscribeEmbeddedImageAsync(embed, AltTextOf(picture), mainPart, blocks, state, cancellationToken);
     }
 
     /// <summary>
-    /// Resolves an embedded image relationship to its bytes and transcribes it via the host-selected
-    /// <see cref="IOcrProvider"/>, appending the transcription (optionally captioned) as a block. Shared by
-    /// the DrawingML (<c>a:blip</c>) and legacy VML (<c>v:imagedata</c>) image paths. Honors the per-file
-    /// image budget and trips the #268 counters on cap / oversize / undecodable / OCR-failure / truncation.
+    /// Resolves an embedded image relationship and transcribes it via the host-selected
+    /// <see cref="IOcrProvider"/>, appending the (optionally captioned) transcription as a block. Shared by
+    /// the DrawingML (<c>a:blip</c>) and legacy VML (<c>v:imagedata</c>) image paths. The figure-OCR pipeline
+    /// itself — budget guard, resolve, image-outcome switch, OCR, truncation signal, caption — lives in the
+    /// shared <see cref="OpenXmlFigureTranscriber"/> (#317, shared with <see cref="PptxExtractor"/>); this
+    /// wrapper only supplies the DOCX part container + caption and sinks the finished block in flow order.
     /// </summary>
     private async Task TranscribeEmbeddedImageAsync(
         string relationshipId,
         string? caption,
         MainDocumentPart mainPart,
         List<string> blocks,
-        ExtractionState state,
+        DocxExtractionState state,
         CancellationToken cancellationToken)
     {
-        if (state.ImageBudget <= 0)
+        var block = await OpenXmlFigureTranscriber.TranscribeAsync(
+            mainPart, relationshipId, caption, state, _options, _ocrProvider, Logger, cancellationToken);
+        if (block is not null)
         {
-            state.DroppedByCap++;
-            return;
+            blocks.Add(block);
         }
-
-        OpenXmlImagePayload.ResolvedImage resolved;
-        try
-        {
-            var part = mainPart.GetPartById(relationshipId);
-            resolved = part is ImagePart imagePart
-                ? OpenXmlImagePayload.TryResolve(imagePart, _options.MaxImageBytesPerImage)
-                // A dangling relationship / non-image part: treat as undecodable.
-                : new OpenXmlImagePayload.ResolvedImage(OpenXmlImagePayload.ImageOutcome.Undecodable, null, null);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Logger.LogWarning(ex, "Failed to resolve/decode an embedded DOCX image; skipping it.");
-            resolved = new OpenXmlImagePayload.ResolvedImage(OpenXmlImagePayload.ImageOutcome.Undecodable, null, null);
-        }
-
-        switch (resolved.Outcome)
-        {
-            case OpenXmlImagePayload.ImageOutcome.Oversized:
-                // A single image larger than the per-image byte cap (e.g. a ZIP-decompression bomb). Skipped
-                // before full materialization; trips the completeness signal but never OOMs the worker.
-                Logger.LogWarning("Skipped an embedded image exceeding the {Cap}-byte per-image cap.", _options.MaxImageBytesPerImage);
-                state.OversizedImages++;
-                return;
-
-            case OpenXmlImagePayload.ImageOutcome.Undecodable:
-                // Vector (EMF/WMF), dangling relationship, or undecodable/mislabeled bytes.
-                state.Undecodable++;
-                return;
-
-            case OpenXmlImagePayload.ImageOutcome.Ok:
-                break;
-
-            default:
-                // A future outcome added to the enum must not silently fall through to RecognizeAsync with
-                // possibly-null bytes — fail closed by treating it as undecodable.
-                Logger.LogWarning("Unhandled image outcome {Outcome}; treating as undecodable.", resolved.Outcome);
-                state.Undecodable++;
-                return;
-        }
-
-        state.ImageBudget--;
-
-        OcrResult ocr;
-        try
-        {
-            using var imageStream = new MemoryStream(resolved.Bytes!, writable: false);
-            ocr = await _ocrProvider.RecognizeAsync(
-                imageStream,
-                new OcrOptions
-                {
-                    ContentType = resolved.ContentType!,
-                    LanguageHints = state.LanguageHints
-                },
-                cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // A single figure's OCR failing (provider timeout / rate-limit / auth / one bad image) must NOT
-            // discard the document text already extracted — figure OCR is an auxiliary augmentation, not the
-            // document's primary payload (the #210/#268 "auxiliary step must not break the main pipeline"
-            // principle). Skip this figure and mark the result incomplete. OperationCanceledException still
-            // propagates so a host/job shutdown aborts promptly.
-            Logger.LogWarning(ex, "Embedded-image OCR failed; keeping the document text, skipping this figure.");
-            state.FailedFigureOcr++;
-            return;
-        }
-
-        if (!ocr.IsComplete)
-        {
-            // OCR truncated at the token limit or discarded by the repetition guard.
-            state.TruncatedOcr++;
-        }
-
-        var transcription = ocr.Markdown?.Trim() ?? string.Empty;
-        if (transcription.Length == 0)
-        {
-            return;
-        }
-
-        // Caption (alt-text) is author-controlled free text (often multi-line), so collapse newlines via
-        // MarkdownText.InlineLabel AND inline-escape via MarkdownText.EscapeInline so the bold caption can't
-        // break the OCR block (often a table) below it, nor inject a link/emphasis from a literal [..](..)/*.
-        var markdown = string.IsNullOrWhiteSpace(caption)
-            ? transcription
-            : "**" + MarkdownText.EscapeInline(MarkdownText.InlineLabel(caption)) + "**\n\n" + transcription;
-
-        blocks.Add(markdown);
     }
 
     /// <summary>
@@ -617,7 +674,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
     /// renderable category/value cache (e.g. scatter/bubble) or an unreadable part trips the completeness
     /// signal (#268); a non-chart drawing with no blip (SmartArt / diagram / OLE) is an accepted blind spot.
     /// </summary>
-    private void HandleChart(W.Drawing drawing, MainDocumentPart mainPart, List<string> blocks, ExtractionState state)
+    private void HandleChart(W.Drawing drawing, MainDocumentPart mainPart, List<string> blocks, DocxExtractionState state)
     {
         var chartId = drawing.Descendants<C.ChartReference>().FirstOrDefault()?.Id?.Value;
         if (string.IsNullOrEmpty(chartId))
@@ -648,10 +705,14 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         blocks.Add(table!);
     }
 
-    /// <summary>Whether the drawing's display size is below the decorative threshold (skipped silently).</summary>
-    protected virtual bool IsDecorative(W.Drawing drawing)
+    /// <summary>
+    /// Whether the picture's display size is below the decorative threshold (skipped silently). The extent is
+    /// read from the picture's nearest <c>wp:inline</c> / <c>wp:anchor</c> ancestor (#322), so a text-box
+    /// image is judged by its own size rather than the text box's.
+    /// </summary>
+    protected virtual bool IsDecorative(Pic.Picture picture)
     {
-        var extent = drawing.Descendants<DW.Extent>().FirstOrDefault();
+        var extent = NearestDrawingExtent(picture);
         if (extent?.Cx is null || extent.Cy is null)
         {
             // No display extents: cannot judge — do not skip.
@@ -675,6 +736,16 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         var pixelArea = cx * cy / (EmuPerPixel96 * EmuPerPixel96);
         return pixelArea < _options.MinImagePixels;
     }
+
+    /// <summary>The nearest inline (<c>wp:inline</c>) or floating (<c>wp:anchor</c>) drawing-wrapper ancestor
+    /// of the picture, or <c>null</c> — the source of the picture's own extent + docPr (#322). For a text-box
+    /// image this is the inner drawing (the image's), not the outer text-box drawing.</summary>
+    private static DocumentFormat.OpenXml.OpenXmlElement? NearestDrawingWrapper(Pic.Picture picture)
+        => picture.Ancestors().FirstOrDefault(a => a is DW.Inline or DW.Anchor);
+
+    /// <summary>The <c>wp:extent</c> of the picture's nearest inline / floating drawing ancestor, or <c>null</c>.</summary>
+    private static DW.Extent? NearestDrawingExtent(Pic.Picture picture)
+        => NearestDrawingWrapper(picture)?.GetFirstChild<DW.Extent>();
 
     /// <summary>
     /// Concatenates a paragraph's visible run text in document order: run text (<c>w:t</c>), tabs
@@ -752,11 +823,31 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
         return MarkdownText.EscapeBlockText(sb.ToString().Trim());
     }
 
-    private static string? AltTextOf(W.Drawing drawing)
+    private static string? AltTextOf(Pic.Picture picture)
     {
-        var props = drawing.Descendants<DW.DocProperties>().FirstOrDefault();
+        var props = NearestDocProperties(picture);
         var description = props?.Description?.Value;
         return !string.IsNullOrWhiteSpace(description) ? description : props?.Title?.Value;
+    }
+
+    /// <summary>The <c>wp:docPr</c> of the picture's nearest inline / floating drawing ancestor — the image's
+    /// own caption source, not the group's / text box's (#322).</summary>
+    private static DW.DocProperties? NearestDocProperties(Pic.Picture picture)
+        => NearestDrawingWrapper(picture)?.GetFirstChild<DW.DocProperties>();
+
+    /// <summary>
+    /// Builds the per-document hyperlink relationship-id → URI map once (#318). Relationship ids are unique,
+    /// so a plain dictionary suffices; a relationship with no target maps to <c>null</c> (an internal anchor).
+    /// </summary>
+    private static IReadOnlyDictionary<string, string?> BuildHyperlinkUris(MainDocumentPart mainPart)
+    {
+        var map = new Dictionary<string, string?>();
+        foreach (var relationship in mainPart.HyperlinkRelationships)
+        {
+            map[relationship.Id] = relationship.Uri?.ToString();
+        }
+
+        return map;
     }
 
     /// <summary>
@@ -766,7 +857,7 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
     /// consumer can override to supply hints (e.g. from per-tenant config).
     /// </summary>
     protected virtual IList<string> ResolveLanguageHints(TextExtractionContext context)
-        => context.LanguageHints ?? new List<string>();
+        => OpenXmlExtractionState.ResolveLanguageHints(context);
 
     /// <summary>
     /// Builds the #268 incompleteness reason from the loss counters, or returns <c>null</c> when nothing was
@@ -775,58 +866,27 @@ public class DocxExtractor : IMarkdownTextProvider, ITransientDependency
     /// path lands in a later #308 build-order step.
     /// </summary>
     internal static string? BuildIncompleteReason(
-        int failedBlocks, int droppedByCap, int undecodable, int oversizedImages, int truncatedOcr, int failedFigureOcr, int chartFailures)
+        int failedBlocks, int droppedByCap, int undecodable, int oversizedImages, int truncatedOcr, int failedFigureOcr, int chartFailures, int failedNotes = 0)
+        => OpenXmlIncompleteReason.Build(
+            "document block", failedBlocks, droppedByCap, undecodable, oversizedImages, truncatedOcr, failedFigureOcr, chartFailures, failedNotes);
+
+    /// <summary>
+    /// DOCX-specific per-extraction accumulator: extends the shared <see cref="OpenXmlExtractionState"/> with
+    /// the footnote / endnote references collected during the body walk (in reading order) and the count of
+    /// references that could not be resolved to a note body (#315).
+    /// </summary>
+    protected sealed class DocxExtractionState : OpenXmlExtractionState
     {
-        var parts = new List<string>();
-        if (failedBlocks > 0)
-        {
-            parts.Add($"{failedBlocks} document block(s) could not be parsed and were skipped");
-        }
+        /// <summary>Footnote / endnote references seen in the body, in reading order (#315).</summary>
+        internal List<NoteReference> NoteReferences { get; } = new();
 
-        if (undecodable > 0)
-        {
-            parts.Add($"{undecodable} embedded image(s) could not be decoded to a supported raster format (e.g. EMF/WMF vector)");
-        }
+        /// <summary>References whose note body could not be resolved — dangling id / missing notes part (#268).</summary>
+        public int FailedNotes;
 
-        if (oversizedImages > 0)
-        {
-            parts.Add($"{oversizedImages} embedded image(s) exceeded the per-image size cap and were skipped");
-        }
+        /// <summary>Per-document hyperlink relationship-id → URI cache, built once (#318); null until built.</summary>
+        public IReadOnlyDictionary<string, string?>? HyperlinkUris;
 
-        if (failedFigureOcr > 0)
-        {
-            parts.Add($"{failedFigureOcr} embedded image(s) failed OCR (provider error)");
-        }
-
-        if (truncatedOcr > 0)
-        {
-            parts.Add($"{truncatedOcr} image transcription(s) were truncated or discarded by the OCR provider");
-        }
-
-        if (chartFailures > 0)
-        {
-            parts.Add($"{chartFailures} chart(s) could not be rendered as a table");
-        }
-
-        if (droppedByCap > 0)
-        {
-            parts.Add($"{droppedByCap} image(s) were skipped after reaching the per-file image cap");
-        }
-
-        return parts.Count == 0 ? null : string.Join("; ", parts) + ".";
-    }
-
-    /// <summary>Mutable per-extraction accumulator: image budget and #268 loss counters.</summary>
-    protected sealed class ExtractionState
-    {
-        public int ImageBudget;
-        public int FailedBlocks;
-        public int DroppedByCap;
-        public int Undecodable;
-        public int OversizedImages;
-        public int TruncatedOcr;
-        public int FailedFigureOcr;
-        public int ChartFailures;
-        public IList<string> LanguageHints = new List<string>();
+        /// <summary>Per-document <c>(numId, level) → numbering-format</c> memo, populated lazily (#318).</summary>
+        public Dictionary<(int NumId, int Level), W.NumberFormatValues?> NumberingFormatCache { get; } = new();
     }
 }

@@ -705,4 +705,87 @@ public class PptxExtractor_Tests
             Arg.Is<OcrOptions>(o => o.LanguageHints.Count == 0),
             Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task Surfaces_a_shape_wrapped_in_mc_alternate_content()
+    {
+        // #319: a shape PowerPoint wraps in <mc:AlternateContent> is a direct spTree child of type
+        // AlternateContent — none of the typed WalkShapesAsync cases — so without collapsing the
+        // markup-compatibility fork on open its text is silently dropped with no #268 signal. Opening with the
+        // MC-collapsing settings resolves the fork to its selected branch (a real p:sp) before the walk runs.
+        var pptx = PptxFixtures.Build(new PptxFixtures.SlideSpec()
+            .Text("Ordinary slide text")
+            .McAlternateContentText("MC_WRAPPED_CONTENT"));
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(pptx), PptxContext());
+
+        result.Markdown.ShouldContain("Ordinary slide text");
+        result.Markdown.ShouldContain("MC_WRAPPED_CONTENT");
+        // Exactly one branch survives collapsing — the content must not be doubled from both Choice and Fallback.
+        (result.Markdown.Split("MC_WRAPPED_CONTENT").Length - 1).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Renders_a_multi_level_category_axis_as_compound_row_labels()
+    {
+        // #321: a multi-level category axis (c:multiLvlStrRef with an inner "quarter" level and an outer
+        // "year" level) repeats idx values per level. Flattening every level into one idx→label map collided
+        // the indices and mislabeled rows (idx 0 became the outer "2023" instead of "2023 / Q1"). The renderer
+        // must compose one compound label per position, outer → inner.
+        var chart = new PptxFixtures.ChartSpec(
+            Title: null,
+            Categories: System.Array.Empty<string>(),
+            Series: new[] { ("Revenue", (IReadOnlyList<string>)new[] { "10", "20", "30", "40" }) },
+            TwoLevelCategories: new[] { ("2023", "Q1"), ("2023", "Q2"), ("2024", "Q1"), ("2024", "Q2") });
+
+        var pptx = PptxFixtures.Build(new PptxFixtures.SlideSpec().Chart(chart));
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(pptx), PptxContext());
+
+        result.Markdown.ShouldContain("| 2023 / Q1 | 10 |");
+        result.Markdown.ShouldContain("| 2023 / Q2 | 20 |");
+        result.Markdown.ShouldContain("| 2024 / Q1 | 30 |");
+        result.Markdown.ShouldContain("| 2024 / Q2 | 40 |");
+        result.IsComplete.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Orders_grouped_shapes_by_their_own_position_not_xml_order()
+    {
+        StubOcr("GROUP_IMAGE");
+
+        // #313: inside a group, a caption authored BEFORE the image but positioned BELOW it (higher Y) must
+        // render image-then-caption by position. The old walk collapsed both to the group anchor and kept XML
+        // order (caption first). The group carries its own a:off, so each child is translated then ordered by
+        // its own position.
+        var pptx = PptxFixtures.Build(new PptxFixtures.SlideSpec()
+            .GroupedCaptionAndImage(caption: "GROUP_CAPTION", captionY: 3_000_000, image: Png(alt: null, x: 100, y: 100)));
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(pptx), PptxContext());
+
+        var image = result.Markdown.IndexOf("GROUP_IMAGE", StringComparison.Ordinal);
+        var caption = result.Markdown.IndexOf("GROUP_CAPTION", StringComparison.Ordinal);
+        image.ShouldBeGreaterThanOrEqualTo(0);
+        caption.ShouldBeGreaterThanOrEqualTo(0);
+        image.ShouldBeLessThan(caption, "the image (positioned above) must render before the caption (positioned below)");
+    }
+
+    [Fact]
+    public async Task Orders_a_layout_inherited_placeholder_by_its_inherited_position()
+    {
+        // #313: a body placeholder that omits its own a:xfrm inherits its position from the slide layout. A
+        // manually positioned shape higher up must render before the (visually lower) inherited body
+        // placeholder — the old walk sorted the no-xfrm placeholder to (0,0) (the top), inverting the order.
+        var pptx = PptxFixtures.Build(new PptxFixtures.SlideSpec()
+            .Text("MANUAL_SHAPE", x: 100, y: 1_000_000)
+            .WithLayoutInheritedBody("INHERITED_BODY", layoutBodyY: 5_000_000));
+
+        var result = await CreateExtractor().ExtractAsync(new MemoryStream(pptx), PptxContext());
+
+        var manual = result.Markdown.IndexOf("MANUAL_SHAPE", StringComparison.Ordinal);
+        var body = result.Markdown.IndexOf("INHERITED_BODY", StringComparison.Ordinal);
+        manual.ShouldBeGreaterThanOrEqualTo(0);
+        body.ShouldBeGreaterThanOrEqualTo(0);
+        manual.ShouldBeLessThan(body, "the manually-positioned shape (higher) must render before the layout-inherited body placeholder (lower)");
+    }
 }

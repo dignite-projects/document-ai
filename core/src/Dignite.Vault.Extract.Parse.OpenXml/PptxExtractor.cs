@@ -91,7 +91,10 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
         PresentationDocument document;
         try
         {
-            document = PresentationDocument.Open(new MemoryStream(bytes, writable: false), isEditable: false);
+            // Collapse OOXML markup-compatibility (mc:AlternateContent) to its selected branch before parsing,
+            // so a shape/picture PowerPoint wraps in an AlternateContent fork — which the typed WalkShapesAsync
+            // switch matches none of — is not silently skipped with no #268 signal (#319, shared with DOCX).
+            document = PresentationDocument.Open(new MemoryStream(bytes, writable: false), isEditable: false, OpenXmlPackageSettings.McCollapsing);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -114,7 +117,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
             var presentation = document.PresentationPart?.Presentation;
             var slideIds = presentation?.SlideIdList?.Elements<P.SlideId>().ToList() ?? new List<P.SlideId>();
 
-            var state = new ExtractionState
+            var state = new PptxExtractionState
             {
                 ImageBudget = _options.MaxImagesPerFile,
                 LanguageHints = ResolveLanguageHints(context)
@@ -140,7 +143,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     Logger.LogWarning(ex, "Could not resolve a slide part; skipping the slide.");
-                    state.FailedSlides++;
+                    state.FailedContainers++;
                     continue;
                 }
 
@@ -154,7 +157,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
                     // OpenXML parses lazily, so a malformed slide can fault here on access. Skip it and
                     // mark the result incomplete rather than failing the whole deck.
                     Logger.LogWarning(ex, "Failed to process a slide; skipping it.");
-                    state.FailedSlides++;
+                    state.FailedContainers++;
                     continue;
                 }
 
@@ -167,7 +170,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
             // Single source of truth for the #268 signal: the reason is built from the counters and is
             // null iff nothing was lost; completeness derives from it (no parallel hand-synced predicate).
             var incompleteReason = BuildIncompleteReason(
-                state.FailedSlides, state.DroppedByCap, state.Undecodable, state.OversizedImages,
+                state.FailedContainers, state.DroppedByCap, state.Undecodable, state.OversizedImages,
                 state.TruncatedOcr, state.FailedFigureOcr, state.ChartFailures);
             var complete = incompleteReason is null;
             if (!complete)
@@ -194,7 +197,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
 
     /// <summary>Builds one slide's Markdown: ordered shape blocks, then the optional speaker-notes block.</summary>
     private async Task<string> ProcessSlideAsync(
-        SlidePart slidePart, ExtractionState state, CancellationToken cancellationToken)
+        SlidePart slidePart, PptxExtractionState state, CancellationToken cancellationToken)
     {
         var shapeTree = slidePart.Slide?.CommonSlideData?.ShapeTree;
         var blocks = new List<SlideReadingOrder.SlideBlock>();
@@ -222,9 +225,9 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
     /// <summary>
     /// Walks a shape container (the slide's shape tree or a grouped shape) in document order, dispatching
     /// pictures to OCR, charts/tables to structured rendering, and text shapes to Markdown. Recurses into
-    /// grouped shapes; for items inside a group, the group's own offset anchors their reading position and
-    /// document-encounter order (<see cref="ExtractionState.Sequence"/>) breaks ties within the group —
-    /// avoiding the child-coordinate-space math a precise absolute position would require.
+    /// grouped shapes; each shape's absolute slide position is its own offset plus the accumulated group
+    /// translation (<paramref name="groupY"/>/<paramref name="groupX"/> — the running sum of each enclosing
+    /// group's <c>a:off − a:chOff</c>, #313), with <see cref="PptxExtractionState.Sequence"/> breaking ties.
     /// </summary>
     private async Task WalkShapesAsync(
         DocumentFormat.OpenXml.OpenXmlElement container,
@@ -233,7 +236,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
         long groupY,
         long groupX,
         List<SlideReadingOrder.SlideBlock> blocks,
-        ExtractionState state,
+        PptxExtractionState state,
         CancellationToken cancellationToken)
     {
         foreach (var child in container.ChildElements)
@@ -244,28 +247,36 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
             {
                 case P.GroupShape group:
                     {
-                        var (gy, gx) = inGroup ? (groupY, groupX) : OffsetOf(group);
-                        await WalkShapesAsync(group, slidePart, inGroup: true, gy, gx, blocks, state, cancellationToken);
+                        // Descend with the group's translation composed in (#313): a child's absolute slide
+                        // position is its own offset plus the accumulated (group a:off − a:chOff) of every
+                        // enclosing group. Group scale is uniform per axis, so it preserves the per-axis order
+                        // and the translation alone is enough for reading order.
+                        var (offY, offX) = OffsetOf(group) ?? (0, 0);
+                        var (childOffY, childOffX) = GroupChildOffset(group);
+                        await WalkShapesAsync(
+                            group, slidePart, inGroup: true,
+                            groupY + offY - childOffY, groupX + offX - childOffX,
+                            blocks, state, cancellationToken);
                         break;
                     }
 
                 case P.Picture picture:
                     {
-                        var (y, x) = PositionFor(picture, inGroup, groupY, groupX);
+                        var (y, x) = AbsolutePosition(picture, slidePart, inGroup, groupY, groupX);
                         await HandlePictureAsync(picture, slidePart, y, x, blocks, state, cancellationToken);
                         break;
                     }
 
                 case P.GraphicFrame graphicFrame:
                     {
-                        var (y, x) = PositionFor(graphicFrame, inGroup, groupY, groupX);
+                        var (y, x) = AbsolutePosition(graphicFrame, slidePart, inGroup, groupY, groupX);
                         HandleGraphicFrame(graphicFrame, slidePart, y, x, blocks, state);
                         break;
                     }
 
                 case P.Shape shape:
                     {
-                        var (y, x) = PositionFor(shape, inGroup, groupY, groupX);
+                        var (y, x) = AbsolutePosition(shape, slidePart, inGroup, groupY, groupX);
                         HandleTextShape(shape, y, x, blocks, state);
                         break;
                     }
@@ -281,7 +292,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
         long y,
         long x,
         List<SlideReadingOrder.SlideBlock> blocks,
-        ExtractionState state,
+        PptxExtractionState state,
         CancellationToken cancellationToken)
     {
         if (IsDecorative(picture))
@@ -297,102 +308,16 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
             return;
         }
 
-        if (state.ImageBudget <= 0)
+        // Native alt-text (p:cNvPr/@descr, fallback @title) is a real caption signal — strictly better than
+        // PDF's nearest-text heuristic. The shared figure pipeline (budget → resolve → outcome switch → OCR →
+        // truncation → caption, #317) returns the finished block; PPTX sinks it as a positioned SlideBlock so
+        // reading-order sorting can place it by shape offset (state.Sequence breaks ties in document order).
+        var block = await OpenXmlFigureTranscriber.TranscribeAsync(
+            slidePart, embed, AltTextOf(picture), state, _options, _ocrProvider, Logger, cancellationToken);
+        if (block is not null)
         {
-            state.DroppedByCap++;
-            return;
+            blocks.Add(new SlideReadingOrder.SlideBlock(y, x, state.Sequence++, block));
         }
-
-        OpenXmlImagePayload.ResolvedImage resolved;
-        try
-        {
-            var part = slidePart.GetPartById(embed);
-            resolved = part is ImagePart imagePart
-                ? OpenXmlImagePayload.TryResolve(imagePart, _options.MaxImageBytesPerImage)
-                // A dangling relationship / non-image part: treat as undecodable.
-                : new OpenXmlImagePayload.ResolvedImage(OpenXmlImagePayload.ImageOutcome.Undecodable, null, null);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Logger.LogWarning(ex, "Failed to resolve/decode an embedded PPTX image; skipping it.");
-            resolved = new OpenXmlImagePayload.ResolvedImage(OpenXmlImagePayload.ImageOutcome.Undecodable, null, null);
-        }
-
-        switch (resolved.Outcome)
-        {
-            case OpenXmlImagePayload.ImageOutcome.Oversized:
-                // A single image larger than the per-image byte cap (e.g. a ZIP-decompression bomb). Skipped
-                // before full materialization; trips the completeness signal but never OOMs the worker.
-                Logger.LogWarning("Skipped an embedded image exceeding the {Cap}-byte per-image cap.", _options.MaxImageBytesPerImage);
-                state.OversizedImages++;
-                return;
-
-            case OpenXmlImagePayload.ImageOutcome.Undecodable:
-                // Vector (EMF/WMF), dangling relationship, or undecodable/mislabeled bytes.
-                state.Undecodable++;
-                return;
-
-            case OpenXmlImagePayload.ImageOutcome.Ok:
-                break;
-
-            default:
-                // A future outcome added to the enum must not silently fall through to RecognizeAsync with
-                // possibly-null bytes — fail closed by treating it as undecodable.
-                Logger.LogWarning("Unhandled image outcome {Outcome}; treating as undecodable.", resolved.Outcome);
-                state.Undecodable++;
-                return;
-        }
-
-        state.ImageBudget--;
-
-        OcrResult ocr;
-        try
-        {
-            using var imageStream = new MemoryStream(resolved.Bytes!, writable: false);
-            ocr = await _ocrProvider.RecognizeAsync(
-                imageStream,
-                new OcrOptions
-                {
-                    ContentType = resolved.ContentType!,
-                    LanguageHints = state.LanguageHints
-                },
-                cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // A single figure's OCR failing (provider timeout / rate-limit / auth / one bad image) must
-            // NOT discard the slide text already extracted — figure OCR is an auxiliary augmentation, not
-            // the deck's primary payload (the #210/#268 "auxiliary step must not break the main pipeline"
-            // principle). Skip this figure and mark the result incomplete. OperationCanceledException
-            // still propagates so a host/job shutdown aborts promptly.
-            Logger.LogWarning(ex, "Embedded-image OCR failed; keeping the slide text, skipping this figure.");
-            state.FailedFigureOcr++;
-            return;
-        }
-
-        if (!ocr.IsComplete)
-        {
-            // OCR truncated at the token limit or discarded by the repetition guard.
-            state.TruncatedOcr++;
-        }
-
-        var transcription = ocr.Markdown?.Trim() ?? string.Empty;
-        if (transcription.Length == 0)
-        {
-            return;
-        }
-
-        // Native alt-text (p:cNvPr/@descr, fallback @title) is a real caption signal — strictly better
-        // than PDF's nearest-text heuristic. Render it as the figure block's label. Alt-text is
-        // author-controlled free text (often multi-line), so collapse newlines via MarkdownText.InlineLabel
-        // AND inline-escape via MarkdownText.EscapeInline so the bold caption can't break the OCR block (often
-        // a table) below it, nor inject a link/emphasis from a literal [..](..)/*.
-        var caption = AltTextOf(picture);
-        var markdown = string.IsNullOrWhiteSpace(caption)
-            ? transcription
-            : "**" + MarkdownText.EscapeInline(MarkdownText.InlineLabel(caption)) + "**\n\n" + transcription;
-
-        blocks.Add(new SlideReadingOrder.SlideBlock(y, x, state.Sequence++, markdown));
     }
 
     private void HandleGraphicFrame(
@@ -401,7 +326,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
         long y,
         long x,
         List<SlideReadingOrder.SlideBlock> blocks,
-        ExtractionState state)
+        PptxExtractionState state)
     {
         var graphicData = graphicFrame.Graphic?.GraphicData;
         if (graphicData is null)
@@ -459,7 +384,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
         long y,
         long x,
         List<SlideReadingOrder.SlideBlock> blocks,
-        ExtractionState state)
+        PptxExtractionState state)
     {
         // Skip auto-generated slide-number / date fields so they do not pollute the text payload — the
         // same exclusion ReadSpeakerNotes applies to the notes slide (a slide-number placeholder's cached
@@ -539,12 +464,30 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
         return parts.Count == 0 ? null : string.Join("\n\n", parts);
     }
 
-    private static (long Y, long X) PositionFor(
-        DocumentFormat.OpenXml.OpenXmlElement shape, bool inGroup, long groupY, long groupX)
-        => inGroup ? (groupY, groupX) : OffsetOf(shape);
+    /// <summary>
+    /// The absolute slide position (EMU) of a shape for reading-order sorting (#313): the shape's own offset
+    /// translated by the accumulated group offset (<paramref name="groupY"/>/<paramref name="groupX"/>). A
+    /// top-level placeholder that omits its own <c>a:xfrm</c> inherits its position from the slide layout /
+    /// master rather than collapsing to (0,0); an in-group shape without an xfrm falls back to the group origin.
+    /// </summary>
+    private static (long Y, long X) AbsolutePosition(
+        DocumentFormat.OpenXml.OpenXmlElement shape, SlidePart slidePart, bool inGroup, long groupY, long groupX)
+    {
+        if (OffsetOf(shape) is { } own)
+        {
+            return (groupY + own.Y, groupX + own.X);
+        }
 
-    /// <summary>The shape's own top-left offset in EMU, or (0,0) when it inherits position from the layout.</summary>
-    private static (long Y, long X) OffsetOf(DocumentFormat.OpenXml.OpenXmlElement shape)
+        if (!inGroup && ResolveInheritedOffset(shape, slidePart) is { } inherited)
+        {
+            return inherited;
+        }
+
+        return (groupY, groupX);
+    }
+
+    /// <summary>The shape's own top-left offset in EMU, or <c>null</c> when it carries no explicit <c>a:xfrm</c>.</summary>
+    private static (long Y, long X)? OffsetOf(DocumentFormat.OpenXml.OpenXmlElement shape)
     {
         var offset = shape switch
         {
@@ -555,9 +498,87 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
             _ => null
         };
 
-        // A shape with no explicit xfrm inherits its position from the slide layout/master; we cannot
-        // resolve that here, so it sorts to the top by position and keeps document order via Sequence.
-        return offset is null ? (0, 0) : (offset.Y?.Value ?? 0, offset.X?.Value ?? 0);
+        return offset is null ? null : (offset.Y?.Value ?? 0, offset.X?.Value ?? 0);
+    }
+
+    /// <summary>A group's child coordinate-space origin (<c>a:chOff</c>), or (0,0).</summary>
+    private static (long Y, long X) GroupChildOffset(P.GroupShape group)
+    {
+        var childOffset = group.GroupShapeProperties?.TransformGroup?.ChildOffset;
+        return childOffset is null ? (0, 0) : (childOffset.Y?.Value ?? 0, childOffset.X?.Value ?? 0);
+    }
+
+    /// <summary>
+    /// The position a slide-level placeholder inherits from its slide layout (then master) when it omits its
+    /// own <c>a:xfrm</c> (#313): match the layout / master placeholder by <c>idx</c> (the stable key) then
+    /// type, and read its offset. Returns <c>null</c> when the shape is not a placeholder or no match carries
+    /// an offset — the caller then keeps (0,0), preserving prior behavior.
+    /// </summary>
+    private static (long Y, long X)? ResolveInheritedOffset(DocumentFormat.OpenXml.OpenXmlElement shape, SlidePart slidePart)
+    {
+        if (shape is not P.Shape placeholderShape)
+        {
+            return null;
+        }
+
+        var ph = placeholderShape.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties?.PlaceholderShape;
+        if (ph is null)
+        {
+            return null;
+        }
+
+        var type = ph.Type?.Value;
+        var index = ph.Index?.Value;
+
+        return MatchingPlaceholderOffset(slidePart.SlideLayoutPart?.SlideLayout?.CommonSlideData?.ShapeTree, type, index)
+            ?? MatchingPlaceholderOffset(slidePart.SlideLayoutPart?.SlideMasterPart?.SlideMaster?.CommonSlideData?.ShapeTree, type, index);
+    }
+
+    /// <summary>The offset of the placeholder in <paramref name="shapeTree"/> matching the given idx + type.</summary>
+    private static (long Y, long X)? MatchingPlaceholderOffset(P.ShapeTree? shapeTree, P.PlaceholderValues? type, uint? index)
+    {
+        if (shapeTree is null)
+        {
+            return null;
+        }
+
+        foreach (var candidate in shapeTree.Elements<P.Shape>())
+        {
+            var ph = candidate.NonVisualShapeProperties?.ApplicationNonVisualDrawingProperties?.PlaceholderShape;
+            if (ph is null)
+            {
+                continue;
+            }
+
+            // idx is the primary placeholder key; when the slide placeholder carries one, require the same
+            // idx. Otherwise fall back to a type match (title / body placeholders often omit idx).
+            var indexMatches = index is null ? ph.Index?.Value is null : ph.Index?.Value == index;
+            if (indexMatches
+                && PlaceholderTypesMatch(ph.Type?.Value, type)
+                && candidate.ShapeProperties?.Transform2D?.Offset is { } offset)
+            {
+                return (offset.Y?.Value ?? 0, offset.X?.Value ?? 0);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Whether two placeholder types are equivalent for inheritance — an absent type defaults to
+    /// Body, and CenteredTitle counts as Title.</summary>
+    private static bool PlaceholderTypesMatch(P.PlaceholderValues? a, P.PlaceholderValues? b)
+    {
+        static P.PlaceholderValues Normalize(P.PlaceholderValues? type)
+        {
+            if (type is null)
+            {
+                return P.PlaceholderValues.Body;
+            }
+
+            return type.Value == P.PlaceholderValues.CenteredTitle ? P.PlaceholderValues.Title : type.Value;
+        }
+
+        return Normalize(a) == Normalize(b);
     }
 
     private static string ShapeText(P.Shape shape)
@@ -624,7 +645,7 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
     /// consumer can override to supply hints (e.g. from per-tenant config).
     /// </summary>
     protected virtual IList<string> ResolveLanguageHints(TextExtractionContext context)
-        => context.LanguageHints ?? new List<string>();
+        => OpenXmlExtractionState.ResolveLanguageHints(context);
 
     /// <summary>
     /// Builds the #268 incompleteness reason from the loss counters, or returns <c>null</c> when nothing
@@ -633,58 +654,17 @@ public class PptxExtractor : IMarkdownTextProvider, ITransientDependency
     /// </summary>
     internal static string? BuildIncompleteReason(
         int failedSlides, int droppedByCap, int undecodable, int oversizedImages, int truncatedOcr, int failedFigureOcr, int chartFailures)
+        => OpenXmlIncompleteReason.Build(
+            "slide", failedSlides, droppedByCap, undecodable, oversizedImages, truncatedOcr, failedFigureOcr, chartFailures);
+
+    /// <summary>
+    /// PPTX reading-order extends the shared <see cref="OpenXmlExtractionState"/> with a monotonic
+    /// document-encounter counter: PPTX is fixed-layout, so blocks are sorted by shape offset and
+    /// <see cref="Sequence"/> breaks ties in document order (DOCX emits in flow order and needs no such
+    /// field). All the image-budget / #268 loss counters are inherited (#317).
+    /// </summary>
+    private sealed class PptxExtractionState : OpenXmlExtractionState
     {
-        var parts = new List<string>();
-        if (failedSlides > 0)
-        {
-            parts.Add($"{failedSlides} slide(s) could not be parsed and were skipped");
-        }
-
-        if (undecodable > 0)
-        {
-            parts.Add($"{undecodable} embedded image(s) could not be decoded to a supported raster format (e.g. EMF/WMF vector)");
-        }
-
-        if (oversizedImages > 0)
-        {
-            parts.Add($"{oversizedImages} embedded image(s) exceeded the per-image size cap and were skipped");
-        }
-
-        if (failedFigureOcr > 0)
-        {
-            parts.Add($"{failedFigureOcr} embedded image(s) failed OCR (provider error)");
-        }
-
-        if (truncatedOcr > 0)
-        {
-            parts.Add($"{truncatedOcr} image transcription(s) were truncated or discarded by the OCR provider");
-        }
-
-        if (chartFailures > 0)
-        {
-            parts.Add($"{chartFailures} chart(s) could not be rendered as a table");
-        }
-
-        if (droppedByCap > 0)
-        {
-            parts.Add($"{droppedByCap} image(s) were skipped after reaching the per-file image cap");
-        }
-
-        return parts.Count == 0 ? null : string.Join("; ", parts) + ".";
-    }
-
-    /// <summary>Mutable per-extraction accumulator: image budget, block sequence, and #268 loss counters.</summary>
-    private sealed class ExtractionState
-    {
-        public int ImageBudget;
         public int Sequence;
-        public int FailedSlides;
-        public int DroppedByCap;
-        public int Undecodable;
-        public int OversizedImages;
-        public int TruncatedOcr;
-        public int FailedFigureOcr;
-        public int ChartFailures;
-        public IList<string> LanguageHints = new List<string>();
     }
 }
